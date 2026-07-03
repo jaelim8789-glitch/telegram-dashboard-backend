@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: telegram_dashboard
+      POSTGRES_PASSWORD: telegram_dashboard
+      POSTGRES_DB: telegram_dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telegram_dashboard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # No separate worker/Redis/queue: broadcasts are sent in-process via FastAPI
+  # BackgroundTasks (immediate) or the scheduler thread inside this same process
+  # (scheduled) — see app/services/broadcast_processor.py. Deliberately simplified so
+  # this runs on a single free web-service instance (e.g. Render's free tier), which
+  # doesn't offer an always-on background worker for free.
+  backend:
+    build: .
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
+    volumes:
+      - media_data:/app/media
+
+  frontend:
+    build:
+      context: ../telegram-dashboard
+      args:
+        # Empty/relative — the browser calls same-origin paths (e.g. /api/accounts) and
+        # nginx proxies them to `backend`. Only override if serving frontend and API from
+        # genuinely different public origins.
+        NEXT_PUBLIC_API_BASE_URL: ""
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # No host port mapping on purpose — nginx is the single public entrypoint (port 3000
+    # is also frequently already taken by other local projects on the same machine).
+
+  nginx:
+    build: ./nginx
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  pgdata:
+  media_data:

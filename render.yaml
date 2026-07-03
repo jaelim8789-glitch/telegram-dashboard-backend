@@ -1,0 +1,52 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# On Render: New -> Blueprint -> pick this repo. Render reads this file and provisions
+# the web service + database together instead of clicking through the dashboard by hand.
+#
+# Free-tier caveats (check Render's current pricing page — these change over time):
+# - The web service sleeps after ~15 min idle; the first request after that is slow
+#   (cold start), and the in-process scheduler (for 예약 발송) doesn't run while asleep.
+# - No persistent disk on the free plan — uploaded broadcast images (media/) don't
+#   survive a redeploy/restart. Fine for personal-scale use, not for anything you need
+#   to keep long-term.
+# - Free Postgres instances are time-limited; back up or upgrade before it expires.
+services:
+  - type: web
+    name: telegram-dashboard-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-dashboard-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      # Fill these in yourself in the Render dashboard after the blueprint is created
+      # (sync: false = Render prompts for a value instead of guessing one):
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false # Fernet key — generate with the command in .env.example, don't let Render auto-generate this one
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false # set to your Vercel frontend URL, e.g. https://your-app.vercel.app
+      - key: ADMIN_JWT_SECRET
+        generateValue: true
+      - key: ADMIN_JWT_EXPIRE_MINUTES
+        value: "1440"
+
+databases:
+  - name: telegram-dashboard-db
+    plan: free
+    databaseName: telegram_dashboard
+    user: telegram_dashboard

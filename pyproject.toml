@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/workers/run_worker.py"]
+# SQLAlchemy's async dialect bridges to sync code via greenlet; without this, coverage's
+# default tracer can't see lines executed after a greenlet context switch (e.g. anything
+# after an `await session.execute(...)`) and under-reports them as missed.
+concurrency = ["greenlet"]
