@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     admin_jwt_secret: str = "change-me-in-production"
     admin_jwt_expire_minutes: int = 60 * 24
 
+    # SMS provider for phone-verification login (Sprint 6). "console" logs the code
+    # instead of sending a real SMS — free, for local dev only. Switch to "twilio" or
+    # "coolsms" (and fill in the matching credentials) for a real deployment.
+    sms_provider: str = "console"
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+    coolsms_api_key: str = ""
+    coolsms_api_secret: str = ""
+    coolsms_phone_number: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")

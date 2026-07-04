@@ -14,6 +14,11 @@
 
 - **관리자 인증**: 고정 관리자 계정(JWT 로그인) + 외부 연동용 API 키 발급/조회/삭제. `/api/*`는 관리자
   세션 또는 유효한 API 키가 있어야 호출 가능
+- **일반 사용자 로그인 (전화번호 인증)**: 관리자 계정/비밀번호 없이도, 본인 전화번호로 SMS 인증 후
+  API 키를 발급받아 로그인할 수 있는 두 번째 로그인 경로. 발급된 API 키는 `/api/auth/login-with-api-key`로
+  교환한 세션 토큰을 통해 관리자와 동일하게 계정 관리/발송/자동응답 기능에 접근합니다 (단, `/api/admin/*`
+  관리자 전용 기능은 접근 불가). 관리자는 "사용자 관리" 화면에서 가입자 목록 조회, 활성/비활성 토글,
+  API 키 재발급을 할 수 있습니다
 - **계정 관리**: 전화번호 등록 → Telegram 인증(인증번호/2단계 비밀번호) → 세션 암호화 저장
 - **그룹/채널 조회**: 인증된 계정이 속한 그룹·채널 목록을 Telethon으로 실시간 조회
 - **발송**: 최대 10명에게 메시지(+이미지) 발송, 즉시 또는 예약, 계정당 1분에 1회 제한
@@ -143,6 +148,35 @@ npm run dev
 | `ADMIN_JWT_SECRET` | 로그인 세션 JWT 서명 키. `python -c "import secrets; print(secrets.token_urlsafe(48))"`로 생성 |
 | `ADMIN_JWT_EXPIRE_MINUTES` | 로그인 세션 유지 시간(분). 기본 1440(24시간) |
 | `TELEGRAM_BOT_TOKEN` | 선택 사항. `/autoreply` 원격 제어 봇용 BotFather 토큰. 비워두면 봇 없이 대시보드 "자동 응답" 탭 토글만 사용 |
+| `SMS_PROVIDER` | `console`(기본, 무료·개발용) / `twilio` / `coolsms` — 아래 "일반 사용자 로그인" 섹션 참고 |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER` | `SMS_PROVIDER=twilio`일 때 필요 |
+| `COOLSMS_API_KEY` / `COOLSMS_API_SECRET` / `COOLSMS_PHONE_NUMBER` | `SMS_PROVIDER=coolsms`일 때 필요 |
+
+## 일반 사용자 로그인 (전화번호 인증)
+
+관리자 아이디/비밀번호 없이도 본인 전화번호만으로 로그인할 수 있는 두 번째 경로입니다. 로그인 화면
+("일반 사용자 로그인" 섹션)에서:
+
+1. 전화번호 입력 → "인증번호 요청" → SMS로 6자리 코드 수신 (5분 이내 유효, 재전송은 60초에 1회만
+   가능 — 실제 SMS 발송에는 비용이 들기 때문입니다)
+2. 인증번호 입력 → "API 키 발급" → `sk-`로 시작하는 API 키가 **이때 한 번만** 화면에 표시됨. 반드시
+   복사해두세요 (분실 시 관리자에게 재발급을 요청해야 합니다)
+3. 이후에는 로그인 화면의 "API 키로 로그인"에 그 키를 입력하면 세션이 발급됩니다
+
+발급된 세션은 관리자 세션과 동일하게 계정 관리/발송/자동응답 등 메인 기능에 접근할 수 있지만,
+`/admin/*` 관리자 전용 화면(API 키 관리, 사용자 관리)에는 접근할 수 없습니다. 관리자는
+`/admin/users`에서 가입자 목록을 보고, 활성/비활성 토글이나 API 키 재발급(기존 키는 즉시 무효화)을
+할 수 있습니다.
+
+**SMS 발송 설정**: 기본값 `SMS_PROVIDER=console`은 실제 문자를 보내지 않고 서버 로그에 코드를 남기기만
+합니다 (`docker compose logs -f backend`에서 `sms_code_console` 이벤트로 확인) — 로컬 개발/테스트
+전용이며 비용이 전혀 들지 않습니다. 실제로 문자를 받으려면:
+- **Twilio**: [twilio.com](https://www.twilio.com)에서 계정 생성 → Account SID/Auth Token 발급 →
+  전화번호 구매 → `SMS_PROVIDER=twilio` + `TWILIO_*` 환경변수 설정
+- **Coolsms**: [coolsms.co.kr](https://coolsms.co.kr)에서 계정 생성 → API Key/Secret 발급 → 발신번호
+  등록 → `SMS_PROVIDER=coolsms` + `COOLSMS_*` 환경변수 설정
+
+두 경우 모두 문자 1건당 비용이 발생하니, 배포 전에 반드시 각 서비스의 요금제를 확인하세요.
 
 ## 자동 응답(Auto-Reply)
 

@@ -15,6 +15,8 @@ from app.models import (  # noqa: F401 — ensures models are registered on Base
     AutoReplyLog,
     AutoReplyRule,
     Broadcast,
+    PhoneVerification,
+    User,
 )
 
 # this is the Alembic Config object, which provides

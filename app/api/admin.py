@@ -4,11 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_admin
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.security import create_access_token, mask_api_key, verify_admin_credentials
+from app.core.security import create_access_token, generate_user_api_key, hash_api_key, mask_api_key, verify_admin_credentials
 from app.crud import api_key as api_key_crud
+from app.crud import user as user_crud
 from app.database import get_db
 from app.schemas.admin import AdminLoginRequest, AdminMeResponse, AdminTokenResponse
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
+from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
@@ -63,3 +65,36 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API 키를 찾을 수 없습니다.")
     await api_key_crud.delete_api_key(db, api_key)
     logger.info("api_key_deleted", api_key_id=api_key_id)
+
+
+# === 일반 사용자 관리 (Sprint 6 phone-verified login) ===
+
+
+@router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])
+async def list_users(db: AsyncSession = Depends(get_db)):
+    return await user_crud.list_users(db)
+
+
+@router.post("/users/{user_id}/toggle", response_model=UserRead, dependencies=[Depends(require_admin)])
+async def toggle_user(user_id: str, payload: UserToggleRequest, db: AsyncSession = Depends(get_db)):
+    user = await user_crud.get_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+    user = await user_crud.set_active(db, user, payload.is_active)
+    logger.info("user_toggled", user_id=user_id, is_active=payload.is_active)
+    return user
+
+
+@router.post(
+    "/users/{user_id}/reissue-key",
+    response_model=UserApiKeyReissued,
+    dependencies=[Depends(require_admin)],
+)
+async def reissue_user_key(user_id: str, db: AsyncSession = Depends(get_db)):
+    user = await user_crud.get_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+    raw_key = generate_user_api_key()
+    await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
+    logger.info("user_api_key_reissued", user_id=user_id)
+    return UserApiKeyReissued(id=user.id, api_key=raw_key)

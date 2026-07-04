@@ -1,12 +1,18 @@
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
 
 from app.config import settings
+from app.core.limits import OTP_CODE_LENGTH
 
 JWT_ALGORITHM = "HS256"
 JWT_SUBJECT = "admin"
+# User-session tokens (Sprint 6 phone-verified login) use `sub="user:<id>"` so they're
+# unmistakably distinct from the fixed admin subject above, while still being signed
+# with the same secret — there's only one operator either way, just two login paths.
+USER_JWT_SUBJECT_PREFIX = "user:"
 
 
 def verify_admin_credentials(username: str, password: str) -> bool:
@@ -38,3 +44,38 @@ def generate_api_key() -> str:
 
 def mask_api_key(key: str) -> str:
     return f"{key[:7]}...{key[-4:]}"
+
+
+def generate_user_api_key() -> str:
+    return f"sk-{secrets.token_urlsafe(32)}"
+
+
+def hash_api_key(raw_key: str) -> str:
+    """SHA-256 is fine here (not bcrypt/argon2) — this hashes a high-entropy random
+    token, not a human-chosen password, so there's no offline-guessing risk to slow down."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def create_user_access_token(user_id: str) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.admin_jwt_expire_minutes)
+    payload = {"sub": f"{USER_JWT_SUBJECT_PREFIX}{user_id}", "exp": expires_at}
+    return jwt.encode(payload, settings.admin_jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def decode_user_id_from_token(token: str) -> str | None:
+    """Returns the user id if `token` is a valid, unexpired *user* token, or None if it's
+    a well-formed token for something else (e.g. an admin token). Raises jwt exceptions
+    for a malformed/expired/tampered token, same as decode_access_token."""
+    payload = jwt.decode(token, settings.admin_jwt_secret, algorithms=[JWT_ALGORITHM])
+    sub = payload.get("sub", "")
+    if isinstance(sub, str) and sub.startswith(USER_JWT_SUBJECT_PREFIX):
+        return sub[len(USER_JWT_SUBJECT_PREFIX) :]
+    return None
+
+
+def generate_otp_code() -> str:
+    return f"{secrets.randbelow(10**OTP_CODE_LENGTH):0{OTP_CODE_LENGTH}d}"
+
+
+def hash_otp_code(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()

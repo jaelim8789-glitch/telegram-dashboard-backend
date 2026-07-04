@@ -7,3 +7,10 @@ INTER_MESSAGE_DELAY_SECONDS = 2
 
 MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 ALLOWED_MEDIA_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+# Phone verification (Sprint 6 user login) — SMS costs money, so codes are deliberately
+# short-lived and resend is throttled per phone number.
+OTP_CODE_LENGTH = 6
+OTP_EXPIRE_MINUTES = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
+OTP_MAX_ATTEMPTS = 5

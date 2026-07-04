@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.accounts import router as accounts_router
 from app.api.admin import router as admin_router
+from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
 from app.api.broadcast import router as broadcast_router
 from app.api.deps import require_api_key_or_admin
@@ -57,6 +58,10 @@ app.add_middleware(
 )
 
 app.include_router(admin_router)
+# Not gated by _auth_required below — these are the login endpoints themselves
+# (send-code/verify-code/login-with-api-key must be reachable without a session yet).
+# /me carries its own per-route Depends(get_current_identity).
+app.include_router(auth_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
 app.include_router(accounts_router, dependencies=_auth_required)

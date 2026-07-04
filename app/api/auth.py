@@ -1,0 +1,71 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import Identity, get_current_identity
+from app.core.logging import get_logger
+from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
+from app.crud import user as user_crud
+from app.database import get_db
+from app.schemas.auth import (
+    LoginWithApiKeyRequest,
+    LoginWithApiKeyResponse,
+    MeResponse,
+    SendCodeRequest,
+    SendCodeResponse,
+    VerifyCodeRequest,
+    VerifyCodeResponse,
+)
+from app.services.sms_service import SmsSendError, send_verification_sms
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = get_logger(__name__)
+
+
+@router.post("/send-code", response_model=SendCodeResponse)
+async def send_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+    wait_seconds = await user_crud.seconds_until_next_code_allowed(db, payload.phone)
+    if wait_seconds > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"잠시 후 다시 시도해주세요 ({int(wait_seconds) + 1}초 후 재전송 가능).",
+        )
+
+    code = generate_otp_code()
+    await user_crud.upsert_verification_code(db, payload.phone, code)
+    try:
+        await send_verification_sms(payload.phone, code)
+    except SmsSendError as exc:
+        logger.error("sms_send_failed", phone=payload.phone, error=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    logger.info("verification_code_sent", phone=payload.phone)
+    return SendCodeResponse(sent=True)
+
+
+@router.post("/verify-code", response_model=VerifyCodeResponse)
+async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+    if not await user_crud.verify_code(db, payload.phone, payload.code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
+
+    user = await user_crud.get_or_create_user(db, payload.phone)
+    raw_key = generate_user_api_key()
+    await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
+    logger.info("user_api_key_issued", user_id=user.id)
+    return VerifyCodeResponse(api_key=raw_key)
+
+
+@router.post("/login-with-api-key", response_model=LoginWithApiKeyResponse)
+async def login_with_api_key(payload: LoginWithApiKeyRequest, db: AsyncSession = Depends(get_db)):
+    user = await user_crud.get_by_api_key_hash(db, hash_api_key(payload.api_key))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")
+    await user_crud.touch_last_login(db, user)
+    logger.info("user_login_success", user_id=user.id)
+    return LoginWithApiKeyResponse(access_token=create_user_access_token(user.id))
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(identity: Identity = Depends(get_current_identity)):
+    if identity.kind == "user" and identity.user is not None:
+        return MeResponse(role="user", phone=identity.user.phone)
+    return MeResponse(role=identity.kind)
