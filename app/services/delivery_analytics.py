@@ -8,25 +8,30 @@ Ownership path: MessageLog.account_id → Account.tenant_id → Identity.tenant_
 
 All functions require an Identity for tenant authorization.
 
-SEMANTICS — ATTEMPT-LEVEL ANALYTICS
-------------------------------------
-Each MessageLog row represents one delivery attempt to one recipient.
-Retries create additional rows for the same (source, source_id, recipient).
-The row with success=True is the authoritative final state for that recipient.
+SEMANTICS
+---------
+Two parallel analytics models are provided:
 
-All counts in this module are attempt-level unless explicitly documented
-as logical-delivery-level (e.g., broadcast analytics which deduplicates
-by recipient within a broadcast_id).
+1. Attempt-level (default, backward compatible):
+   Every MessageLog row counts individually. Retries appear as separate rows.
+   A recipient that failed twice and succeeded once contributes 3 attempts.
 
-Retries are NOT excluded from aggregate counts. A recipient that failed
-twice and succeeded on the third attempt contributes 3 attempts (2 failed,
-1 successful) to all aggregate metrics.
+2. Logical delivery-level (Sprint 17):
+   Rows are grouped by (account_id, source, source_id, recipient) — these four
+   fields together uniquely identify one logical delivery to one recipient.
+   Within each group:
+   - total_recipients: count of distinct recipient groups
+   - successful: count of groups where ANY row has success=True
+   - failed: count of groups where NO row has success=True (all attempts failed)
+   - success_rate: (successful / total_recipients) * 100
+
+   Retry attempts are collapsed into one logical outcome per recipient.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, case, func, select
+from sqlalchemy import Integer, case, func, select, literal_column
 
 from app.api.deps import Identity
 from app.database import async_session_maker
@@ -38,7 +43,7 @@ def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ─── Response types ──────────────────────────────────────────────────
+# ─── Attempt-level response types ────────────────────────────────────
 
 
 @dataclass
@@ -115,6 +120,33 @@ class FailureIntelligenceItem:
     latest_occurrence: str | None = None
 
 
+# ─── Logical delivery response types (Sprint 17) ─────────────────────
+
+
+@dataclass
+class LogicalSummaryResult:
+    """Logical-delivery-level summary: one outcome per recipient group."""
+    total_recipients: int = 0
+    successful: int = 0
+    failed: int = 0
+    success_rate: float = 0.0
+
+
+@dataclass
+class LogicalBroadcastItem:
+    """Per-broadcast logical delivery analytics, recipients deduplicated."""
+    broadcast_id: str
+    total_recipients: int = 0
+    successful: int = 0
+    failed: int = 0
+    success_rate: float = 0.0
+    first_activity: str | None = None
+    latest_activity: str | None = None
+
+
+# ─── Overview response type ──────────────────────────────────────────
+
+
 @dataclass
 class OverviewResult:
     summary: SummaryResult | None = None
@@ -122,6 +154,7 @@ class OverviewResult:
     top_accounts: list[AccountPerformanceItem] | None = None
     failure_breakdown: list[FailureIntelligenceItem] | None = None
     timeline: list[TimelineItem] | None = None
+    logical: LogicalSummaryResult | None = None  # Sprint 17 addition
 
 
 # ─── Filter helpers ──────────────────────────────────────────────────
@@ -198,6 +231,10 @@ async def _resolve_authorized_account_ids(
         return [r[0] for r in result.all()]
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# ATTEMPT-LEVEL ANALYTICS (Sprint 15 + 16, backward compatible)
+# ═══════════════════════════════════════════════════════════════════════
+
 # ─── Analytics queries ────────────────────────────────────────────────
 
 
@@ -210,7 +247,10 @@ async def get_summary(
     start_time: str | None = None,
     end_time: str | None = None,
 ) -> SummaryResult:
-    """Get delivery summary for authorized accounts with optional filters."""
+    """Get delivery summary for authorized accounts with optional filters.
+
+    ATTEMPT-LEVEL: each MessageLog row counted individually.
+    """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
         return SummaryResult()
@@ -253,7 +293,10 @@ async def get_failure_breakdown(
     start_time: str | None = None,
     end_time: str | None = None,
 ) -> list[FailureBreakdownItem]:
-    """Get failure breakdown by DeliveryStatus (excluding SUCCESS)."""
+    """Get failure breakdown by DeliveryStatus (excluding SUCCESS).
+
+    ATTEMPT-LEVEL: counts failure rows individually.
+    """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
         return []
@@ -287,7 +330,10 @@ async def get_account_performance(
     start_time: str | None = None,
     end_time: str | None = None,
 ) -> list[AccountPerformanceItem]:
-    """Get delivery performance per authorized account."""
+    """Get delivery performance per authorized account.
+
+    ATTEMPT-LEVEL: sums all attempts per account.
+    """
     account_ids = await _resolve_authorized_account_ids(identity)
     if not account_ids:
         return []
@@ -335,7 +381,10 @@ async def get_timeline(
     start_time: str | None = None,
     end_time: str | None = None,
 ) -> list[TimelineItem]:
-    """Get delivery timeline grouped by hour or day."""
+    """Get delivery timeline grouped by hour or day.
+
+    ATTEMPT-LEVEL: aggregates all rows by time period.
+    """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
         return []
@@ -430,11 +479,7 @@ async def get_source_analytics(
 ) -> list[SourceAnalyticsItem]:
     """Get delivery analytics grouped by source.
 
-    Sources are derived from actual persisted MessageLog.source values.
-    Known sources: broadcast, reply_macro, manual, scheduled.
-
-    SEMANTICS: Attempt-level. Each MessageLog row is counted individually.
-    Retries for the same recipient appear as separate rows.
+    ATTEMPT-LEVEL: each MessageLog row is counted individually.
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
@@ -485,14 +530,7 @@ async def get_broadcast_analytics(
 ) -> list[BroadcastAnalyticsItem]:
     """Get per-broadcast delivery analytics.
 
-    Correlates MessageLog records via source='broadcast' and source_id=<broadcast.id>.
-
-    SEMANTICS: Attempt-level within each broadcast. Each MessageLog row
-    (including retries) is counted. The broadcast_id is the source_id value
-    from MessageLog records where source='broadcast'.
-
-    LIMITATION: Broadcasts with zero MessageLog records (e.g., created but
-    never processed) will not appear in results.
+    ATTEMPT-LEVEL within each broadcast.
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
@@ -551,8 +589,7 @@ async def get_failure_intelligence(
 ) -> list[FailureIntelligenceItem]:
     """Enhanced failure analytics with percentages, affected accounts, and latest occurrence.
 
-    Never exposes raw exceptions, API keys, Telegram session secrets, or credentials.
-    Only uses the safe error_message field which is already sanitized at persistence time.
+    ATTEMPT-LEVEL: counts each failure row individually.
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
@@ -563,7 +600,6 @@ async def get_failure_intelligence(
     end_dt = _parse_datetime_safe(end_time) if end_time else None
 
     async with async_session_maker() as db:
-        # Get total failure count for percentage calculation
         total_query = select(func.count(MessageLog.id)).where(MessageLog.success.is_(False))
         total_query = _apply_filters(
             total_query, account_ids,
@@ -572,7 +608,6 @@ async def get_failure_intelligence(
         )
         total_failures = (await db.execute(total_query)).scalar() or 0
 
-        # Get per-status breakdown with affected accounts and latest occurrence
         query = select(
             MessageLog.status,
             func.count(MessageLog.id).label("count"),
@@ -601,6 +636,159 @@ async def get_failure_intelligence(
         return items
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# LOGICAL DELIVERY ANALYTICS (Sprint 17)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Groups MessageLog rows by (account_id, source, source_id, recipient).
+# Within each group: successful = any row has success=True.
+# Failed = no row has success=True.
+# This collapses retry attempts into one logical outcome per recipient.
+#
+# The grouping is reliable because the delivery pipeline preserves these
+# four fields across retries (see _persist_log in delivery.py).
+#
+# No schema migration required.
+
+
+async def get_logical_summary(
+    identity: Identity,
+    account_id: str | None = None,
+    days: int = 30,
+    source: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> LogicalSummaryResult:
+    """Get logical-delivery-level summary.
+
+    Groups by (account_id, source, source_id, recipient).
+    One outcome per recipient — retries are collapsed.
+    """
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return LogicalSummaryResult()
+
+    since = utcnow_naive()
+    start_dt = _parse_datetime_safe(start_time) if start_time else since
+    end_dt = _parse_datetime_safe(end_time) if end_time else None
+
+    async with async_session_maker() as db:
+        # Subquery: per group, does any row have success=True?
+        subq = select(
+            MessageLog.account_id,
+            MessageLog.source,
+            MessageLog.source_id,
+            MessageLog.recipient,
+            func.max(
+                case((MessageLog.success.is_(True), 1), else_=0)
+            ).label("group_success"),
+        )
+        subq = _apply_filters(
+            subq, account_ids,
+            source=source,
+            start_time=start_dt, end_time=end_dt,
+        )
+        subq = subq.group_by(
+            MessageLog.account_id,
+            MessageLog.source,
+            MessageLog.source_id,
+            MessageLog.recipient,
+        ).subquery()
+
+        # Aggregate over groups
+        result = await db.execute(
+            select(
+                func.count(literal_column("1")).label("total"),
+                func.sum(subq.c.group_success).label("successful"),
+            ).select_from(subq)
+        )
+        row = result.one()
+
+    total = row.total or 0
+    successful = row.successful or 0
+    failed = total - successful
+    rate = (successful / total * 100.0) if total > 0 else 0.0
+
+    return LogicalSummaryResult(
+        total_recipients=total,
+        successful=successful,
+        failed=failed,
+        success_rate=round(rate, 1),
+    )
+
+
+async def get_logical_broadcast_analytics(
+    identity: Identity,
+    account_id: str | None = None,
+    days: int = 30,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> list[LogicalBroadcastItem]:
+    """Get per-broadcast logical delivery analytics.
+
+    Groups by (broadcast.source_id, recipient) within source='broadcast'.
+    Retries within a broadcast are collapsed into one outcome per recipient.
+    """
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return []
+
+    since = utcnow_naive()
+    start_dt = _parse_datetime_safe(start_time) if start_time else since
+    end_dt = _parse_datetime_safe(end_time) if end_time else None
+
+    async with async_session_maker() as db:
+        # Subquery: per (source_id, recipient), does any row have success=True?
+        subq = select(
+            MessageLog.source_id,
+            MessageLog.recipient,
+            func.max(
+                case((MessageLog.success.is_(True), 1), else_=0)
+            ).label("group_success"),
+            func.min(MessageLog.created_at).label("first_activity"),
+            func.max(MessageLog.created_at).label("latest_activity"),
+        ).where(
+            MessageLog.source == "broadcast",
+            MessageLog.source_id.isnot(None),
+        )
+        subq = _apply_filters(
+            subq, account_ids,
+            start_time=start_dt, end_time=end_dt,
+        )
+        subq = subq.group_by(
+            MessageLog.source_id,
+            MessageLog.recipient,
+        ).subquery()
+
+        # Aggregate per broadcast
+        result = await db.execute(
+            select(
+                subq.c.source_id,
+                func.count(literal_column("1")).label("total"),
+                func.sum(subq.c.group_success).label("successful"),
+                func.min(subq.c.first_activity).label("first_activity"),
+                func.max(subq.c.latest_activity).label("latest_activity"),
+            ).select_from(subq).group_by(subq.c.source_id)
+        )
+
+        items = []
+        for row in result.all():
+            total = row.total or 0
+            successful = row.successful or 0
+            failed = total - successful
+            rate = (successful / total * 100.0) if total > 0 else 0.0
+            items.append(LogicalBroadcastItem(
+                broadcast_id=row.source_id,
+                total_recipients=total,
+                successful=successful,
+                failed=failed,
+                success_rate=round(rate, 1),
+                first_activity=row.first_activity.isoformat() if row.first_activity else None,
+                latest_activity=row.latest_activity.isoformat() if row.latest_activity else None,
+            ))
+        return items
+
+
 # ─── Overview Endpoint ───────────────────────────────────────────────
 
 
@@ -613,14 +801,9 @@ async def get_overview(
 ) -> OverviewResult:
     """Single aggregated analytics overview.
 
-    Reuses existing service functions to avoid duplicating query logic.
-    Executes multiple queries in sequence (not parallel) to keep connection
-    usage predictable. Response is bounded by design — top_accounts is
-    limited, timeline uses day interval, failure_breakdown uses enhanced
-    intelligence.
-
-    Returns None for sections that have no data rather than empty defaults
-    to let the caller distinguish "no data" from "not requested".
+    Includes both attempt-level metrics (summary, by_source, etc.) and
+    logical delivery metrics (logical) so the frontend can distinguish
+    them. All sections are None when no data exists.
     """
     summary = await get_summary(
         identity, account_id=account_id, days=days,
@@ -643,6 +826,10 @@ async def get_overview(
         interval="day",
         start_time=start_time, end_time=end_time,
     )
+    logical = await get_logical_summary(
+        identity, account_id=account_id, days=days,
+        start_time=start_time, end_time=end_time,
+    )
 
     return OverviewResult(
         summary=summary if summary.total_attempted > 0 else None,
@@ -650,4 +837,5 @@ async def get_overview(
         top_accounts=top_accounts[:5] if top_accounts else None,
         failure_breakdown=failure_breakdown if failure_breakdown else None,
         timeline=timeline if timeline else None,
+        logical=logical if logical.total_recipients > 0 else None,
     )

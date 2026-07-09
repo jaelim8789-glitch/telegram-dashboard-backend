@@ -20,6 +20,8 @@ from app.services.delivery_analytics import (
     get_source_analytics,
     get_broadcast_analytics,
     get_failure_intelligence,
+    get_logical_summary,
+    get_logical_broadcast_analytics,
     get_overview,
 )
 
@@ -214,6 +216,49 @@ async def api_overview(
     Response is bounded by design.
     """
     result = await get_overview(
+        identity, account_id=account_id, days=days,
+        start_time=start_time, end_time=end_time,
+    )
+    return result
+
+
+@router.get("/logical/summary")
+async def api_logical_summary(
+    account_id: str | None = None,
+    days: int = Query(default=30, le=365, ge=1),
+    source: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get logical-delivery-level summary.
+
+    Groups by (account_id, source, source_id, recipient). Retries are
+    collapsed into one outcome per recipient. total_recipients counts
+    distinct recipients, not attempts.
+    """
+    result = await get_logical_summary(
+        identity, account_id=account_id, days=days,
+        source=source,
+        start_time=start_time, end_time=end_time,
+    )
+    return result
+
+
+@router.get("/logical/broadcasts")
+async def api_logical_broadcast_analytics(
+    account_id: str | None = None,
+    days: int = Query(default=30, le=365, ge=1),
+    start_time: str | None = None,
+    end_time: str | None = None,
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get per-broadcast logical delivery analytics.
+
+    Retries within a broadcast are collapsed into one outcome per recipient.
+    total_recipients counts distinct recipients, not attempts.
+    """
+    result = await get_logical_broadcast_analytics(
         identity, account_id=account_id, days=days,
         start_time=start_time, end_time=end_time,
     )

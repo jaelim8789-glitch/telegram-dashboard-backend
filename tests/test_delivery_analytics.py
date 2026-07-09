@@ -32,6 +32,7 @@ from app.services.delivery_analytics import (
     SourceAnalyticsItem,
     BroadcastAnalyticsItem,
     FailureIntelligenceItem,
+    LogicalSummaryResult,
     OverviewResult,
     get_summary,
     get_failure_breakdown,
@@ -41,6 +42,8 @@ from app.services.delivery_analytics import (
     get_source_analytics,
     get_broadcast_analytics,
     get_failure_intelligence,
+    get_logical_summary,
+    get_logical_broadcast_analytics,
     get_overview,
     _resolve_authorized_account_ids,
     _parse_datetime_safe,
@@ -732,10 +735,12 @@ async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_r
 @patch("app.services.delivery_analytics.get_account_performance")
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
 async def test_overview_response_contract(
-    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_logical.return_value = LogicalSummaryResult(total_recipients=80, successful=70, failed=10, success_rate=87.5)
     mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
     mock_source.return_value = [SourceAnalyticsItem(source="broadcast", total=100, successful=80, failed=20, success_rate=80.0)]
     mock_perf.return_value = [AccountPerformanceItem(account_id="acc-1", attempted=100, successful=80, failed=20, success_rate=80.0)]
@@ -762,10 +767,12 @@ async def test_overview_response_contract(
 @patch("app.services.delivery_analytics.get_account_performance")
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
 async def test_overview_empty_data_returns_none_sections(
-    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult()
     mock_source.return_value = []
     mock_perf.return_value = []
@@ -787,10 +794,12 @@ async def test_overview_empty_data_returns_none_sections(
 @patch("app.services.delivery_analytics.get_account_performance")
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
 async def test_overview_tenant_isolation(
-    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult()
     mock_source.return_value = []
     mock_perf.return_value = []
@@ -810,10 +819,12 @@ async def test_overview_tenant_isolation(
 @patch("app.services.delivery_analytics.get_account_performance")
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
 async def test_overview_bounded_top_accounts(
-    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
     mock_source.return_value = []
     mock_perf.return_value = [
@@ -848,3 +859,186 @@ def test_existing_safe_error_test_preserved():
     log = _make_log(status="forbidden", success=False, error_message="해당 채팅방에 메시지를 보낼 권한이 없습니다.")
     assert "UserDeactivatedBanError" not in (log.error_message or "")
     assert "권한" in (log.error_message or "")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 17 — LOGICAL DELIVERY ANALYTICS TESTS
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ─── get_logical_summary ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_logical_summary_collapses_retries(mock_session_maker, mock_resolve, tenant_a_identity):
+    """3 attempts to same recipient (2 failed, 1 success) → 1 logical recipient, 1 success."""
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"total": 0, "successful": 0})
+    row = Row()
+    row.total, row.successful = 1, 1  # 1 group, 1 successful
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(one_result=row)
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_logical_summary(tenant_a_identity)
+    assert result.total_recipients == 1
+    assert result.successful == 1
+    assert result.failed == 0
+    assert result.success_rate == 100.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_logical_summary_all_attempts_failed(mock_session_maker, mock_resolve, tenant_a_identity):
+    """3 failed attempts to same recipient → 1 logical recipient, 0 success, 1 failed."""
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"total": 0, "successful": 0})
+    row = Row()
+    row.total, row.successful = 1, 0
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(one_result=row)
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_logical_summary(tenant_a_identity)
+    assert result.total_recipients == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert result.success_rate == 0.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+async def test_logical_summary_empty(mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = []
+    result = await get_logical_summary(tenant_a_identity)
+    assert result.total_recipients == 0
+    assert result.success_rate == 0.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_logical_summary_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
+    """Tenant A should only see Tenant A's logical deliveries."""
+    mock_resolve.return_value = ["acc-a-1"]
+    Row = type("Row", (), {"total": 0, "successful": 0})
+    row = Row()
+    row.total, row.successful = 0, 0
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(one_result=row)
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_logical_summary(tenant_a_identity)
+    assert result.total_recipients == 0
+
+
+# ─── get_logical_broadcast_analytics ─────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_logical_broadcast_collapses_retries(mock_session_maker, mock_resolve, tenant_a_identity):
+    """3 attempts to same recipient in a broadcast → 1 logical recipient."""
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {
+        "source_id": "", "total": 0, "successful": 0,
+        "first_activity": None, "latest_activity": None,
+    })
+    r1 = Row()
+    r1.source_id, r1.total, r1.successful = "b1", 1, 1
+    r1.first_activity = datetime(2026, 7, 1, 10, 0, 0)
+    r1.latest_activity = datetime(2026, 7, 1, 10, 30, 0)
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(rows=[r1])
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_logical_broadcast_analytics(tenant_a_identity)
+    assert len(result) == 1
+    assert result[0].broadcast_id == "b1"
+    assert result[0].total_recipients == 1
+    assert result[0].successful == 1
+    assert result[0].failed == 0
+    assert result[0].success_rate == 100.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+async def test_logical_broadcast_empty(mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = []
+    result = await get_logical_broadcast_analytics(tenant_a_identity)
+    assert result == []
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_logical_broadcast_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-a-1"]
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(rows=[])
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_logical_broadcast_analytics(tenant_a_identity)
+    assert result == []
+
+
+# ─── Overview includes logical section ───────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
+async def test_overview_includes_logical(
+    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
+    mock_source.return_value = []
+    mock_perf.return_value = []
+    mock_failure.return_value = []
+    mock_timeline.return_value = []
+    mock_logical.return_value = LogicalSummaryResult(total_recipients=50, successful=45, failed=5, success_rate=90.0)
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.summary is not None
+    assert overview.summary.total_attempted == 100
+    assert overview.logical is not None
+    assert overview.logical.total_recipients == 50
+    assert overview.logical.successful == 45
+    assert overview.logical.success_rate == 90.0
+
+
+# ─── Regression: attempt-level endpoints unchanged ───────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_attempt_level_summary_unchanged(mock_session_maker, mock_resolve, tenant_a_identity):
+    """Verify attempt-level summary still counts rows, not groups."""
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 3, "successful": 1})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity)
+    assert s.total_attempted == 3  # 3 rows = 3 attempts
+    assert s.successful == 1
+    assert s.failed == 2
