@@ -3,8 +3,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
+from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
 from app.services.broadcast_processor import process_broadcast
+from app.services.reply_macro_service import execute_reply_macro
+from app.services.usdt_watcher import check_usdt_payments
 
 logger = get_logger(__name__)
 
@@ -40,11 +43,33 @@ async def dispatch_due_broadcasts() -> None:
         await process_broadcast(broadcast_id)
 
 
+async def dispatch_due_reply_macros() -> None:
+    """Dispatch all reply macros that are due to be sent now."""
+    async with async_session_maker() as db:
+        due_macros = await macro_crud.list_active_macros_due(db)
+
+    for macro in due_macros:
+        logger.info("reply_macro_dispatched", macro_id=macro.id, account_id=macro.account_id)
+        await execute_reply_macro(macro.id)
+
+
 def start_scheduler() -> None:
     scheduler.add_job(
         dispatch_due_broadcasts,
         IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
         id="dispatch_due_broadcasts",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        dispatch_due_reply_macros,
+        IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
+        id="dispatch_due_reply_macros",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        check_usdt_payments,
+        IntervalTrigger(minutes=5),
+        id="check_usdt_payments",
         replace_existing=True,
     )
     scheduler.start()

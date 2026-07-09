@@ -14,3 +14,12 @@ OTP_CODE_LENGTH = 6
 OTP_EXPIRE_MINUTES = 5
 OTP_RESEND_COOLDOWN_SECONDS = 60
 OTP_MAX_ATTEMPTS = 5
+
+# Reply macro limits
+MACRO_MAX_TARGETS_PER_MACRO = 50  # max chats a single macro can target
+MACRO_MIN_INTERVAL_HOURS = 1  # minimum interval_hours for interval-type macros
+
+# Group search & join controls — user picks which groups to join, so it's not automated
+# spam, but we still limit daily joins per account to stay well within Telegram's rate
+# limits and avoid looking like a bot.
+MAX_DAILY_JOINS = 5
