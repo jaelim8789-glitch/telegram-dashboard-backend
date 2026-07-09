@@ -78,9 +78,11 @@ app.include_router(scheduler_router, dependencies=_auth_required)
 app.include_router(group_search_router, dependencies=_auth_required)
 app.include_router(auto_reply_router, dependencies=_auth_required)
 app.include_router(reply_macro_router, dependencies=_auth_required)
-app.include_router(billing_router)
+# billing and payment routers need auth for write operations
+app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
-app.include_router(features_router)
+# features router needs auth — tenant_id path param is not authentication
+app.include_router(features_router, dependencies=_auth_required)
 
 
 @app.get("/health")
