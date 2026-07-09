@@ -11,6 +11,7 @@ from telethon.errors import (
     UserDeactivatedError,
 )
 
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.core.crypto import decrypt_session, encrypt_session
 from app.core.logging import get_logger
 from app.crud import account as account_crud
@@ -35,7 +36,12 @@ def _config_error_to_http(exc: RuntimeError) -> HTTPException:
 
 
 @router.post("/{account_id}/send-code", response_model=SendCodeResponse)
-async def send_code(account_id: str, db: AsyncSession = Depends(get_db)):
+async def send_code(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
     try:
@@ -63,7 +69,13 @@ async def send_code(account_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{account_id}/verify-code", response_model=AuthStepResult)
-async def verify_code(account_id: str, payload: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+async def verify_code(
+    account_id: str,
+    payload: VerifyCodeRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
     pending = pool.get_pending_auth(account.id)
@@ -106,7 +118,13 @@ async def verify_code(account_id: str, payload: VerifyCodeRequest, db: AsyncSess
 
 
 @router.post("/{account_id}/verify-2fa", response_model=AuthStepResult)
-async def verify_2fa(account_id: str, payload: Verify2FARequest, db: AsyncSession = Depends(get_db)):
+async def verify_2fa(
+    account_id: str,
+    payload: Verify2FARequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
     try:
@@ -134,7 +152,12 @@ async def verify_2fa(account_id: str, payload: Verify2FARequest, db: AsyncSessio
 
 
 @router.get("/{account_id}/status", response_model=AuthStepResult)
-async def get_status(account_id: str, db: AsyncSession = Depends(get_db)):
+async def get_status(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
     if not account.session_data:
