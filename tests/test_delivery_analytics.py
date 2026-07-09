@@ -667,22 +667,15 @@ async def test_broadcast_analytics_tenant_isolation(mock_session_maker, mock_res
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_failure_intelligence(mock_session_maker, mock_resolve, tenant_a_identity):
     mock_resolve.return_value = ["acc-1"]
-    Row = type("Row", (), {
-        "status": "", "count": 0, "affected_accounts": 0, "latest_occurrence": None,
-    })
+    Row = type("Row", (), {"status": "", "count": 0, "affected_accounts": 0, "latest_occurrence": None, "total_failures": 0})
     r1 = Row()
-    r1.status, r1.count, r1.affected_accounts = "flood_wait", 10, 2
+    r1.status, r1.count, r1.affected_accounts, r1.total_failures = "flood_wait", 10, 2, 15
     r1.latest_occurrence = datetime(2026, 7, 1, 12, 0, 0)
     r2 = Row()
-    r2.status, r2.count, r2.affected_accounts = "forbidden", 5, 1
+    r2.status, r2.count, r2.affected_accounts, r2.total_failures = "forbidden", 5, 1, 15
     r2.latest_occurrence = datetime(2026, 7, 1, 14, 0, 0)
-
-    # First call gets total_failures, second call gets breakdown
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [
-        _mock_result(scalar_result=15),  # total_failures
-        _mock_result(rows=[r1, r2]),      # breakdown
-    ]
+    mock_db.execute.return_value = _mock_result(rows=[r1, r2])
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_db
     mock_session_maker.return_value = mock_session
@@ -711,15 +704,12 @@ async def test_failure_intelligence_empty(mock_resolve, tenant_a_identity):
 async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_resolve, tenant_a_identity):
     """Verify failure intelligence never exposes raw exception details."""
     mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"status": "", "count": 0, "affected_accounts": 0, "latest_occurrence": None, "total_failures": 0})
+    r1 = Row()
+    r1.status, r1.count, r1.affected_accounts, r1.total_failures = "internal_error", 5, 1, 5
+    r1.latest_occurrence = datetime(2026, 7, 1, 12, 0, 0)
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [
-        _mock_result(scalar_result=5),
-        _mock_result(rows=[type("Row", (), {
-            "status": "internal_error", "count": 5,
-            "affected_accounts": 1,
-            "latest_occurrence": datetime(2026, 7, 1, 12, 0, 0),
-        })()]),
-    ]
+    mock_db.execute.return_value = _mock_result(rows=[r1])
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_db
     mock_session_maker.return_value = mock_session
