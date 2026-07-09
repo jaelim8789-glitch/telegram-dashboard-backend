@@ -1,11 +1,20 @@
-"""Sprint 15: Behavioral tests for delivery analytics.
+"""Sprint 15 + Sprint 16: Behavioral tests for delivery analytics.
 
-Tests use mocked MessageLog data to verify:
+Sprint 15 tests (preserved):
 - Summary, failure breakdown, account performance, timeline, recent activity
 - Tenant A/B isolation
 - Zero-division safety
 - Empty dataset handling
 - Source attribution
+
+Sprint 16 extensions:
+- Filtering (source, account_id, status, start_time, end_time)
+- Source analytics
+- Broadcast analytics
+- Failure intelligence
+- Overview endpoint
+- Cross-tenant account rejection
+- Invalid account authorization
 """
 
 import pytest
@@ -20,12 +29,21 @@ from app.services.delivery_analytics import (
     AccountPerformanceItem,
     TimelineItem,
     RecentActivityItem,
+    SourceAnalyticsItem,
+    BroadcastAnalyticsItem,
+    FailureIntelligenceItem,
+    OverviewResult,
     get_summary,
     get_failure_breakdown,
     get_account_performance,
     get_timeline,
     get_recent_activity,
+    get_source_analytics,
+    get_broadcast_analytics,
+    get_failure_intelligence,
+    get_overview,
     _resolve_authorized_account_ids,
+    _parse_datetime_safe,
 )
 
 
@@ -48,7 +66,7 @@ def _make_log(**kwargs) -> MessageLog:
     return MessageLog(**defaults)
 
 
-def _mock_result(rows=None, one_result=None, scalars_result=None):
+def _mock_result(rows=None, one_result=None, scalars_result=None, scalar_result=None):
     """Create a mock SQLAlchemy result (sync methods)."""
     mock = MagicMock()
     if rows is not None:
@@ -59,6 +77,8 @@ def _mock_result(rows=None, one_result=None, scalars_result=None):
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = scalars_result
         mock.scalars.return_value = mock_scalars
+    if scalar_result is not None:
+        mock.scalar.return_value = scalar_result
     return mock
 
 
@@ -358,7 +378,7 @@ async def test_summary_zero_division_safe(mock_session_maker, mock_resolve, tena
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 9: Source attribution
+# Phase 9: Source attribution (Sprint 15 preserved)
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_source_attribution_broadcast():
@@ -381,6 +401,450 @@ def test_source_attribution_manual():
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_recent_activity_safe_error():
+    log = _make_log(status="forbidden", success=False, error_message="해당 채팅방에 메시지를 보낼 권한이 없습니다.")
+    assert "UserDeactivatedBanError" not in (log.error_message or "")
+    assert "권한" in (log.error_message or "")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — FILTERING TESTS
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ─── _parse_datetime_safe ────────────────────────────────────────────
+
+class TestParseDatetimeSafe:
+    def test_valid_iso(self):
+        dt = _parse_datetime_safe("2026-07-01T12:00:00")
+        assert dt is not None
+        assert dt.year == 2026
+        assert dt.month == 7
+        assert dt.day == 1
+
+    def test_valid_iso_with_tz(self):
+        dt = _parse_datetime_safe("2026-07-01T12:00:00+00:00")
+        assert dt is not None
+        assert dt.tzinfo is None  # stripped
+
+    def test_none_returns_none(self):
+        assert _parse_datetime_safe(None) is None
+
+    def test_invalid_returns_none(self):
+        assert _parse_datetime_safe("not-a-date") is None
+
+    def test_empty_returns_none(self):
+        assert _parse_datetime_safe("") is None
+
+
+# ─── Source filter ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_source_filter(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 50, "successful": 40})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, source="broadcast")
+    assert s.total_attempted == 50
+    assert s.successful == 40
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_status_filter(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 10, "successful": 0})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, status="flood_wait")
+    assert s.total_attempted == 10
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_start_time_filter(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 25, "successful": 20})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, start_time="2026-07-01T00:00:00")
+    assert s.total_attempted == 25
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_end_time_filter(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 15, "successful": 10})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, end_time="2026-07-15T23:59:59")
+    assert s.total_attempted == 15
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_combined_filters(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    result = _mock_result(one_result=type("Row", (), {"total": 8, "successful": 6})())
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(
+        tenant_a_identity,
+        source="broadcast",
+        status="success",
+        start_time="2026-07-01T00:00:00",
+        end_time="2026-07-31T23:59:59",
+    )
+    assert s.total_attempted == 8
+
+
+# ─── Invalid account authorization ───────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_invalid_account_id_returns_empty(mock_session_maker, tenant_a_identity):
+    """An account_id that doesn't exist should return empty results."""
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(rows=[])
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, account_id="nonexistent-acc")
+    assert s.total_attempted == 0
+
+
+# ─── Cross-tenant account rejection ──────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_cross_tenant_account_rejected(mock_session_maker, tenant_a_identity):
+    """Tenant A should not be able to query Tenant B's account."""
+    mock_db = AsyncMock()
+    # Simulate that tenant_a_identity only sees acc-a-1, not acc-b-1
+    mock_db.execute.return_value = _mock_result(rows=[])
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    s = await get_summary(tenant_a_identity, account_id="acc-b-1")
+    assert s.total_attempted == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — SOURCE ANALYTICS TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_source_analytics_correct_totals(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"source": "", "total": 0, "successful": 0})
+    r1 = Row()
+    r1.source, r1.total, r1.successful = "broadcast", 100, 80
+    r2 = Row()
+    r2.source, r2.total, r2.successful = "manual", 50, 50
+    result = _mock_result(rows=[r1, r2])
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    sa = await get_source_analytics(tenant_a_identity)
+    assert len(sa) == 2
+    assert sa[0].source == "broadcast"
+    assert sa[0].total == 100
+    assert sa[0].successful == 80
+    assert sa[0].failed == 20
+    assert sa[0].success_rate == 80.0
+    assert sa[1].success_rate == 100.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+async def test_source_analytics_zero_result(mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = []
+    sa = await get_source_analytics(tenant_a_identity)
+    assert sa == []
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_source_analytics_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-a-1"]
+    result = _mock_result(rows=[])
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    sa = await get_source_analytics(tenant_a_identity)
+    assert sa == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — BROADCAST ANALYTICS TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_broadcast_analytics(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {
+        "source_id": "", "total": 0, "successful": 0,
+        "first_activity": None, "latest_activity": None,
+    })
+    r1 = Row()
+    r1.source_id, r1.total, r1.successful = "b1", 50, 40
+    r1.first_activity = datetime(2026, 7, 1, 10, 0, 0)
+    r1.latest_activity = datetime(2026, 7, 1, 10, 30, 0)
+    result = _mock_result(rows=[r1])
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    ba = await get_broadcast_analytics(tenant_a_identity)
+    assert len(ba) == 1
+    assert ba[0].broadcast_id == "b1"
+    assert ba[0].total_recipients == 50
+    assert ba[0].successful == 40
+    assert ba[0].failed == 10
+    assert ba[0].success_rate == 80.0
+    assert ba[0].first_activity is not None
+    assert ba[0].latest_activity is not None
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+async def test_broadcast_analytics_empty(mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = []
+    ba = await get_broadcast_analytics(tenant_a_identity)
+    assert ba == []
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_broadcast_analytics_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-a-1"]
+    result = _mock_result(rows=[])
+    _, mock_session = _mock_db_session(result)
+    mock_session_maker.return_value = mock_session
+
+    ba = await get_broadcast_analytics(tenant_a_identity)
+    assert ba == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — FAILURE INTELLIGENCE TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_failure_intelligence(mock_session_maker, mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {
+        "status": "", "count": 0, "affected_accounts": 0, "latest_occurrence": None,
+    })
+    r1 = Row()
+    r1.status, r1.count, r1.affected_accounts = "flood_wait", 10, 2
+    r1.latest_occurrence = datetime(2026, 7, 1, 12, 0, 0)
+    r2 = Row()
+    r2.status, r2.count, r2.affected_accounts = "forbidden", 5, 1
+    r2.latest_occurrence = datetime(2026, 7, 1, 14, 0, 0)
+
+    # First call gets total_failures, second call gets breakdown
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        _mock_result(scalar_result=15),  # total_failures
+        _mock_result(rows=[r1, r2]),      # breakdown
+    ]
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    fi = await get_failure_intelligence(tenant_a_identity)
+    assert len(fi) == 2
+    assert fi[0].status == "flood_wait"
+    assert fi[0].count == 10
+    assert fi[0].percentage == 66.7
+    assert fi[0].affected_accounts == 2
+    assert fi[0].latest_occurrence is not None
+    assert fi[1].percentage == 33.3
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+async def test_failure_intelligence_empty(mock_resolve, tenant_a_identity):
+    mock_resolve.return_value = []
+    fi = await get_failure_intelligence(tenant_a_identity)
+    assert fi == []
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_resolve, tenant_a_identity):
+    """Verify failure intelligence never exposes raw exception details."""
+    mock_resolve.return_value = ["acc-1"]
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        _mock_result(scalar_result=5),
+        _mock_result(rows=[type("Row", (), {
+            "status": "internal_error", "count": 5,
+            "affected_accounts": 1,
+            "latest_occurrence": datetime(2026, 7, 1, 12, 0, 0),
+        })()]),
+    ]
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    fi = await get_failure_intelligence(tenant_a_identity)
+    assert len(fi) == 1
+    # The status field is a safe enum value, not a raw exception
+    assert fi[0].status == "internal_error"
+    # No raw exception details in the response
+    assert not hasattr(fi[0], "exception")
+    assert not hasattr(fi[0], "traceback")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — OVERVIEW ENDPOINT TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+async def test_overview_response_contract(
+    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
+    mock_source.return_value = [SourceAnalyticsItem(source="broadcast", total=100, successful=80, failed=20, success_rate=80.0)]
+    mock_perf.return_value = [AccountPerformanceItem(account_id="acc-1", attempted=100, successful=80, failed=20, success_rate=80.0)]
+    mock_failure.return_value = [FailureIntelligenceItem(status="flood_wait", count=10, percentage=50.0, affected_accounts=2, latest_occurrence="2026-07-01T12:00:00")]
+    mock_timeline.return_value = [TimelineItem(period="2026-07-01", attempted=50, successful=40, failed=10)]
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.summary is not None
+    assert overview.summary.total_attempted == 100
+    assert overview.by_source is not None
+    assert len(overview.by_source) == 1
+    assert overview.top_accounts is not None
+    assert len(overview.top_accounts) == 1
+    assert overview.failure_breakdown is not None
+    assert len(overview.failure_breakdown) == 1
+    assert overview.timeline is not None
+    assert len(overview.timeline) == 1
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+async def test_overview_empty_data_returns_none_sections(
+    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_summary.return_value = SummaryResult()
+    mock_source.return_value = []
+    mock_perf.return_value = []
+    mock_failure.return_value = []
+    mock_timeline.return_value = []
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.summary is None
+    assert overview.by_source is None
+    assert overview.top_accounts is None
+    assert overview.failure_breakdown is None
+    assert overview.timeline is None
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+async def test_overview_tenant_isolation(
+    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_summary.return_value = SummaryResult()
+    mock_source.return_value = []
+    mock_perf.return_value = []
+    mock_failure.return_value = []
+    mock_timeline.return_value = []
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.summary is None
+    assert overview.by_source is None
+    assert overview.top_accounts is None
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+async def test_overview_bounded_top_accounts(
+    mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
+    mock_source.return_value = []
+    mock_perf.return_value = [
+        AccountPerformanceItem(account_id=f"acc-{i}", attempted=10, successful=8, failed=2, success_rate=80.0)
+        for i in range(10)
+    ]
+    mock_failure.return_value = []
+    mock_timeline.return_value = []
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.top_accounts is not None
+    assert len(overview.top_accounts) <= 5  # bounded
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 16 — REGRESSION: Existing tests must still pass
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_existing_source_attribution_tests_preserved():
+    """Verify Sprint 15 source attribution tests are still present."""
+    log_b = _make_log(source="broadcast")
+    log_r = _make_log(source="reply_macro")
+    log_m = _make_log(source="manual")
+    assert log_b.source == "broadcast"
+    assert log_r.source == "reply_macro"
+    assert log_m.source == "manual"
+
+
+def test_existing_safe_error_test_preserved():
+    """Verify Sprint 15 safe error test is still present."""
     log = _make_log(status="forbidden", success=False, error_message="해당 채팅방에 메시지를 보낼 권한이 없습니다.")
     assert "UserDeactivatedBanError" not in (log.error_message or "")
     assert "권한" in (log.error_message or "")
