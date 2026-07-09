@@ -99,6 +99,40 @@ async def list_due_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
     return list(result.scalars().all())
 
 
+async def claim_broadcast_dispatch(db: AsyncSession, broadcast_id: str) -> bool:
+    """Atomically claim a broadcast for dispatch.
+
+    Sets status to 'sending' only if currently 'pending'.
+    Returns True if claimed, False if another tick/worker already claimed it.
+    """
+    result = await db.execute(
+        select(Broadcast).where(
+            Broadcast.id == broadcast_id,
+            Broadcast.status == "pending",
+        ).with_for_update()
+    )
+    broadcast = result.scalar_one_or_none()
+    if broadcast is None:
+        return False
+    broadcast.status = "sending"
+    await db.commit()
+    return True
+
+
+async def record_broadcast_error(db: AsyncSession, broadcast_id: str, error_message: str) -> None:
+    """Record a safe error message on a broadcast without changing its status.
+
+    Only updates if the broadcast is still in a non-terminal state.
+    """
+    broadcast = await db.get(Broadcast, broadcast_id)
+    if broadcast is None:
+        return
+    if broadcast.status in ("sent", "failed"):
+        return
+    broadcast.error_message = error_message[:500]  # truncate to fit column
+    await db.commit()
+
+
 async def list_upcoming_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
     now = utcnow_naive()
     result = await db.execute(

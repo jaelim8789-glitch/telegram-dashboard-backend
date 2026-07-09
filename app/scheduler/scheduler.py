@@ -1,3 +1,17 @@
+"""Scheduler — recurring dispatch of due broadcasts and reply macros.
+
+Reliability semantics (Sprint 22):
+- Each dispatch function wraps execution in try/except to prevent one
+  failure from crashing the entire tick.
+- Broadcasts use atomic claim (status='sending') to prevent duplicate
+  concurrent execution across ticks or workers.
+- Reply macros already use claim_macro_dispatch for atomicity.
+- Failed executions record safe error messages on the schedule record
+  without disabling valid schedules.
+- In-memory concurrency guard prevents the same schedule from being
+  dispatched twice simultaneously within the same process.
+"""
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -11,20 +25,32 @@ from app.services.usdt_watcher import check_usdt_payments
 
 logger = get_logger(__name__)
 
-# Checked frequently (not every 30 min) so a broadcast scheduled for e.g. 14:05 actually
-# fires close to 14:05, not up to half an hour late. Also the natural retry interval for
-# a scheduled broadcast that's still within another one's 1-per-minute cooldown — see
-# below, it's simply left "pending" and picked up again on the next tick.
 DISPATCH_INTERVAL_SECONDS = 30
 
 scheduler = AsyncIOScheduler()
 
+# In-memory concurrency guard: set of schedule IDs currently being executed.
+# Prevents duplicate concurrent execution of the same schedule within this process.
+_running_broadcasts: set[str] = set()
+_running_macros: set[str] = set()
+
 
 async def dispatch_due_broadcasts() -> None:
+    """Dispatch all due scheduled broadcasts with error isolation.
+
+    Each broadcast is processed independently — one failure does not
+    block others. Atomic claim via status='sending' prevents duplicate
+    execution across ticks or workers.
+    """
     async with async_session_maker() as db:
         due = await broadcast_crud.list_due_scheduled_broadcasts(db)
         ready_ids: list[str] = []
         for broadcast in due:
+            # Skip if already running in this process
+            if broadcast.id in _running_broadcasts:
+                logger.info("scheduled_broadcast_skipped_already_running", broadcast_id=broadcast.id)
+                continue
+
             wait_seconds = await broadcast_crud.seconds_until_next_allowed_broadcast(
                 db, broadcast.account_id, exclude_id=broadcast.id
             )
@@ -39,20 +65,54 @@ async def dispatch_due_broadcasts() -> None:
             ready_ids.append(broadcast.id)
 
     for broadcast_id in ready_ids:
-        logger.info("scheduled_broadcast_dispatched", broadcast_id=broadcast_id)
-        await process_broadcast(broadcast_id)
+        # Atomic claim: set status to 'sending' — skip if another tick/worker won
+        async with async_session_maker() as db:
+            claimed = await broadcast_crud.claim_broadcast_dispatch(db, broadcast_id)
+        if not claimed:
+            logger.info("scheduled_broadcast_skipped_already_claimed", broadcast_id=broadcast_id)
+            continue
+
+        _running_broadcasts.add(broadcast_id)
+        try:
+            logger.info("scheduled_broadcast_dispatched", broadcast_id=broadcast_id)
+            await process_broadcast(broadcast_id)
+        except Exception as exc:
+            logger.error(
+                "scheduled_broadcast_failed",
+                broadcast_id=broadcast_id,
+                error=str(exc),
+            )
+            # Record the error on the broadcast so it's visible to the user
+            try:
+                async with async_session_maker() as db:
+                    await broadcast_crud.record_broadcast_error(db, broadcast_id, str(exc))
+            except Exception as persist_err:
+                logger.error(
+                    "scheduled_broadcast_error_persist_failed",
+                    broadcast_id=broadcast_id,
+                    error=str(persist_err),
+                )
+        finally:
+            _running_broadcasts.discard(broadcast_id)
 
 
 async def dispatch_due_reply_macros() -> None:
     """Dispatch all reply macros that are due to be sent now.
-    
+
     Uses atomic claim_macro_dispatch to prevent double-execution
     across concurrent ticks, multiple workers, or restart.
+    Each macro is processed independently — one failure does not
+    block others.
     """
     async with async_session_maker() as db:
         due_macros = await macro_crud.list_active_macros_due(db)
 
     for macro in due_macros:
+        # Skip if already running in this process
+        if macro.id in _running_macros:
+            logger.info("reply_macro_skipped_already_running", macro_id=macro.id)
+            continue
+
         # Atomically claim this dispatch — skip if another tick/worker won
         async with async_session_maker() as db:
             claimed = await macro_crud.claim_macro_dispatch(db, macro.id)
@@ -60,8 +120,18 @@ async def dispatch_due_reply_macros() -> None:
             logger.info("reply_macro_skipped_already_claimed", macro_id=macro.id)
             continue
 
-        logger.info("reply_macro_dispatched", macro_id=macro.id, account_id=macro.account_id)
-        await execute_reply_macro(macro.id)
+        _running_macros.add(macro.id)
+        try:
+            logger.info("reply_macro_dispatched", macro_id=macro.id, account_id=macro.account_id)
+            await execute_reply_macro(macro.id)
+        except Exception as exc:
+            logger.error(
+                "reply_macro_failed",
+                macro_id=macro.id,
+                error=str(exc),
+            )
+        finally:
+            _running_macros.discard(macro.id)
 
 
 def start_scheduler() -> None:
