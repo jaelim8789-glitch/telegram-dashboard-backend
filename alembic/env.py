@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401 - ensures models are registered on Base.m
     GroupJoinLog,
     GroupSearchResult,
     Lead,
+    MessageLog,
     MessageTemplate,
     PaymentRecord,
     PhoneVerification,

@@ -2,7 +2,7 @@
 Canonical Telegram message delivery pipeline.
 
 Owns:
-1. Account resolution + tenant ownership validation
+1. Account resolution + DB lookup
 2. Session/client restoration
 3. Recipient resolution
 4. Send attempt with Telethon
@@ -10,7 +10,7 @@ Owns:
 6. MessageLog persistence
 7. Failure classification
 8. Retry decision
-9. Operational event publication
+9. Operational event publication via callback
 
 All Telegram send paths (broadcast, reply macro, auto reply, scheduled)
 should route through this pipeline.
@@ -43,6 +43,7 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import async_session_maker
 from app.models.account import Account
+from app.models.message_log import MessageLog
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ logger = get_logger(__name__)
 # ─── Failure Taxonomy ─────────────────────────────────────────────────
 
 
-class DeliveryStatus(enum.Enum):
+class DeliveryStatus(str, enum.Enum):
     SUCCESS = "success"
     FLOOD_WAIT = "flood_wait"
     NETWORK_ERROR = "network_error"
@@ -69,6 +70,13 @@ RECOVERABLE_STATUSES = {
 
 MAX_RETRIES = 3
 BASE_BACKOFF_SECONDS = 5.0
+MAX_WAIT_SECONDS = 60.0
+
+EVENT_QUEUED = "queued"
+EVENT_SENDING = "sending"
+EVENT_RETRYING = "retrying"
+EVENT_SENT = "sent"
+EVENT_FAILED = "failed"
 
 
 @dataclass
@@ -99,7 +107,7 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     """Classify a Telethon exception into a DeliveryStatus.
 
     Returns (status, safe_error_message).
-    Never exposes raw exception details to clients.
+    Never exposes raw exception details, session data, or secrets to clients.
     """
     if isinstance(exc, FloodWaitError):
         return DeliveryStatus.FLOOD_WAIT, f"텔레그램 속도 제한: {exc.seconds}초 대기 필요"
@@ -107,12 +115,12 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     if isinstance(exc, (UserDeactivatedBanError, PhoneNumberBannedError)):
         return DeliveryStatus.BANNED, "계정이 텔레그램에서 차단되었습니다."
 
-    if isinstance(exc, (UserIsBlockedError, ChatWriteForbiddenError, ChatAdminRequiredError,
-                        UserBannedInChannelError, UserKickedError)):
+    if isinstance(exc, (UserIsBlockedError, ChatWriteForbiddenError,
+                        ChatAdminRequiredError, UserBannedInChannelError, UserKickedError)):
         return DeliveryStatus.FORBIDDEN, "해당 채팅방에 메시지를 보낼 권한이 없습니다."
 
-    if isinstance(exc, (UsernameInvalidError, UsernameNotOccupiedError, UserNotParticipantError,
-                        InputUserDeactivatedError)):
+    if isinstance(exc, (UsernameInvalidError, UsernameNotOccupiedError,
+                        UserNotParticipantError, InputUserDeactivatedError)):
         return DeliveryStatus.INVALID_RECIPIENT, "유효하지 않은 수신자입니다."
 
     if isinstance(exc, AccountNotAuthenticatedError):
@@ -122,7 +130,7 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
         return DeliveryStatus.NETWORK_ERROR, "네트워크 오류가 발생했습니다. 다시 시도해주세요."
 
     if isinstance(exc, RPCError):
-        return DeliveryStatus.PERMANENT_FAILURE, f"텔레그램 오류: {exc.message}"
+        return DeliveryStatus.PERMANENT_FAILURE, "텔레그램에서 요청을 처리할 수 없습니다."
 
     return DeliveryStatus.INTERNAL_ERROR, "내부 오류가 발생했습니다."
 
@@ -147,21 +155,181 @@ async def _send_single(
         else:
             result = await client.send_message(target, message)
             msg_id = result.id
-        return DeliveryStatus.SUCCESS, msg_id, None, None
-    except Exception as exc:  # noqa: BLE001
+        return (DeliveryStatus.SUCCESS, msg_id, None, None)
+    except Exception as exc:
         status, safe_error = classify_error(exc)
         flood_wait = exc.seconds if isinstance(exc, FloodWaitError) else None
-        return status, None, safe_error, flood_wait
+        return (status, None, safe_error, flood_wait)
+
+
+async def _persist_log(
+    account_id: str,
+    recipient: str,
+    source: str,
+    source_id: str | None,
+    status: DeliveryStatus,
+    success: bool,
+    telegram_message_id: int | None,
+    error_message: str | None,
+    attempt_count: int,
+    message_content: str | None = None,
+) -> None:
+    """Persist a delivery attempt to MessageLog."""
+    async with async_session_maker() as db:
+        log = MessageLog(
+            account_id=account_id,
+            recipient=recipient,
+            source=source,
+            source_id=source_id,
+            status=status.value,
+            success=success,
+            telegram_message_id=telegram_message_id,
+            error_message=error_message,
+            attempt_count=attempt_count,
+            message_content=message_content,
+        )
+        db.add(log)
+        await db.commit()
+
+
+def _publish_event(
+    event_type: str,
+    result: DeliveryResult | None,
+    source: str,
+    source_id: str | None,
+    on_status_change: Callable | None = None,
+) -> None:
+    """Publish a delivery lifecycle event.
+
+    Uses the on_status_change callback for real-time notification.
+    No separate EventBus/WebSocket infrastructure exists in this repository;
+    the callback pattern allows integration without creating a second event system.
+    """
+    if on_status_change is None:
+        return
+    if result is None:
+        return
+    try:
+        on_status_change(result)
+    except Exception as exc:
+        logger.warning(f"delivery_callback_failed event={event_type} recipient={result.recipient} error={exc}")
+
+
+async def _deliver_with_retry(
+    client: TelegramClient,
+    target: int | str,
+    recipient: str,
+    message: str,
+    media_path: str | None,
+    source: str,
+    source_id: str | None,
+    account_id: str,
+    on_status_change: Callable | None = None,
+) -> DeliveryResult:
+    """Attempt delivery with retry for recoverable failures.
+
+    Idempotency: each attempt creates a separate MessageLog row.
+    The final authoritative state is the row with success=True.
+    Multiple failure rows with no matching success row = definitive failure.
+    """
+    attempt = 0
+    last_result: DeliveryResult | None = None
+
+    while attempt < MAX_RETRIES:
+        attempt += 1
+
+        if attempt > 1 and on_status_change:
+            _publish_event(EVENT_RETRYING, None, source, source_id, on_status_change)
+
+        status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path)
+
+        result = DeliveryResult(
+            status=status,
+            recipient=recipient,
+            telegram_message_id=msg_id,
+            error_message=safe_error,
+            flood_wait_seconds=flood_wait,
+            attempt_count=attempt,
+        )
+
+        # Persist every attempt
+        is_success = status == DeliveryStatus.SUCCESS
+        await _persist_log(
+            account_id=account_id,
+            recipient=recipient,
+            source=source,
+            source_id=source_id,
+            status=status,
+            success=is_success,
+            telegram_message_id=msg_id,
+            error_message=safe_error,
+            attempt_count=attempt,
+            message_content=message,
+        )
+
+        if is_success:
+            _publish_event(EVENT_SENT, result, source, source_id, on_status_change)
+            return result
+
+        if status not in RECOVERABLE_STATUSES:
+            _publish_event(EVENT_FAILED, result, source, source_id, on_status_change)
+            return result
+
+        # Recoverable: wait and retry
+        last_result = result
+        wait_time = flood_wait if flood_wait else BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+        capped_wait = min(wait_time, MAX_WAIT_SECONDS)
+        logger.info(
+            "delivery_retry",
+            recipient=recipient,
+            attempt=attempt,
+            status=status.value,
+            wait_seconds=round(capped_wait, 1),
+        )
+        await asyncio.sleep(capped_wait)
+
+    # All retries exhausted
+    if last_result is not None:
+        last_result.error_message = f"모든 재시도에 실패했습니다: {last_result.error_message}"
+        last_result.attempt_count = MAX_RETRIES
+        _publish_event(EVENT_FAILED, last_result, source, source_id, on_status_change)
+        return last_result
+
+    exhausted = DeliveryResult(
+        status=DeliveryStatus.NETWORK_ERROR,
+        recipient=recipient,
+        error_message="모든 재시도가 실패했습니다.",
+        attempt_count=MAX_RETRIES,
+    )
+    await _persist_log(
+        account_id=account_id,
+        recipient=recipient,
+        source=source,
+        source_id=source_id,
+        status=DeliveryStatus.NETWORK_ERROR,
+        success=False,
+        telegram_message_id=None,
+        error_message=exhausted.error_message,
+        attempt_count=MAX_RETRIES,
+        message_content=message,
+    )
+    _publish_event(EVENT_FAILED, exhausted, source, source_id, on_status_change)
+    return exhausted
 
 
 async def deliver_message(
     request: DeliveryRequest,
-    on_status_change: Callable[[DeliveryResult], None] | None = None,
+    on_status_change: Callable | None = None,
 ) -> list[DeliveryResult]:
     """Deliver a message to all recipients with retry logic.
 
     This is the canonical delivery pipeline. All Telegram send paths
     should use this function.
+
+    Tenant/account authorization must happen BEFORE calling this function.
+    This function does NOT enforce tenant boundaries — it resolves the
+    account from DB and sends. The calling layer (API route, service)
+    is responsible for authorization via require_account_tenant_access().
 
     Args:
         request: The delivery request.
@@ -177,90 +345,71 @@ async def deliver_message(
         account = await account_crud.get_account(db, request.account_id)
         if account is None:
             for recipient in request.recipients:
-                results.append(DeliveryResult(
+                result = DeliveryResult(
                     status=DeliveryStatus.INTERNAL_ERROR,
                     recipient=recipient,
                     error_message="계정을 찾을 수 없습니다.",
-                ))
+                )
+                await _persist_log(
+                    account_id=request.account_id,
+                    recipient=recipient,
+                    source=request.source,
+                    source_id=request.source_id,
+                    status=DeliveryStatus.INTERNAL_ERROR,
+                    success=False,
+                    telegram_message_id=None,
+                    error_message=result.error_message,
+                    attempt_count=1,
+                    message_content=request.message,
+                )
+                results.append(result)
             return results
 
-    # 2. Get authorized client
+    # 2. Get authorized client (decrypts session, checks authorization)
     try:
         client = await get_authorized_client(account)
     except AccountNotAuthenticatedError as exc:
         for recipient in request.recipients:
-            results.append(DeliveryResult(
+            result = DeliveryResult(
                 status=DeliveryStatus.SESSION_EXPIRED,
                 recipient=recipient,
                 error_message=str(exc),
-            ))
+            )
+            await _persist_log(
+                account_id=request.account_id,
+                recipient=recipient,
+                source=request.source,
+                source_id=request.source_id,
+                status=DeliveryStatus.SESSION_EXPIRED,
+                success=False,
+                telegram_message_id=None,
+                error_message=result.error_message,
+                attempt_count=1,
+                message_content=request.message,
+            )
+            results.append(result)
         return results
 
     # 3. Send to each recipient with retry
-    for recipient in request.recipients:
+    _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)
+
+    for i, recipient in enumerate(request.recipients):
         target = _resolve_target(recipient)
-        result = await _deliver_with_retry(client, target, recipient, request.message, request.media_path)
+        result = await _deliver_with_retry(
+            client=client,
+            target=target,
+            recipient=recipient,
+            message=request.message,
+            media_path=request.media_path,
+            source=request.source,
+            source_id=request.source_id,
+            account_id=request.account_id,
+            on_status_change=on_status_change,
+        )
         results.append(result)
-        if on_status_change:
-            on_status_change(result)
 
         # Pacing delay between recipients
-        if recipient != request.recipients[-1]:
+        if i < len(request.recipients) - 1:
             await asyncio.sleep(1.0)
 
     return results
-
-
-async def _deliver_with_retry(
-    client: TelegramClient,
-    target: int | str,
-    recipient: str,
-    message: str,
-    media_path: str | None,
-) -> DeliveryResult:
-    """Attempt delivery with retry for recoverable failures."""
-    attempt = 0
-    last_result: DeliveryResult | None = None
-
-    while attempt < MAX_RETRIES:
-        attempt += 1
-        status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path)
-
-        result = DeliveryResult(
-            status=status,
-            recipient=recipient,
-            telegram_message_id=msg_id,
-            error_message=safe_error,
-            flood_wait_seconds=flood_wait,
-            attempt_count=attempt,
-        )
-
-        if status == DeliveryStatus.SUCCESS:
-            return result
-
-        if status not in RECOVERABLE_STATUSES:
-            return result
-
-        # Recoverable: wait and retry
-        last_result = result
-        wait_time = flood_wait if flood_wait else BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
-        logger.info(
-            "delivery_retry",
-            recipient=recipient,
-            attempt=attempt,
-            status=status.value,
-            wait_seconds=round(wait_time, 1),
-        )
-        await asyncio.sleep(min(wait_time, 60.0))  # Cap at 60s
-
-    # All retries exhausted
-    if last_result:
-        last_result.error_message = f"모든 재시도 실패: {last_result.error_message}"
-        return last_result
-
-    return DeliveryResult(
-        status=DeliveryStatus.NETWORK_ERROR,
-        recipient=recipient,
-        error_message="모든 재시도가 실패했습니다.",
-        attempt_count=MAX_RETRIES,
-    )

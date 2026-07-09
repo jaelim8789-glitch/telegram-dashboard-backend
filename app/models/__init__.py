@@ -3,6 +3,7 @@ from app.models.api_key import APIKey
 from app.models.auto_reply import AutoReplyLog, AutoReplyRule
 from app.models.broadcast import Broadcast
 from app.models.group_search import GroupJoinLog, GroupSearchResult
+from app.models.message_log import MessageLog
 from app.models.message_template import FollowUpRule, MessageTemplate, TeamMember
 from app.models.reply_macro import ReplyMacro, ReplyMacroLog
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
@@ -18,6 +19,7 @@ __all__ = [
     "GroupJoinLog",
     "GroupSearchResult",
     "Lead",
+    "MessageLog",
     "MessageTemplate",
     "PaymentRecord",
     "PhoneVerification",
