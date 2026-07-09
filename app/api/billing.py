@@ -1,7 +1,8 @@
 """Billing / 결제 API — USDT + Telegram Stars only."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.deps import get_current_identity, Identity, require_tenant_access
 from app.core.logging import get_logger
 from app.services.billing import (
     cancel_subscription,
@@ -48,8 +49,14 @@ async def api_get_plans():
 
 
 @router.post("/usdt/invoice")
-async def api_create_usdt_invoice(tenant_id: str, plan: str, billing: str = "monthly"):
+async def api_create_usdt_invoice(
+    tenant_id: str,
+    plan: str,
+    billing: str = "monthly",
+    identity: Identity = Depends(get_current_identity),
+):
     """Create a USDT payment invoice."""
+    await require_tenant_access(tenant_id, identity)
     if billing not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing은 monthly 또는 annual이어야 합니다.")
     result = await create_usdt_invoice(tenant_id, plan, billing)
@@ -59,8 +66,13 @@ async def api_create_usdt_invoice(tenant_id: str, plan: str, billing: str = "mon
 
 
 @router.post("/usdt/confirm")
-async def api_confirm_usdt_payment(tenant_id: str, tx_hash: str):
+async def api_confirm_usdt_payment(
+    tenant_id: str,
+    tx_hash: str,
+    identity: Identity = Depends(get_current_identity),
+):
     """Confirm USDT payment (admin only in production)."""
+    await require_tenant_access(tenant_id, identity)
     result = await confirm_usdt_payment(tenant_id, tx_hash)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "결제 확인 실패"))
@@ -80,8 +92,13 @@ async def api_get_stars_invoice(item: str):
 
 
 @router.post("/stars/add")
-async def api_add_stars(tenant_id: str, stars_amount: int):
+async def api_add_stars(
+    tenant_id: str,
+    stars_amount: int,
+    identity: Identity = Depends(get_current_identity),
+):
     """Add Stars to wallet (after TG Stars purchase)."""
+    await require_tenant_access(tenant_id, identity)
     result = await add_stars_credit(tenant_id, stars_amount)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Stars 충전 실패"))
@@ -89,8 +106,13 @@ async def api_add_stars(tenant_id: str, stars_amount: int):
 
 
 @router.post("/stars/spend")
-async def api_spend_stars(tenant_id: str, item: str):
+async def api_spend_stars(
+    tenant_id: str,
+    item: str,
+    identity: Identity = Depends(get_current_identity),
+):
     """Spend Stars on an add-on item."""
+    await require_tenant_access(tenant_id, identity)
     from app.services.billing import STARS_PRICES
     stars_amount = STARS_PRICES.get(item)
     if not stars_amount:
@@ -105,14 +127,22 @@ async def api_spend_stars(tenant_id: str, item: str):
 
 
 @router.get("/subscription/{tenant_id}")
-async def api_get_subscription(tenant_id: str):
+async def api_get_subscription(
+    tenant_id: str,
+    identity: Identity = Depends(get_current_identity),
+):
     """Get current subscription status."""
+    await require_tenant_access(tenant_id, identity)
     return await get_subscription_status(tenant_id)
 
 
 @router.post("/subscription/{tenant_id}/cancel")
-async def api_cancel_subscription(tenant_id: str):
+async def api_cancel_subscription(
+    tenant_id: str,
+    identity: Identity = Depends(get_current_identity),
+):
     """Cancel subscription."""
+    await require_tenant_access(tenant_id, identity)
     result = await cancel_subscription(tenant_id)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "구독 취소 실패"))
