@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.account_health import router as account_health_router
 from app.api.accounts import router as accounts_router
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
@@ -84,6 +85,7 @@ app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
 # features router needs auth — tenant_id path param is not authentication
 app.include_router(features_router, dependencies=_auth_required)
+app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
 
 
