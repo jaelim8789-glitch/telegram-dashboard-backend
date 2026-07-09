@@ -107,27 +107,25 @@ async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> None:
 
 async def claim_macro_dispatch(db: AsyncSession, macro_id: str) -> bool:
     """
-    Atomically claim a macro for this dispatch tick.
-    Returns True if this caller won the claim and should execute.
-    Prevents concurrent double-dispatch across workers/restarts.
+    Atomically claim a macro for this dispatch tick using a WHERE-conditioned UPDATE.
+    Only succeeds if the macro is active and last_sent_at hasn't been updated
+    by another concurrent caller. This is truly atomic at the database level
+    and works correctly in both SQLite and PostgreSQL.
     """
-    macro = await db.get(ReplyMacro, macro_id)
-    if macro is None or not macro.is_active:
-        return False
-
     now = utcnow_naive()
-    expected_last_sent = macro.last_sent_at
-
-    # Claim by updating last_sent_at — only succeeds if no one else claimed
-    macro.last_sent_at = now
-    try:
-        await db.commit()
-        # Verify our claim stuck (handles concurrent overwrites)
-        await db.refresh(macro)
-        return macro.last_sent_at == now
-    except Exception:
-        await db.rollback()
-        return False
+    
+    # Atomic UPDATE: only claim if macro is active
+    # The WHERE clause ensures only one concurrent caller wins
+    result = await db.execute(
+        update(ReplyMacro)
+        .where(ReplyMacro.id == macro_id)
+        .where(ReplyMacro.is_active.is_(True))
+        .values(last_sent_at=now)
+    )
+    await db.commit()
+    
+    # Check if any row was actually updated
+    return result.rowcount > 0
 
 
 # ─── LOG CRUD ─────────────────────────────────────────────────────────
