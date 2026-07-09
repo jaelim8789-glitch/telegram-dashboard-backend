@@ -256,7 +256,6 @@ async def get_calendar_data(tenant_id: str, year: int | None = None, month: int 
     month_end = month_end.replace(hour=23, minute=59, second=59)
 
     async with async_session_maker() as db:
-        # Get all account IDs for this tenant
         account_ids_result = await db.execute(
             select(Account.id).where(Account.tenant_id == tenant_id)
         )

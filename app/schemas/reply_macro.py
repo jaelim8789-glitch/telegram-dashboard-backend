@@ -26,6 +26,9 @@ class ReplyMacroUpdate(BaseModel):
     is_active: bool | None = None
 
 
+import json
+
+
 class ReplyMacroRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,7 +36,7 @@ class ReplyMacroRead(BaseModel):
     account_id: str
     name: str
     is_active: bool
-    target_chats: str  # JSON string
+    target_chats: list[str]
     message_content: str
     media_path: str | None
     schedule_type: str
@@ -43,6 +46,16 @@ class ReplyMacroRead(BaseModel):
     last_sent_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_orm(cls, obj):
+        """Override to deserialize target_chats from JSON string."""
+        if isinstance(obj.target_chats, str):
+            try:
+                obj.target_chats = json.loads(obj.target_chats)
+            except (json.JSONDecodeError, TypeError):
+                obj.target_chats = [c.strip() for c in obj.target_chats.split(",") if c.strip()]
+        return super().from_orm(obj)
 
 
 class ReplyMacroLogRead(BaseModel):

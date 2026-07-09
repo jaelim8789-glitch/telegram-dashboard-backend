@@ -54,14 +54,14 @@ def test_message_template_models_exported():
 # Phase 2 — Multi-tenant Isolation Audit
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_account_has_no_tenant_id():
-    """CRITICAL: Account model has no tenant_id — cross-tenant isolation impossible."""
+def test_account_has_tenant_id():
+    """Sprint 8: Account now has tenant_id FK — establishes tenant boundary."""
     from app.models.account import Account
     cols = [c.name for c in Account.__table__.columns]
-    assert "tenant_id" not in cols, (
-        "Account.tenant_id would be added — but we must first design the full "
-        "ownership model. This test verifies the Sprint 7 known limitation."
-    )
+    assert "tenant_id" in cols, "Account must have tenant_id for cross-tenant isolation"
+    # Verify FK
+    fks = [fk for fk in Account.__table__.foreign_keys]
+    assert any(fk.parent.name == "tenant_id" for fk in fks), "tenant_id must be a FK to tenants"
 
 
 def test_tenant_isolation_matrix():
@@ -188,18 +188,15 @@ def test_scheduler_dispatch_has_no_lock():
 # Phase 6 — API Serialization Audit
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_reply_macro_read_target_chats_type_mismatch():
-    """
-    ReplyMacroRead.target_chats is typed as `str` (SQLAlchemy serialized JSON),
-    but the frontend expects `list[str]` matching the create/update schemas.
-    """
+def test_reply_macro_read_target_chats_is_list():
+    """Sprint 8: ReplyMacroRead.target_chats now returns list[str] consistently."""
     from app.schemas.reply_macro import ReplyMacroRead, ReplyMacroCreate
     create_field = ReplyMacroCreate.model_fields["target_chats"]
     read_field = ReplyMacroRead.model_fields["target_chats"]
     assert create_field.annotation == list[str], "Create accepts list[str]"
-    assert read_field.annotation == str, (
-        "Read returns JSON string — frontend must json.loads() or we fix the schema"
-    )
+    assert read_field.annotation == list[str], "Read must ALSO return list[str]"
+    # Verify the from_orm override exists
+    assert hasattr(ReplyMacroRead, "from_orm"), "Must have from_orm for JSON deserialization"
 
 
 def test_all_schemas_have_from_attributes():

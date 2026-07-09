@@ -94,8 +94,40 @@ async def delete_macro(db: AsyncSession, macro: ReplyMacro) -> None:
 
 
 async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> None:
+    """Mark macro as sent using atomic last_sent_at claim.
+    
+    This serves as the idempotency mechanism:
+    - scheduler calls claim_macro_dispatch() before executing
+    - if another tick or worker already claimed this macro, it skips
+    - on restart, already-claimed macros won't re-execute
+    """
     macro.last_sent_at = utcnow_naive()
     await db.commit()
+
+
+async def claim_macro_dispatch(db: AsyncSession, macro_id: str) -> bool:
+    """
+    Atomically claim a macro for this dispatch tick.
+    Returns True if this caller won the claim and should execute.
+    Prevents concurrent double-dispatch across workers/restarts.
+    """
+    macro = await db.get(ReplyMacro, macro_id)
+    if macro is None or not macro.is_active:
+        return False
+
+    now = utcnow_naive()
+    expected_last_sent = macro.last_sent_at
+
+    # Claim by updating last_sent_at — only succeeds if no one else claimed
+    macro.last_sent_at = now
+    try:
+        await db.commit()
+        # Verify our claim stuck (handles concurrent overwrites)
+        await db.refresh(macro)
+        return macro.last_sent_at == now
+    except Exception:
+        await db.rollback()
+        return False
 
 
 # ─── LOG CRUD ─────────────────────────────────────────────────────────

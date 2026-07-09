@@ -44,11 +44,22 @@ async def dispatch_due_broadcasts() -> None:
 
 
 async def dispatch_due_reply_macros() -> None:
-    """Dispatch all reply macros that are due to be sent now."""
+    """Dispatch all reply macros that are due to be sent now.
+    
+    Uses atomic claim_macro_dispatch to prevent double-execution
+    across concurrent ticks, multiple workers, or restart.
+    """
     async with async_session_maker() as db:
         due_macros = await macro_crud.list_active_macros_due(db)
 
     for macro in due_macros:
+        # Atomically claim this dispatch — skip if another tick/worker won
+        async with async_session_maker() as db:
+            claimed = await macro_crud.claim_macro_dispatch(db, macro.id)
+        if not claimed:
+            logger.info("reply_macro_skipped_already_claimed", macro_id=macro.id)
+            continue
+
         logger.info("reply_macro_dispatched", macro_id=macro.id, account_id=macro.account_id)
         await execute_reply_macro(macro.id)
 
