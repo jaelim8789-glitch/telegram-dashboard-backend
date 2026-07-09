@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.crud import account as account_crud
 from app.database import get_db
 from app.schemas.group import GroupRead
@@ -10,7 +11,12 @@ router = APIRouter(prefix="/api/accounts", tags=["groups"])
 
 
 @router.get("/{account_id}/groups", response_model=list[GroupRead])
-async def read_groups(account_id: str, db: AsyncSession = Depends(get_db)):
+async def read_groups(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")

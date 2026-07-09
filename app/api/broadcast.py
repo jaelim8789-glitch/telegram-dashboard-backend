@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
@@ -33,7 +34,10 @@ async def create_broadcast(
     ] = None,
     image: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
 ):
+    await require_account_tenant_access(account_id, db, identity)
+
     try:
         recipients_list = json.loads(recipients)
     except json.JSONDecodeError:
@@ -78,8 +82,17 @@ async def create_broadcast(
 
 
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
-async def read_broadcast(broadcast_id: str, db: AsyncSession = Depends(get_db)):
+async def read_broadcast(
+    broadcast_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
     if broadcast is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+    # Verify the broadcast's account belongs to the caller's tenant
+    account = await account_crud.get_account(db, broadcast.account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+    await require_account_tenant_access(broadcast.account_id, db, identity)
     return broadcast

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import group_search as group_search_crud
@@ -20,8 +21,13 @@ logger = get_logger(__name__)
 
 
 @router.post("/search", response_model=list[GroupSearchResultRead])
-async def search_groups(payload: GroupSearchRequest, db: AsyncSession = Depends(get_db)):
+async def search_groups(
+    payload: GroupSearchRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     """Search Telegram for public groups matching a keyword and store results."""
+    await require_account_tenant_access(payload.account_id, db, identity)
     account = await account_crud.get_account(db, payload.account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
@@ -47,8 +53,13 @@ async def search_groups(payload: GroupSearchRequest, db: AsyncSession = Depends(
 
 
 @router.get("/results/{account_id}", response_model=list[GroupSearchResultRead])
-async def get_search_results(account_id: str, db: AsyncSession = Depends(get_db)):
+async def get_search_results(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     """Get recent search results for an account."""
+    await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
@@ -56,7 +67,11 @@ async def get_search_results(account_id: str, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/join", response_model=list[dict])
-async def join_groups(payload: JoinGroupRequest, db: AsyncSession = Depends(get_db)):
+async def join_groups(
+    payload: JoinGroupRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     """Join selected groups from search results.
 
     Enforces daily join limit (MAX_DAILY_JOINS per account).
@@ -67,6 +82,7 @@ async def join_groups(payload: JoinGroupRequest, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="선택된 결과가 없습니다.")
 
     account_id = rows[0].account_id
+    await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
@@ -86,8 +102,13 @@ async def join_groups(payload: JoinGroupRequest, db: AsyncSession = Depends(get_
 
 
 @router.get("/join-info/{account_id}", response_model=JoinInfo)
-async def get_join_info(account_id: str, db: AsyncSession = Depends(get_db)):
+async def get_join_info(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     """Get daily join usage info for an account."""
+    await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
@@ -101,9 +122,14 @@ async def get_join_info(account_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/join-logs/{account_id}", response_model=list[GroupJoinLogRead])
-async def get_join_logs(account_id: str, db: AsyncSession = Depends(get_db)):
+async def get_join_logs(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     """Get join history for an account."""
+    await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
-    return await group_search_crud.get_join_logs(db, account_id)
+    return await group_search_crud.get_join_logs(db, account_id)

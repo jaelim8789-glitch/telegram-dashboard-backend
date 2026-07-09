@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import auto_reply as auto_reply_crud
@@ -28,14 +29,25 @@ async def _get_account_or_404(account_id: str, db: AsyncSession):
 
 
 @router.get("", response_model=AutoReplySettingsRead)
-async def read_settings(account_id: str, db: AsyncSession = Depends(get_db)):
+async def read_settings(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
     rules = await auto_reply_crud.list_rules(db, account_id)
     return AutoReplySettingsRead(account_id=account.id, auto_reply_enabled=account.auto_reply_enabled, rules=rules)
 
 
 @router.post("", response_model=AutoReplyRuleRead, status_code=status.HTTP_201_CREATED)
-async def create_rule(account_id: str, payload: AutoReplyRuleCreate, db: AsyncSession = Depends(get_db)):
+async def create_rule(
+    account_id: str,
+    payload: AutoReplyRuleCreate,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     rule = await auto_reply_crud.create_rule(db, account_id, payload)
     logger.info("auto_reply_rule_created", account_id=account_id, rule_id=rule.id)
@@ -43,7 +55,14 @@ async def create_rule(account_id: str, payload: AutoReplyRuleCreate, db: AsyncSe
 
 
 @router.put("/{rule_id}", response_model=AutoReplyRuleRead)
-async def update_rule(account_id: str, rule_id: str, payload: AutoReplyRuleUpdate, db: AsyncSession = Depends(get_db)):
+async def update_rule(
+    account_id: str,
+    rule_id: str,
+    payload: AutoReplyRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     rule = await auto_reply_crud.get_rule(db, rule_id)
     if rule is None or rule.account_id != account_id:
@@ -52,7 +71,13 @@ async def update_rule(account_id: str, rule_id: str, payload: AutoReplyRuleUpdat
 
 
 @router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_rule(account_id: str, rule_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_rule(
+    account_id: str,
+    rule_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     rule = await auto_reply_crud.get_rule(db, rule_id)
     if rule is None or rule.account_id != account_id:
@@ -62,7 +87,13 @@ async def delete_rule(account_id: str, rule_id: str, db: AsyncSession = Depends(
 
 
 @router.post("/toggle", response_model=AutoReplyToggleResponse)
-async def toggle(account_id: str, payload: AutoReplyToggleRequest, db: AsyncSession = Depends(get_db)):
+async def toggle(
+    account_id: str,
+    payload: AutoReplyToggleRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     try:
         if payload.enabled:
@@ -78,9 +109,11 @@ async def toggle(account_id: str, payload: AutoReplyToggleRequest, db: AsyncSess
 @router.get("/logs", response_model=list[AutoReplyLogRead])
 async def read_logs(
     account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
     rule_id: str | None = None,
     status_filter: str | None = None,
-    db: AsyncSession = Depends(get_db),
 ):
+    await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     return await auto_reply_crud.list_logs(db, account_id, rule_id=rule_id, status=status_filter)
