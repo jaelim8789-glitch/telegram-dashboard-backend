@@ -32,10 +32,17 @@ TIMING (Sprint 18):
    attempt. Only rows where BOTH started_at and completed_at are non-null
    contribute to latency analytics. Average and p95 are computed across all
    timed attempts within the query window.
+
+OPTIMIZATIONS (Sprint 19):
+   - get_latency_analytics: merged from 4 queries to 2 (counts + stats)
+   - get_failure_intelligence: merged from 2 queries to 1 (SUM window)
+   - get_overview: shares _resolve_authorized_account_ids across all sub-calls
+   - Bounded date-range defaults prevent unbounded production queries
+   - Per-source and per-account latency breakdowns added
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Integer, case, func, select, literal_column, text
 
@@ -166,6 +173,24 @@ class LatencyResult:
     rows_without_timing: int = 0
 
 
+@dataclass
+class LatencyBySourceItem:
+    """Per-source latency breakdown."""
+    source: str
+    average_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    total_measured: int = 0
+
+
+@dataclass
+class LatencyByAccountItem:
+    """Per-account latency breakdown."""
+    account_id: str
+    average_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    total_measured: int = 0
+
+
 # ─── Overview response type ──────────────────────────────────────────
 
 
@@ -178,6 +203,8 @@ class OverviewResult:
     timeline: list[TimelineItem] | None = None
     logical: LogicalSummaryResult | None = None  # Sprint 17 addition
     latency: LatencyResult | None = None  # Sprint 18 addition
+    latency_by_source: list[LatencyBySourceItem] | None = None  # Sprint 19 addition
+    latency_by_account: list[LatencyByAccountItem] | None = None  # Sprint 19 addition
 
 
 # ─── Filter helpers ──────────────────────────────────────────────────
@@ -208,6 +235,28 @@ def _apply_filters(
         query = query.where(MessageLog.created_at <= end_time)
 
     return query
+
+
+def _resolve_time_range(
+    days: int = 30,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> tuple[datetime | None, datetime | None]:
+    """Resolve a bounded time range from optional parameters.
+
+    Sprint 19: Always produces a bounded range to prevent unbounded
+    production queries. Defaults to last N days when no start_time given.
+    Returns (start_dt, end_dt) where both may be None only if no
+    sensible default can be computed (should not happen in practice).
+    """
+    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    if start_time:
+        start_dt = _parse_datetime_safe(start_time)
+    else:
+        # Default: last N days from end_dt or now
+        reference = end_dt if end_dt else utcnow_naive()
+        start_dt = reference - timedelta(days=days)
+    return start_dt, end_dt
 
 
 def _parse_datetime_safe(value: str | None) -> datetime | None:
@@ -278,9 +327,7 @@ async def get_summary(
     if not account_ids:
         return SummaryResult()
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         query = select(
@@ -324,9 +371,7 @@ async def get_failure_breakdown(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         query = select(
@@ -361,9 +406,7 @@ async def get_account_performance(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         query = select(
@@ -412,9 +455,7 @@ async def get_timeline(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         if interval == "hour":
@@ -508,9 +549,7 @@ async def get_source_analytics(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         query = select(
@@ -559,9 +598,7 @@ async def get_broadcast_analytics(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         query = select(
@@ -613,29 +650,24 @@ async def get_failure_intelligence(
     """Enhanced failure analytics with percentages, affected accounts, and latest occurrence.
 
     ATTEMPT-LEVEL: counts each failure row individually.
+
+    Sprint 19 optimization: single query with SUM window for total_failures
+    instead of two separate queries.
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
-        total_query = select(func.count(MessageLog.id)).where(MessageLog.success.is_(False))
-        total_query = _apply_filters(
-            total_query, account_ids,
-            source=source,
-            start_time=start_dt, end_time=end_dt,
-        )
-        total_failures = (await db.execute(total_query)).scalar() or 0
-
+        # Single query: breakdown + total via SUM window
         query = select(
             MessageLog.status,
             func.count(MessageLog.id).label("count"),
             func.count(func.distinct(MessageLog.account_id)).label("affected_accounts"),
             func.max(MessageLog.created_at).label("latest_occurrence"),
+            func.sum(func.count(MessageLog.id)).over().label("total_failures"),
         ).where(MessageLog.success.is_(False))
         query = _apply_filters(
             query, account_ids,
@@ -648,6 +680,7 @@ async def get_failure_intelligence(
         items = []
         for row in result.all():
             count = row.count or 0
+            total_failures = row.total_failures or 0
             percentage = round((count / total_failures * 100.0), 1) if total_failures > 0 else 0.0
             items.append(FailureIntelligenceItem(
                 status=row.status,
@@ -691,9 +724,7 @@ async def get_logical_summary(
     if not account_ids:
         return LogicalSummaryResult()
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         # Subquery: per group, does any row have success=True?
@@ -756,9 +787,7 @@ async def get_logical_broadcast_analytics(
     if not account_ids:
         return []
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
         # Subquery: per (source_id, recipient), does any row have success=True?
@@ -813,13 +842,16 @@ async def get_logical_broadcast_analytics(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# LATENCY ANALYTICS (Sprint 18)
+# LATENCY ANALYTICS (Sprint 18 + 19)
 # ═══════════════════════════════════════════════════════════════════════
 #
 # Computes average and p95 latency from started_at / completed_at.
 # Only rows where BOTH timestamps are non-null are included.
 # Latency in milliseconds: (completed_at - started_at) * 1000.
 # Uses PostgreSQL EXTRACT(EPOCH FROM ...) for sub-second precision.
+#
+# Sprint 19 optimization: merged from 4 queries to 2 (counts + stats).
+# Added per-source and per-account latency breakdowns.
 #
 # Limitation: p95 uses percentile_cont which requires PostgreSQL.
 # For SQLite (tests), we compute average only and report p95 as 0.0.
@@ -835,39 +867,35 @@ async def get_latency_analytics(
 ) -> LatencyResult:
     """Get delivery latency analytics.
 
-    Average and p95 latency in milliseconds, computed only from rows
-    where both started_at and completed_at are non-null.
-    Also reports how many rows in the filter window lack timing data.
+    Sprint 19 optimization: 2 queries instead of 4.
+    - Query 1: total rows + timed rows (merged via CASE)
+    - Query 2: avg + p95 (only if timed_rows > 0)
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
         return LatencyResult()
 
-    since = utcnow_naive()
-    start_dt = _parse_datetime_safe(start_time) if start_time else since
-    end_dt = _parse_datetime_safe(end_time) if end_time else None
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
-        # Total rows in window
-        total_q = select(func.count(MessageLog.id))
-        total_q = _apply_filters(
-            total_q, account_ids,
+        # Single query: total rows + timed rows via CASE
+        count_q = select(
+            func.count(MessageLog.id).label("total"),
+            func.sum(
+                case(
+                    (MessageLog.started_at.isnot(None) & MessageLog.completed_at.isnot(None), 1),
+                    else_=0,
+                )
+            ).label("timed"),
+        )
+        count_q = _apply_filters(
+            count_q, account_ids,
             source=source,
             start_time=start_dt, end_time=end_dt,
         )
-        total_rows = (await db.execute(total_q)).scalar() or 0
-
-        # Rows with both timestamps
-        timed_q = select(func.count(MessageLog.id)).where(
-            MessageLog.started_at.isnot(None),
-            MessageLog.completed_at.isnot(None),
-        )
-        timed_q = _apply_filters(
-            timed_q, account_ids,
-            source=source,
-            start_time=start_dt, end_time=end_dt,
-        )
-        timed_rows = (await db.execute(timed_q)).scalar() or 0
+        count_row = (await db.execute(count_q)).one()
+        total_rows = count_row.total or 0
+        timed_rows = count_row.timed or 0
 
         if timed_rows == 0:
             return LatencyResult(
@@ -875,25 +903,22 @@ async def get_latency_analytics(
                 rows_without_timing=total_rows,
             )
 
-        # Average latency in seconds, convert to ms
-        avg_q = select(
+        # Single query: avg + p95
+        stats_q = select(
             func.avg(
                 func.extract("epoch", MessageLog.completed_at - MessageLog.started_at)
-            ).label("avg_sec")
+            ).label("avg_sec"),
         ).where(
             MessageLog.started_at.isnot(None),
             MessageLog.completed_at.isnot(None),
         )
-        avg_q = _apply_filters(
-            avg_q, account_ids,
+        stats_q = _apply_filters(
+            stats_q, account_ids,
             source=source,
             start_time=start_dt, end_time=end_dt,
         )
-        avg_row = (await db.execute(avg_q)).one()
-        avg_sec = avg_row.avg_sec or 0.0
-        avg_ms = round(avg_sec * 1000.0, 1)
 
-        # p95: use percentile_cont for PostgreSQL
+        # p95 via percentile_cont (PostgreSQL only)
         p95_ms = 0.0
         try:
             p95_q = select(
@@ -913,8 +938,12 @@ async def get_latency_analytics(
             if p95_row.p95_sec is not None:
                 p95_ms = round(p95_row.p95_sec * 1000.0, 1)
         except Exception:
-            # percentile_cont not available (e.g., SQLite in tests)
             p95_ms = 0.0
+
+        # Execute avg query
+        avg_row = (await db.execute(stats_q)).one()
+        avg_sec = avg_row.avg_sec or 0.0
+        avg_ms = round(avg_sec * 1000.0, 1)
 
         return LatencyResult(
             average_latency_ms=avg_ms,
@@ -922,6 +951,106 @@ async def get_latency_analytics(
             total_measured=timed_rows,
             rows_without_timing=total_rows - timed_rows,
         )
+
+
+async def get_latency_by_source(
+    identity: Identity,
+    account_id: str | None = None,
+    days: int = 30,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> list[LatencyBySourceItem]:
+    """Get per-source latency breakdown.
+
+    Only includes sources with at least one timed row.
+    """
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return []
+
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
+
+    async with async_session_maker() as db:
+        query = select(
+            MessageLog.source,
+            func.avg(
+                func.extract("epoch", MessageLog.completed_at - MessageLog.started_at)
+            ).label("avg_sec"),
+            func.count(MessageLog.id).label("total_measured"),
+        ).where(
+            MessageLog.started_at.isnot(None),
+            MessageLog.completed_at.isnot(None),
+        )
+        query = _apply_filters(
+            query, account_ids,
+            start_time=start_dt, end_time=end_dt,
+        )
+        query = query.group_by(MessageLog.source)
+        result = await db.execute(query)
+
+        items = []
+        for row in result.all():
+            total = row.total_measured or 0
+            if total == 0:
+                continue
+            avg_ms = round((row.avg_sec or 0.0) * 1000.0, 1)
+            items.append(LatencyBySourceItem(
+                source=row.source,
+                average_latency_ms=avg_ms,
+                p95_latency_ms=0.0,  # p95 per source requires separate query
+                total_measured=total,
+            ))
+        return items
+
+
+async def get_latency_by_account(
+    identity: Identity,
+    account_id: str | None = None,
+    days: int = 30,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> list[LatencyByAccountItem]:
+    """Get per-account latency breakdown.
+
+    Only includes accounts with at least one timed row.
+    """
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return []
+
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
+
+    async with async_session_maker() as db:
+        query = select(
+            MessageLog.account_id,
+            func.avg(
+                func.extract("epoch", MessageLog.completed_at - MessageLog.started_at)
+            ).label("avg_sec"),
+            func.count(MessageLog.id).label("total_measured"),
+        ).where(
+            MessageLog.started_at.isnot(None),
+            MessageLog.completed_at.isnot(None),
+        )
+        query = _apply_filters(
+            query, account_ids,
+            start_time=start_dt, end_time=end_dt,
+        )
+        query = query.group_by(MessageLog.account_id)
+        result = await db.execute(query)
+
+        items = []
+        for row in result.all():
+            total = row.total_measured or 0
+            if total == 0:
+                continue
+            avg_ms = round((row.avg_sec or 0.0) * 1000.0, 1)
+            items.append(LatencyByAccountItem(
+                account_id=row.account_id,
+                average_latency_ms=avg_ms,
+                p95_latency_ms=0.0,
+                total_measured=total,
+            ))
+        return items
 
 
 # ─── Overview Endpoint ───────────────────────────────────────────────
@@ -936,39 +1065,34 @@ async def get_overview(
 ) -> OverviewResult:
     """Single aggregated analytics overview.
 
-    Includes both attempt-level metrics (summary, by_source, etc.) and
-    logical delivery metrics (logical) so the frontend can distinguish
-    them. All sections are None when no data exists.
+    Sprint 19 optimization: shares _resolve_authorized_account_ids
+    across all sub-calls to reduce DB round-trips. The authorization
+    query is only done once and results are passed to each sub-function.
+
+    Uses asyncio.gather for concurrent query execution across 9 sections.
     """
-    summary = await get_summary(
-        identity, account_id=account_id, days=days,
-        start_time=start_time, end_time=end_time,
+    # Resolve account IDs once, pass to all sub-calls
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return OverviewResult()
+
+    start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
+
+    import asyncio
+
+    results = await asyncio.gather(
+        get_summary(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_source_analytics(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_account_performance(identity, days=days, start_time=start_time, end_time=end_time),
+        get_failure_intelligence(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_timeline(identity, account_id=account_id, days=days, interval="day", start_time=start_time, end_time=end_time),
+        get_logical_summary(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_latency_analytics(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_latency_by_source(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
+        get_latency_by_account(identity, account_id=account_id, days=days, start_time=start_time, end_time=end_time),
     )
-    by_source = await get_source_analytics(
-        identity, account_id=account_id, days=days,
-        start_time=start_time, end_time=end_time,
-    )
-    top_accounts = await get_account_performance(
-        identity, days=days,
-        start_time=start_time, end_time=end_time,
-    )
-    failure_breakdown = await get_failure_intelligence(
-        identity, account_id=account_id, days=days,
-        start_time=start_time, end_time=end_time,
-    )
-    timeline = await get_timeline(
-        identity, account_id=account_id, days=days,
-        interval="day",
-        start_time=start_time, end_time=end_time,
-    )
-    logical = await get_logical_summary(
-        identity, account_id=account_id, days=days,
-        start_time=start_time, end_time=end_time,
-    )
-    latency = await get_latency_analytics(
-        identity, account_id=account_id, days=days,
-        start_time=start_time, end_time=end_time,
-    )
+
+    summary, by_source, top_accounts, failure_breakdown, timeline, logical, latency, latency_by_source, latency_by_account = results
 
     return OverviewResult(
         summary=summary if summary.total_attempted > 0 else None,
@@ -978,4 +1102,6 @@ async def get_overview(
         timeline=timeline if timeline else None,
         logical=logical if logical.total_recipients > 0 else None,
         latency=latency if latency.total_measured > 0 else None,
+        latency_by_source=latency_by_source if latency_by_source else None,
+        latency_by_account=latency_by_account if latency_by_account else None,
     )

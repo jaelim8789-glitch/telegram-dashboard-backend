@@ -23,6 +23,8 @@ from app.services.delivery_analytics import (
     get_logical_summary,
     get_logical_broadcast_analytics,
     get_latency_analytics,
+    get_latency_by_source,
+    get_latency_by_account,
     get_overview,
 )
 
