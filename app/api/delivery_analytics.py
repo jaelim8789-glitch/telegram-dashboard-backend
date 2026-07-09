@@ -22,6 +22,7 @@ from app.services.delivery_analytics import (
     get_failure_intelligence,
     get_logical_summary,
     get_logical_broadcast_analytics,
+    get_latency_analytics,
     get_overview,
 )
 
@@ -238,6 +239,28 @@ async def api_logical_summary(
     distinct recipients, not attempts.
     """
     result = await get_logical_summary(
+        identity, account_id=account_id, days=days,
+        source=source,
+        start_time=start_time, end_time=end_time,
+    )
+    return result
+
+
+@router.get("/latency")
+async def api_latency(
+    account_id: str | None = None,
+    days: int = Query(default=30, le=365, ge=1),
+    source: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get delivery latency analytics.
+
+    Average and p95 latency in milliseconds, computed from started_at/completed_at
+    timestamps. Only rows where both timestamps are non-null are included.
+    """
+    result = await get_latency_analytics(
         identity, account_id=account_id, days=days,
         source=source,
         start_time=start_time, end_time=end_time,

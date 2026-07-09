@@ -26,12 +26,18 @@ Two parallel analytics models are provided:
    - success_rate: (successful / total_recipients) * 100
 
    Retry attempts are collapsed into one logical outcome per recipient.
+
+TIMING (Sprint 18):
+   Latency is measured as (completed_at - started_at) per individual send
+   attempt. Only rows where BOTH started_at and completed_at are non-null
+   contribute to latency analytics. Average and p95 are computed across all
+   timed attempts within the query window.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, case, func, select, literal_column
+from sqlalchemy import Integer, case, func, select, literal_column, text
 
 from app.api.deps import Identity
 from app.database import async_session_maker
@@ -144,6 +150,22 @@ class LogicalBroadcastItem:
     latest_activity: str | None = None
 
 
+# ─── Latency response types (Sprint 18) ──────────────────────────────
+
+
+@dataclass
+class LatencyResult:
+    """Latency analytics computed from started_at/completed_at timestamps.
+
+    Only rows where BOTH timestamps are non-null are included.
+    average_latency_ms and p95_latency_ms are in milliseconds.
+    """
+    average_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    total_measured: int = 0
+    rows_without_timing: int = 0
+
+
 # ─── Overview response type ──────────────────────────────────────────
 
 
@@ -155,6 +177,7 @@ class OverviewResult:
     failure_breakdown: list[FailureIntelligenceItem] | None = None
     timeline: list[TimelineItem] | None = None
     logical: LogicalSummaryResult | None = None  # Sprint 17 addition
+    latency: LatencyResult | None = None  # Sprint 18 addition
 
 
 # ─── Filter helpers ──────────────────────────────────────────────────
@@ -789,6 +812,118 @@ async def get_logical_broadcast_analytics(
         return items
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# LATENCY ANALYTICS (Sprint 18)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Computes average and p95 latency from started_at / completed_at.
+# Only rows where BOTH timestamps are non-null are included.
+# Latency in milliseconds: (completed_at - started_at) * 1000.
+# Uses PostgreSQL EXTRACT(EPOCH FROM ...) for sub-second precision.
+#
+# Limitation: p95 uses percentile_cont which requires PostgreSQL.
+# For SQLite (tests), we compute average only and report p95 as 0.0.
+
+
+async def get_latency_analytics(
+    identity: Identity,
+    account_id: str | None = None,
+    days: int = 30,
+    source: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> LatencyResult:
+    """Get delivery latency analytics.
+
+    Average and p95 latency in milliseconds, computed only from rows
+    where both started_at and completed_at are non-null.
+    Also reports how many rows in the filter window lack timing data.
+    """
+    account_ids = await _resolve_authorized_account_ids(identity, account_id)
+    if not account_ids:
+        return LatencyResult()
+
+    since = utcnow_naive()
+    start_dt = _parse_datetime_safe(start_time) if start_time else since
+    end_dt = _parse_datetime_safe(end_time) if end_time else None
+
+    async with async_session_maker() as db:
+        # Total rows in window
+        total_q = select(func.count(MessageLog.id))
+        total_q = _apply_filters(
+            total_q, account_ids,
+            source=source,
+            start_time=start_dt, end_time=end_dt,
+        )
+        total_rows = (await db.execute(total_q)).scalar() or 0
+
+        # Rows with both timestamps
+        timed_q = select(func.count(MessageLog.id)).where(
+            MessageLog.started_at.isnot(None),
+            MessageLog.completed_at.isnot(None),
+        )
+        timed_q = _apply_filters(
+            timed_q, account_ids,
+            source=source,
+            start_time=start_dt, end_time=end_dt,
+        )
+        timed_rows = (await db.execute(timed_q)).scalar() or 0
+
+        if timed_rows == 0:
+            return LatencyResult(
+                total_measured=0,
+                rows_without_timing=total_rows,
+            )
+
+        # Average latency in seconds, convert to ms
+        avg_q = select(
+            func.avg(
+                func.extract("epoch", MessageLog.completed_at - MessageLog.started_at)
+            ).label("avg_sec")
+        ).where(
+            MessageLog.started_at.isnot(None),
+            MessageLog.completed_at.isnot(None),
+        )
+        avg_q = _apply_filters(
+            avg_q, account_ids,
+            source=source,
+            start_time=start_dt, end_time=end_dt,
+        )
+        avg_row = (await db.execute(avg_q)).one()
+        avg_sec = avg_row.avg_sec or 0.0
+        avg_ms = round(avg_sec * 1000.0, 1)
+
+        # p95: use percentile_cont for PostgreSQL
+        p95_ms = 0.0
+        try:
+            p95_q = select(
+                func.percentile_cont(0.95).within_group(
+                    func.extract("epoch", MessageLog.completed_at - MessageLog.started_at)
+                ).label("p95_sec")
+            ).where(
+                MessageLog.started_at.isnot(None),
+                MessageLog.completed_at.isnot(None),
+            )
+            p95_q = _apply_filters(
+                p95_q, account_ids,
+                source=source,
+                start_time=start_dt, end_time=end_dt,
+            )
+            p95_row = (await db.execute(p95_q)).one()
+            if p95_row.p95_sec is not None:
+                p95_ms = round(p95_row.p95_sec * 1000.0, 1)
+        except Exception:
+            # percentile_cont not available (e.g., SQLite in tests)
+            p95_ms = 0.0
+
+        return LatencyResult(
+            average_latency_ms=avg_ms,
+            p95_latency_ms=p95_ms,
+            total_measured=timed_rows,
+            rows_without_timing=total_rows - timed_rows,
+        )
+
+
 # ─── Overview Endpoint ───────────────────────────────────────────────
 
 
@@ -830,6 +965,10 @@ async def get_overview(
         identity, account_id=account_id, days=days,
         start_time=start_time, end_time=end_time,
     )
+    latency = await get_latency_analytics(
+        identity, account_id=account_id, days=days,
+        start_time=start_time, end_time=end_time,
+    )
 
     return OverviewResult(
         summary=summary if summary.total_attempted > 0 else None,
@@ -838,4 +977,5 @@ async def get_overview(
         failure_breakdown=failure_breakdown if failure_breakdown else None,
         timeline=timeline if timeline else None,
         logical=logical if logical.total_recipients > 0 else None,
+        latency=latency if latency.total_measured > 0 else None,
     )

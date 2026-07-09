@@ -6,6 +6,11 @@ through the canonical delivery pipeline (app/services/delivery.py).
 Each row represents one delivery attempt to one recipient.
 Multiple rows for the same (source_type, source_id, recipient) indicate retries;
 the row with status='success' is the authoritative final state.
+
+Timing fields (Sprint 18):
+- started_at: when the send attempt began (before _send_single)
+- completed_at: when the send attempt completed (after _send_single returns)
+- Latency = completed_at - started_at (in seconds)
 """
 
 import uuid
@@ -37,3 +42,7 @@ class MessageLog(Base):
 
     message_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    # Sprint 18: Delivery latency tracking
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

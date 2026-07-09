@@ -33,6 +33,7 @@ from app.services.delivery_analytics import (
     BroadcastAnalyticsItem,
     FailureIntelligenceItem,
     LogicalSummaryResult,
+    LatencyResult,
     OverviewResult,
     get_summary,
     get_failure_breakdown,
@@ -44,6 +45,7 @@ from app.services.delivery_analytics import (
     get_failure_intelligence,
     get_logical_summary,
     get_logical_broadcast_analytics,
+    get_latency_analytics,
     get_overview,
     _resolve_authorized_account_ids,
     _parse_datetime_safe,
@@ -736,10 +738,12 @@ async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_r
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
 async def test_overview_response_contract(
-    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_latency.return_value = LatencyResult(average_latency_ms=150.0, p95_latency_ms=300.0, total_measured=80, rows_without_timing=20)
     mock_logical.return_value = LogicalSummaryResult(total_recipients=80, successful=70, failed=10, success_rate=87.5)
     mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
     mock_source.return_value = [SourceAnalyticsItem(source="broadcast", total=100, successful=80, failed=20, success_rate=80.0)]
@@ -768,10 +772,12 @@ async def test_overview_response_contract(
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
 async def test_overview_empty_data_returns_none_sections(
-    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_latency.return_value = LatencyResult()
     mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult()
     mock_source.return_value = []
@@ -795,10 +801,12 @@ async def test_overview_empty_data_returns_none_sections(
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
 async def test_overview_tenant_isolation(
-    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_latency.return_value = LatencyResult()
     mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult()
     mock_source.return_value = []
@@ -820,10 +828,12 @@ async def test_overview_tenant_isolation(
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
 async def test_overview_bounded_top_accounts(
-    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_latency.return_value = LatencyResult()
     mock_logical.return_value = LogicalSummaryResult()
     mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
     mock_source.return_value = []
@@ -1005,10 +1015,12 @@ async def test_logical_broadcast_tenant_isolation(mock_session_maker, mock_resol
 @patch("app.services.delivery_analytics.get_failure_intelligence")
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
 async def test_overview_includes_logical(
-    mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
     tenant_a_identity,
 ):
+    mock_latency.return_value = LatencyResult()
     mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
     mock_source.return_value = []
     mock_perf.return_value = []
@@ -1024,6 +1036,98 @@ async def test_overview_includes_logical(
     assert overview.logical.total_recipients == 50
     assert overview.logical.successful == 45
     assert overview.logical.success_rate == 90.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# SPRINT 18 — DELIVERY LATENCY TESTS
+# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ─── get_latency_analytics ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_latency_empty_when_no_timing_data(mock_session_maker, mock_resolve, tenant_a_identity):
+    """No rows with started_at/completed_at → empty latency result."""
+    mock_resolve.return_value = ["acc-1"]
+    mock_db = AsyncMock()
+    # total_q returns 5, timed_q returns 0
+    mock_db.execute.side_effect = [
+        _mock_result(scalar_result=5),   # total rows
+        _mock_result(scalar_result=0),   # timed rows
+    ]
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_latency_analytics(tenant_a_identity)
+    assert result.total_measured == 0
+    assert result.rows_without_timing == 5
+    assert result.average_latency_ms == 0.0
+    assert result.p95_latency_ms == 0.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_latency_empty_when_no_accounts(mock_session_maker, mock_resolve, tenant_a_identity):
+    """No authorized accounts → empty latency result."""
+    mock_resolve.return_value = []
+    result = await get_latency_analytics(tenant_a_identity)
+    assert result.total_measured == 0
+    assert result.average_latency_ms == 0.0
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_latency_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
+    """Tenant A should only see Tenant A's latency data."""
+    mock_resolve.return_value = ["acc-a-1"]
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        _mock_result(scalar_result=0),   # total rows
+        _mock_result(scalar_result=0),   # timed rows
+    ]
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    result = await get_latency_analytics(tenant_a_identity)
+    assert result.total_measured == 0
+
+
+# ─── Overview includes latency section ───────────────────────────────
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics.get_summary")
+@patch("app.services.delivery_analytics.get_source_analytics")
+@patch("app.services.delivery_analytics.get_account_performance")
+@patch("app.services.delivery_analytics.get_failure_intelligence")
+@patch("app.services.delivery_analytics.get_timeline")
+@patch("app.services.delivery_analytics.get_logical_summary")
+@patch("app.services.delivery_analytics.get_latency_analytics")
+async def test_overview_includes_latency(
+    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary,
+    tenant_a_identity,
+):
+    mock_latency.return_value = LatencyResult(average_latency_ms=200.0, p95_latency_ms=500.0, total_measured=100, rows_without_timing=0)
+    mock_summary.return_value = SummaryResult(total_attempted=100, successful=80, failed=20, success_rate=80.0)
+    mock_source.return_value = []
+    mock_perf.return_value = []
+    mock_failure.return_value = []
+    mock_timeline.return_value = []
+    mock_logical.return_value = LogicalSummaryResult()
+
+    overview = await get_overview(tenant_a_identity)
+
+    assert overview.latency is not None
+    assert overview.latency.average_latency_ms == 200.0
+    assert overview.latency.p95_latency_ms == 500.0
+    assert overview.latency.total_measured == 100
 
 
 # ─── Regression: attempt-level endpoints unchanged ───────────────────

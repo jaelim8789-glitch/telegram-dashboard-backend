@@ -173,6 +173,8 @@ async def _persist_log(
     error_message: str | None,
     attempt_count: int,
     message_content: str | None = None,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
 ) -> None:
     """Persist a delivery attempt to MessageLog."""
     async with async_session_maker() as db:
@@ -187,6 +189,8 @@ async def _persist_log(
             error_message=error_message,
             attempt_count=attempt_count,
             message_content=message_content,
+            started_at=started_at,
+            completed_at=completed_at,
         )
         db.add(log)
         await db.commit()
@@ -241,7 +245,9 @@ async def _deliver_with_retry(
         if attempt > 1 and on_status_change:
             _publish_event(EVENT_RETRYING, None, source, source_id, on_status_change)
 
+        started_at = utcnow_naive()
         status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path)
+        completed_at = utcnow_naive()
 
         result = DeliveryResult(
             status=status,
@@ -265,6 +271,8 @@ async def _deliver_with_retry(
             error_message=safe_error,
             attempt_count=attempt,
             message_content=message,
+            started_at=started_at,
+            completed_at=completed_at,
         )
 
         if is_success:
