@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_identity, require_tenant_access
 from app.core.logging import get_logger
 from app.database import get_db, async_session_maker
 from app.models.account import Account
@@ -26,7 +27,8 @@ def utcnow_naive() -> datetime:
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/{tenant_id}/templates")
-async def list_templates(tenant_id: str, category: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_templates(tenant_id: str, category: str | None = None, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     query = select(MessageTemplate).where(MessageTemplate.tenant_id == tenant_id).order_by(MessageTemplate.use_count.desc())
     if category:
         query = query.where(MessageTemplate.category == category)
@@ -35,7 +37,8 @@ async def list_templates(tenant_id: str, category: str | None = None, db: AsyncS
 
 
 @router.post("/{tenant_id}/templates")
-async def create_template(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def create_template(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     tmpl = MessageTemplate(
         tenant_id=tenant_id,
         name=data["name"],
@@ -51,7 +54,8 @@ async def create_template(tenant_id: str, data: dict, db: AsyncSession = Depends
 
 
 @router.put("/{tenant_id}/templates/{template_id}")
-async def update_template(tenant_id: str, template_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def update_template(tenant_id: str, template_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     tmpl = await db.get(MessageTemplate, template_id)
     if not tmpl or tmpl.tenant_id != tenant_id:
         raise HTTPException(404, "템플릿을 찾을 수 없습니다.")
@@ -66,7 +70,8 @@ async def update_template(tenant_id: str, template_id: str, data: dict, db: Asyn
 
 
 @router.delete("/{tenant_id}/templates/{template_id}")
-async def delete_template(tenant_id: str, template_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_template(tenant_id: str, template_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     tmpl = await db.get(MessageTemplate, template_id)
     if not tmpl or tmpl.tenant_id != tenant_id:
         raise HTTPException(404, "템플릿을 찾을 수 없습니다.")
@@ -76,7 +81,8 @@ async def delete_template(tenant_id: str, template_id: str, db: AsyncSession = D
 
 
 @router.post("/{tenant_id}/templates/{template_id}/use")
-async def increment_template_use(tenant_id: str, template_id: str, db: AsyncSession = Depends(get_db)):
+async def increment_template_use(tenant_id: str, template_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     tmpl = await db.get(MessageTemplate, template_id)
     if tmpl and tmpl.tenant_id == tenant_id:
         tmpl.use_count = (tmpl.use_count or 0) + 1
@@ -89,7 +95,8 @@ async def increment_template_use(tenant_id: str, template_id: str, db: AsyncSess
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/{tenant_id}/follow-ups")
-async def list_follow_ups(tenant_id: str, db: AsyncSession = Depends(get_db)):
+async def list_follow_ups(tenant_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     result = await db.execute(
         select(FollowUpRule).where(FollowUpRule.tenant_id == tenant_id).order_by(FollowUpRule.created_at.desc())
     )
@@ -97,7 +104,8 @@ async def list_follow_ups(tenant_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{tenant_id}/follow-ups")
-async def create_follow_up(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def create_follow_up(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     rule = FollowUpRule(
         tenant_id=tenant_id,
         account_id=data["account_id"],
@@ -115,7 +123,8 @@ async def create_follow_up(tenant_id: str, data: dict, db: AsyncSession = Depend
 
 
 @router.put("/{tenant_id}/follow-ups/{rule_id}")
-async def update_follow_up(tenant_id: str, rule_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def update_follow_up(tenant_id: str, rule_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     rule = await db.get(FollowUpRule, rule_id)
     if not rule or rule.tenant_id != tenant_id:
         raise HTTPException(404, "규칙을 찾을 수 없습니다.")
@@ -128,7 +137,8 @@ async def update_follow_up(tenant_id: str, rule_id: str, data: dict, db: AsyncSe
 
 
 @router.delete("/{tenant_id}/follow-ups/{rule_id}")
-async def delete_follow_up(tenant_id: str, rule_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_follow_up(tenant_id: str, rule_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     rule = await db.get(FollowUpRule, rule_id)
     if not rule or rule.tenant_id != tenant_id:
         raise HTTPException(404, "규칙을 찾을 수 없습니다.")
@@ -142,7 +152,8 @@ async def delete_follow_up(tenant_id: str, rule_id: str, db: AsyncSession = Depe
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/{tenant_id}/team")
-async def list_team_members(tenant_id: str, db: AsyncSession = Depends(get_db)):
+async def list_team_members(tenant_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     result = await db.execute(
         select(TeamMember).where(TeamMember.tenant_id == tenant_id).order_by(TeamMember.created_at.asc())
     )
@@ -150,7 +161,8 @@ async def list_team_members(tenant_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{tenant_id}/team")
-async def add_team_member(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def add_team_member(tenant_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     member = TeamMember(
         tenant_id=tenant_id,
         username=data["username"],
@@ -164,7 +176,8 @@ async def add_team_member(tenant_id: str, data: dict, db: AsyncSession = Depends
 
 
 @router.put("/{tenant_id}/team/{member_id}")
-async def update_team_member(tenant_id: str, member_id: str, data: dict, db: AsyncSession = Depends(get_db)):
+async def update_team_member(tenant_id: str, member_id: str, data: dict, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     member = await db.get(TeamMember, member_id)
     if not member or member.tenant_id != tenant_id:
         raise HTTPException(404, "팀원을 찾을 수 없습니다.")
@@ -176,7 +189,8 @@ async def update_team_member(tenant_id: str, member_id: str, data: dict, db: Asy
 
 
 @router.delete("/{tenant_id}/team/{member_id}")
-async def remove_team_member(tenant_id: str, member_id: str, db: AsyncSession = Depends(get_db)):
+async def remove_team_member(tenant_id: str, member_id: str, db: AsyncSession = Depends(get_db), identity=Depends(get_current_identity)):
+    await require_tenant_access(tenant_id, identity)
     member = await db.get(TeamMember, member_id)
     if not member or member.tenant_id != tenant_id:
         raise HTTPException(404, "팀원을 찾을 수 없습니다.")
@@ -190,13 +204,13 @@ async def remove_team_member(tenant_id: str, member_id: str, db: AsyncSession = 
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/{tenant_id}/dashboard")
-async def get_usage_dashboard(tenant_id: str, days: int = Query(default=30, le=90)):
+async def get_usage_dashboard(tenant_id: str, days: int = Query(default=30, le=90), identity=Depends(get_current_identity)):
     """Get usage statistics for dashboard charts."""
+    await require_tenant_access(tenant_id, identity)
     now = utcnow_naive()
     start = now - timedelta(days=days)
 
     async with async_session_maker() as db:
-        # Daily usage
         result = await db.execute(
             select(
                 func.date(UsageRecord.recorded_at).label("date"),
@@ -209,7 +223,6 @@ async def get_usage_dashboard(tenant_id: str, days: int = Query(default=30, le=9
         )
         rows = result.all()
 
-    # Build chart data
     daily_data = {}
     for row in rows:
         date_str = str(row.date)
@@ -218,7 +231,6 @@ async def get_usage_dashboard(tenant_id: str, days: int = Query(default=30, le=9
         action_key = row.action if row.action in daily_data[date_str] else "broadcast"
         daily_data[date_str][action_key] = (daily_data[date_str].get(action_key, 0) or 0) + (row.total or 0)
 
-    # Totals
     total_broadcast = sum(d.get("broadcast", 0) for d in daily_data.values())
     total_auto_reply = sum(d.get("auto_reply", 0) for d in daily_data.values())
     total_macro = sum(d.get("reply_macro", 0) for d in daily_data.values())
@@ -240,8 +252,9 @@ async def get_usage_dashboard(tenant_id: str, days: int = Query(default=30, le=9
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/{tenant_id}/calendar")
-async def get_calendar_data(tenant_id: str, year: int | None = None, month: int | None = None):
+async def get_calendar_data(tenant_id: str, year: int | None = None, month: int | None = None, identity=Depends(get_current_identity)):
     """Get scheduled broadcasts grouped by date for calendar view."""
+    await require_tenant_access(tenant_id, identity)
     from app.models.broadcast import Broadcast
 
     now = utcnow_naive()
