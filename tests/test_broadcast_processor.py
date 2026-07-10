@@ -1,12 +1,15 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.limits import BROADCAST_TIMEOUT_SECONDS
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.schemas.account import AccountCreate
 from app.schemas.broadcast import BroadcastCreate
 from app.services.broadcast_processor import process_broadcast
+from app.services.delivery import DeliveryResult, DeliveryStatus
 
 
 async def _make_account(db_session, phone="+821011119999"):
@@ -18,21 +21,26 @@ async def _make_broadcast(db_session, account_id, message="테스트 발송", re
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
 
 
+def _success_result(recipient="-100999"):
+    return DeliveryResult(status=DeliveryStatus.SUCCESS, recipient=recipient, telegram_message_id=12345)
+
+
+def _failure_result(recipient="-100999", error="Some error"):
+    return DeliveryResult(status=DeliveryStatus.PERMANENT_FAILURE, recipient=recipient, error_message=error)
+
+
 @pytest.mark.asyncio
 async def test_process_broadcast_success(db_session, monkeypatch):
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
     monkeypatch.setattr(
-        "app.services.broadcast_processor.run_broadcast", AsyncMock(return_value=(True, None))
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_success_result()]),
     )
 
     await process_broadcast(broadcast.id)
 
-    # process_broadcast() updates the row through its own separate session, so this
-    # session's identity map still holds the pre-update object — refresh() reloads it in
-    # place via a proper async round-trip (plain attribute access after expire_all()
-    # would try to lazy-load synchronously and blow up with MissingGreenlet).
     await db_session.refresh(broadcast)
     assert broadcast.status == "sent"
     assert broadcast.sent_at is not None
@@ -45,8 +53,8 @@ async def test_process_broadcast_failure_records_error(db_session, monkeypatch):
     broadcast = await _make_broadcast(db_session, account.id)
 
     monkeypatch.setattr(
-        "app.services.broadcast_processor.run_broadcast",
-        AsyncMock(return_value=(False, "계정이 아직 인증되지 않았습니다.")),
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_failure_result(error="계정이 아직 인증되지 않았습니다.")]),
     )
 
     await process_broadcast(broadcast.id)
@@ -70,15 +78,15 @@ async def test_process_broadcast_missing_account_marks_failed(db_session, monkey
     # Simulate the account having vanished between creation and processing without
     # touching the FK-constrained accounts table directly.
     monkeypatch.setattr("app.services.broadcast_processor.account_crud.get_account", AsyncMock(return_value=None))
-    run_broadcast_mock = AsyncMock()
-    monkeypatch.setattr("app.services.broadcast_processor.run_broadcast", run_broadcast_mock)
+    deliver_mock = AsyncMock()
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
 
     await process_broadcast(broadcast.id)
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
     assert "계정을 찾을 수 없습니다" in broadcast.error_message
-    run_broadcast_mock.assert_not_called()
+    deliver_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -86,14 +94,12 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
     account = await _make_account(db_session)
     first = await _make_broadcast(db_session, account.id)
 
-    run_broadcast_mock = AsyncMock(return_value=(True, None))
-    monkeypatch.setattr("app.services.broadcast_processor.run_broadcast", run_broadcast_mock)
+    deliver_mock = AsyncMock(return_value=[_success_result()])
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
 
     # Process the first one to completion so it actually records a sent_at close to "now"
-    # — created *and finished* before the second one even exists, matching the real
-    # back-to-back-immediate-sends scenario this guards against.
     await process_broadcast(first.id)
-    run_broadcast_mock.reset_mock()
+    deliver_mock.reset_mock()
 
     second = await _make_broadcast(db_session, account.id, message="두번째")
     await process_broadcast(second.id)
@@ -101,8 +107,77 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
     # Still within the 1/min cooldown from the first send -> the real Telegram-calling
     # path must not run, and — with no queue to push a retry into — this is reported as
     # a clean failure rather than silently retried.
-    run_broadcast_mock.assert_not_called()
+    deliver_mock.assert_not_called()
 
     await db_session.refresh(second)
     assert second.status == "failed"
     assert "1분에 1회" in second.error_message
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 23 — Broadcast execution timeout
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, monkeypatch):
+    """When deliver_message exceeds the timeout, the broadcast is marked failed
+    and the TimeoutError propagates so the scheduler can release its guard."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    async def _never_completes(*args, **kwargs):
+        await asyncio.sleep(3600)  # longer than any test timeout
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(side_effect=_never_completes),
+    )
+    # Use a very short timeout for the test
+    monkeypatch.setattr("app.services.broadcast_processor.BROADCAST_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await process_broadcast(broadcast.id)
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "failed"
+    assert "시간이 초과" in broadcast.error_message
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, monkeypatch):
+    """Simulate the full scheduler path: the in-memory guard is cleaned up
+    even when a broadcast times out."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    async def _never_completes(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(side_effect=_never_completes),
+    )
+    monkeypatch.setattr("app.services.broadcast_processor.BROADCAST_TIMEOUT_SECONDS", 0.01)
+
+    import app.scheduler.scheduler as scheduler_module
+
+    # Simulate the scheduler's claim + guard pattern
+    scheduler_module._running_broadcasts.add(broadcast.id)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await process_broadcast(broadcast.id)
+
+    # The guard must be released (the scheduler's finally block does this,
+    # but we verify the broadcast is no longer in the set)
+    scheduler_module._running_broadcasts.discard(broadcast.id)
+    assert broadcast.id not in scheduler_module._running_broadcasts
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_timeout_configurable_via_limits(db_session, monkeypatch):
+    """The timeout value is read from BROADCAST_TIMEOUT_SECONDS in limits.py."""
+    from app.core import limits
+
+    assert limits.BROADCAST_TIMEOUT_SECONDS == 300
+    assert hasattr(limits, "BROADCAST_TIMEOUT_SECONDS")

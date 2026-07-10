@@ -1,3 +1,6 @@
+import asyncio
+
+from app.core.limits import BROADCAST_TIMEOUT_SECONDS
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
@@ -12,6 +15,14 @@ async def process_broadcast(broadcast_id: str) -> None:
 
     Called either right after creation (FastAPI BackgroundTasks, for immediate sends)
     or by the scheduler once a scheduled broadcast comes due.
+
+    Execution timeout:
+      ``deliver_message`` is wrapped in ``asyncio.wait_for`` with a timeout of
+      ``BROADCAST_TIMEOUT_SECONDS`` (default 300 s).  If the timeout fires:
+      - the broadcast is persisted with status ``failed`` and a safe error message
+      - the ``asyncio.TimeoutError`` is *re-raised* so that the scheduler's
+        ``try/except/finally`` can release the in-memory concurrency guard
+        (``_running_broadcasts``).
     """
     async with async_session_maker() as db:
         broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
@@ -43,7 +54,7 @@ async def process_broadcast(broadcast_id: str) -> None:
         logger.info("broadcast_started", broadcast_id=broadcast_id, account_id=account.id, recipient_count=len(broadcast.recipients))
         await broadcast_crud.update_broadcast_status(db, broadcast, status="sending", mark_sent=True)
 
-    # Use canonical delivery pipeline
+    # Use canonical delivery pipeline with execution timeout
     request = DeliveryRequest(
         account_id=broadcast.account_id,
         recipients=broadcast.recipients,
@@ -53,7 +64,27 @@ async def process_broadcast(broadcast_id: str) -> None:
         source_id=broadcast.id,
     )
 
-    results = await deliver_message(request)
+    try:
+        results = await asyncio.wait_for(
+            deliver_message(request),
+            timeout=BROADCAST_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "broadcast_timeout",
+            broadcast_id=broadcast_id,
+            timeout_seconds=BROADCAST_TIMEOUT_SECONDS,
+        )
+        async with async_session_maker() as db:
+            broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+            if broadcast is not None:
+                await broadcast_crud.update_broadcast_status(
+                    db,
+                    broadcast,
+                    status="failed",
+                    error_message=f"발송 시간이 초과되었습니다 ({BROADCAST_TIMEOUT_SECONDS}초).",
+                )
+        raise  # re-raise so scheduler's finally discards the in-memory guard
 
     # Determine overall status
     all_success = all(r.status.value == "success" for r in results)
