@@ -1,31 +1,29 @@
 import os
-import asyncio
+import socket
 
 # Must run before any `app.*` import: app/config.py and app/database.py build a
 # Settings()/engine singleton at import time, so the DB URL has to be overridden in the
 # environment first. Only DATABASE_URL is isolated — ENCRYPTION_KEY / ADMIN_* / etc. are
 # fine to share with local dev since tests never write real data through them.
-_default_db_url = "postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard_test"
-
-# Detect if PostgreSQL is reachable; fall back to SQLite if not.
-async def _probe_postgres() -> bool:
+#
+# Falls back to SQLite when no local Postgres is reachable (e.g. this dev box) so the
+# suite can still run; CI/production dev environments with Postgres available keep using
+# it unchanged since this is just a connectivity probe, not a preference.
+def _postgres_reachable() -> bool:
     try:
-        from sqlalchemy.ext.asyncio import create_async_engine
-        engine = create_async_engine(_default_db_url)
-        async with engine.connect() as conn:
-            await conn.execute(
-                __import__("sqlalchemy").text("SELECT 1")
-            )
-        await engine.dispose()
-        return True
-    except Exception:
+        with socket.create_connection(("localhost", 5432), timeout=0.5):
+            return True
+    except OSError:
         return False
 
-_probe_result = asyncio.run(_probe_postgres())
-if not _probe_result:
-    os.environ["DATABASE_URL"] = "sqlite+aiosqlite://"
-else:
-    os.environ.setdefault("DATABASE_URL", _default_db_url)
+
+if "DATABASE_URL" not in os.environ:
+    if _postgres_reachable():
+        os.environ["DATABASE_URL"] = (
+            "postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard_test"
+        )
+    else:
+        os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test_telemon.db"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -34,7 +32,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import app.scheduler.scheduler as scheduler_module
 import app.services.auto_reply_service as auto_reply_service_module
 import app.services.broadcast_processor as broadcast_processor_module
-from app.api.deps import require_api_key_or_admin
+from app.api.deps import Identity, get_current_identity, require_api_key_or_admin
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
@@ -73,12 +71,21 @@ async def db_session(monkeypatch):
 async def client(db_session):
     """Auth bypassed — for tests about accounts/broadcast/groups/logs business logic,
     which isn't what they're testing. See `unauthenticated_client` for the auth checks
-    themselves (login, API key issuance/validation, 401 rejection)."""
+    themselves (login, API key issuance/validation, 401 rejection).
+
+    Route handlers call get_current_identity directly (not just the router-level
+    require_api_key_or_admin dependency) to resolve tenant scoping, so that also needs
+    overriding here — otherwise every handler that touches identity.tenant_id/kind still
+    401s even with require_api_key_or_admin bypassed. Defaults to an admin identity
+    (cross-tenant, matches "auth bypassed"); a test that needs a specific tenant_id can
+    re-override app.dependency_overrides[get_current_identity] after pulling in `client`.
+    """
     async def _override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[require_api_key_or_admin] = lambda: None
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="admin")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
