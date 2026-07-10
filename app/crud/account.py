@@ -65,3 +65,24 @@ async def set_auth_state(
     await db.commit()
     await db.refresh(account)
     return account
+
+
+async def mark_account_session_invalid(db: AsyncSession, account: Account) -> Account:
+    """Clear the session data and mark the account as inactive.
+
+    Called when the delivery pipeline encounters a session/auth failure
+    (AccountNotAuthenticatedError).  After this call:
+      - ``session_data`` → ``None`` (encrypted session string is discarded)
+      - ``status`` → ``"inactive"``
+      - ``last_activity`` → now
+
+    Future delivery attempts will fast-fail at the get_authorized_client
+    check (``if not account.session_data``) without attempting a network
+    connection.
+    """
+    account.session_data = None
+    account.status = "inactive"
+    account.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(account)
+    return account

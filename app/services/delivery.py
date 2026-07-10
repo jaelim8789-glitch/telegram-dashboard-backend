@@ -377,6 +377,15 @@ async def deliver_message(
     try:
         client = await get_authorized_client(account)
     except AccountNotAuthenticatedError as exc:
+        # Recovery: clear the invalid session so subsequent attempts fast-fail
+        try:
+            async with async_session_maker() as db:
+                account_reloaded = await account_crud.get_account(db, request.account_id)
+                if account_reloaded is not None:
+                    await account_crud.mark_account_session_invalid(db, account_reloaded)
+        except Exception as persist_err:
+            logger.warning("session_invalidation_failed", account_id=request.account_id, error=str(persist_err))
+
         for recipient in request.recipients:
             result = DeliveryResult(
                 status=DeliveryStatus.SESSION_EXPIRED,

@@ -47,6 +47,106 @@ async def test_process_broadcast_success(db_session, monkeypatch):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Sprint 27 — Telegram session recovery
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_mark_account_session_invalid_clears_session(db_session):
+    """mark_account_session_invalid clears session_data and sets status to inactive."""
+    account = await _make_account(db_session)
+    account.session_data = "some-encrypted-session"
+    account.status = "active"
+    account.last_activity = None
+    await db_session.commit()
+
+    updated = await account_crud.mark_account_session_invalid(db_session, account)
+    assert updated.session_data is None
+    assert updated.status == "inactive"
+    assert updated.last_activity is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_account_session_invalid_persisted(db_session):
+    """The changes are persisted to the database."""
+    account = await _make_account(db_session)
+    account.session_data = "some-encrypted-session"
+    account.status = "active"
+    await db_session.commit()
+
+    await account_crud.mark_account_session_invalid(db_session, account)
+
+    # Reload from DB to verify persistence
+    reloaded = await account_crud.get_account(db_session, account.id)
+    assert reloaded is not None
+    assert reloaded.session_data is None
+    assert reloaded.status == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_clears_session_on_auth_failure(db_session, monkeypatch):
+    """When get_authorized_client raises AccountNotAuthenticatedError,
+    the account's session is cleared so subsequent attempts fast-fail."""
+    account = await _make_account(db_session)
+    account.session_data = "stale-session"
+    account.status = "active"
+    await db_session.commit()
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+    from app.services.telegram_actions import AccountNotAuthenticatedError
+
+    # Make get_authorized_client raise auth error
+    monkeypatch.setattr(
+        "app.services.delivery.get_authorized_client",
+        AsyncMock(side_effect=AccountNotAuthenticatedError("Session expired")),
+    )
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100999"],
+        message="test",
+        source="manual",
+    )
+
+    results = await deliver_message(request)
+    assert len(results) == 1
+    assert results[0].status.value == "session_expired"
+
+    # Verify session was cleared in DB
+    await db_session.refresh(account)
+    assert account.session_data is None
+    assert account.status == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_without_session_fast_fails(db_session, monkeypatch):
+    """An account with no session_data fast-fails without network call."""
+    account = await _make_account(db_session)
+    account.session_data = None
+    account.status = "inactive"
+    await db_session.commit()
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    get_client_mock = AsyncMock()
+    monkeypatch.setattr("app.services.delivery.get_authorized_client", get_client_mock)
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100999"],
+        message="test",
+        source="manual",
+    )
+
+    results = await deliver_message(request)
+    assert len(results) == 1
+    assert results[0].status.value == "session_expired"
+
+    # The mock should not have been called — the session check happens before it
+    get_client_mock.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Sprint 26 — Broadcast retry limits
 # ═══════════════════════════════════════════════════════════════════════
 
