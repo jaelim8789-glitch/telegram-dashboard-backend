@@ -127,6 +127,13 @@ async def retry_broadcast(
     if broadcast is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
 
+    # Recurring parent records are templates, not occurrences — cannot be retried
+    if broadcast.recurring_interval_minutes is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="반복 발송 시리즈 자체는 재시도할 수 없습니다. 필요 시 새 반복 발송을 생성해주세요.",
+        )
+
     # Verify the broadcast's account belongs to the caller's tenant
     account = await account_crud.get_account(db, broadcast.account_id)
     if account is None:

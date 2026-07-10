@@ -66,6 +66,7 @@ async def seconds_until_next_allowed_broadcast(
         select(reference_time)
         .where(
             Broadcast.account_id == account_id,
+            Broadcast.recurring_interval_minutes.is_(None),
             (Broadcast.scheduled_at.is_(None)) | (Broadcast.scheduled_at <= now),
         )
         .order_by(reference_time.desc())
