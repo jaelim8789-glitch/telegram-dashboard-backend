@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Configurable via BROADCAST_TIMEOUT_SECONDS env var.  Must be >= 1.
     broadcast_timeout_seconds: int = 300
 
+    # Maximum number of manual retries for a failed broadcast (Sprint 26).
+    # Configurable via BROADCAST_MAX_RETRIES env var.  Must be >= 0.
+    # Set to 0 to disable retries entirely.
+    broadcast_max_retries: int = 3
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")
@@ -70,6 +75,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"BROADCAST_TIMEOUT_SECONDS must be >= 1, got {value}. "
                 "Set a positive integer (default 300) in your .env file."
+            )
+        return value
+
+    @field_validator("broadcast_max_retries")
+    @classmethod
+    def _validate_broadcast_max_retries(cls, value: int) -> int:
+        """Reject negative values.  Zero is accepted (disables retries)."""
+        if value < 0:
+            raise ValueError(
+                f"BROADCAST_MAX_RETRIES must be >= 0, got {value}. "
+                "Set a non-negative integer (default 3) in your .env file."
             )
         return value
 

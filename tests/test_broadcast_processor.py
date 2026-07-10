@@ -44,6 +44,105 @@ async def test_process_broadcast_success(db_session, monkeypatch):
     await db_session.refresh(broadcast)
     assert broadcast.status == "sent"
     assert broadcast.sent_at is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 26 — Broadcast retry limits
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_increments_retry_count(db_session):
+    """Each retry increments retry_count."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    broadcast.status = "failed"
+    broadcast.error_message = "fail"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert updated is not None
+    assert updated.retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_hits_limit_at_3(db_session, monkeypatch):
+    """After 3 retries, retry_broadcast returns None (limit reached)."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    broadcast.status = "failed"
+    broadcast.error_message = "fail"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    broadcast.retry_count = 3  # already at the default limit
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_obeys_custom_limit(db_session, monkeypatch):
+    """A lower custom limit is respected."""
+    monkeypatch.setattr("app.config.settings.broadcast_max_retries", 1)
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    broadcast.status = "failed"
+    broadcast.error_message = "fail"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    broadcast.retry_count = 1
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_zero_limit_disables_retries(db_session, monkeypatch):
+    """When broadcast_max_retries=0, retry is immediately rejected."""
+    monkeypatch.setattr("app.config.settings.broadcast_max_retries", 0)
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    broadcast.status = "failed"
+    broadcast.error_message = "fail"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    broadcast.retry_count = 0
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_increments_on_each_retry(db_session):
+    """Consecutive retries increment retry_count until the limit."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    for expected in (1, 2, 3):
+        broadcast.status = "failed"
+        broadcast.error_message = f"attempt {expected}"
+        broadcast.sent_at = broadcast_crud.utcnow_naive()
+        await db_session.commit()
+
+        updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+        assert updated is not None
+        assert updated.retry_count == expected
+
+    # Fourth attempt should fail
+    broadcast.status = "failed"
+    broadcast.error_message = "attempt 4"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
     assert broadcast.error_message is None
 
 

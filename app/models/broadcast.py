@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -22,3 +22,5 @@ class Broadcast(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Incremented on each manual retry (Sprint 26).  Capped by broadcast_max_retries setting.
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

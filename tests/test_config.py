@@ -66,3 +66,38 @@ def test_broadcast_timeout_rejects_very_negative():
     """Large negative values are also rejected."""
     with pytest.raises(ValueError, match="BROADCAST_TIMEOUT_SECONDS must be >= 1"):
         _settings("postgresql+asyncpg://u:p@h/db", broadcast_timeout_seconds=-999)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 26 — Broadcast retry limits
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_broadcast_max_retries_default_is_3():
+    """Default value is 3."""
+    s = _settings("postgresql+asyncpg://u:p@h/db")
+    assert s.broadcast_max_retries == 3
+
+
+def test_broadcast_max_retries_custom_value():
+    """Can be overridden via env var."""
+    s = _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=5)
+    assert s.broadcast_max_retries == 5
+
+
+def test_broadcast_max_retries_accepts_zero():
+    """Zero is accepted (disables retries)."""
+    s = _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=0)
+    assert s.broadcast_max_retries == 0
+
+
+def test_broadcast_max_retries_rejects_negative():
+    """Negative values are rejected by the validator."""
+    with pytest.raises(ValueError, match="BROADCAST_MAX_RETRIES must be >= 0"):
+        _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=-1)
+
+
+def test_broadcast_max_retries_rejects_very_negative():
+    """Large negative values are also rejected."""
+    with pytest.raises(ValueError, match="BROADCAST_MAX_RETRIES must be >= 0"):
+        _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=-999)

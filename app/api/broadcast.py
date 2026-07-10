@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.config import settings
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
@@ -92,7 +93,8 @@ async def retry_broadcast(
 ):
     """Reset a failed broadcast to pending so it can be re-dispatched.
 
-    Only works if the broadcast is currently in ``"failed"`` status.
+    Only works if the broadcast is currently in ``"failed"`` status and the
+    retry limit (``broadcast_max_retries``, default 3) has not been reached.
     Clears the error message and ``sent_at`` timestamp.  The next scheduler
     tick (or a manual call to ``process_broadcast``) will pick it up.
 
@@ -108,11 +110,28 @@ async def retry_broadcast(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
     await require_account_tenant_access(broadcast.account_id, db, identity)
 
-    updated = await broadcast_crud.retry_broadcast(db, broadcast_id)
-    if updated is None:
+    if broadcast.status != "failed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"재시도할 수 없는 상태입니다 (현재: {broadcast.status}). 실패한 발송만 재시도 가능합니다.",
+        )
+
+    if broadcast.retry_count >= settings.broadcast_max_retries:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"최대 재시도 횟수({settings.broadcast_max_retries}회)에 도달했습니다. "
+                "새로운 발송을 생성해주세요."
+            ),
+        )
+
+    updated = await broadcast_crud.retry_broadcast(db, broadcast_id)
+    # retry_broadcast should succeed since we already checked status and retry_count,
+    # but guard against race conditions.
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="재시도 처리 중 상태가 변경되었습니다. 다시 시도해주세요.",
         )
 
     logger.info("broadcast_retried", broadcast_id=broadcast_id, account_id=broadcast.account_id)

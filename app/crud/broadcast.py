@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.limits import BROADCAST_MIN_INTERVAL_SECONDS
 from app.models.broadcast import Broadcast
 from app.schemas.broadcast import BroadcastCreate
@@ -138,19 +139,25 @@ async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | No
 
     Only transitions if current status is ``"failed"``.
     Clears ``status`` → ``"pending"``, ``error_message`` → ``None``,
-    ``sent_at`` → ``None``.
+    ``sent_at`` → ``None``.  Increments ``retry_count``.
 
     Returns the updated broadcast, or ``None`` if the broadcast is not in a
-    retryable state (not found, already ``"pending"``, ``"sending"``, or ``"sent"``).
+    retryable state (not found, not ``"failed"``, or retry limit reached).
     """
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return None
     if broadcast.status != "failed":
         return None
+
+    max_retries = settings.broadcast_max_retries
+    if broadcast.retry_count >= max_retries:
+        return None
+
     broadcast.status = "pending"
     broadcast.error_message = None
     broadcast.sent_at = None
+    broadcast.retry_count = broadcast.retry_count + 1
     await db.commit()
     await db.refresh(broadcast)
     return broadcast
