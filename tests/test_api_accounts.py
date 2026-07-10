@@ -1,3 +1,5 @@
+"""Sprint 21+ tests for Account Operations Center (search, filter, sort, paginate, bulk, summary)."""
+
 import pytest
 
 
@@ -5,7 +7,10 @@ import pytest
 async def test_list_accounts_empty(client):
     res = await client.get("/api/accounts")
     assert res.status_code == 200
-    assert res.json() == []
+    body = res.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["page"] == 1
 
 
 @pytest.mark.asyncio
@@ -32,7 +37,6 @@ async def test_create_account_duplicate_phone_conflicts(client):
     payload = {"phone": "+821033334444", "name": "A"}
     first = await client.post("/api/accounts", json=payload)
     assert first.status_code == 201
-
     second = await client.post("/api/accounts", json={"phone": "+821033334444", "name": "B"})
     assert second.status_code == 409
 
@@ -41,7 +45,6 @@ async def test_create_account_duplicate_phone_conflicts(client):
 async def test_get_account(client):
     created = await client.post("/api/accounts", json={"phone": "+821044445555"})
     account_id = created.json()["id"]
-
     res = await client.get(f"/api/accounts/{account_id}")
     assert res.status_code == 200
     assert res.json()["id"] == account_id
@@ -57,7 +60,6 @@ async def test_get_account_not_found(client):
 async def test_update_account(client):
     created = await client.post("/api/accounts", json={"phone": "+821055556666"})
     account_id = created.json()["id"]
-
     res = await client.put(f"/api/accounts/{account_id}", json={"name": "새 이름", "status": "active"})
     assert res.status_code == 200
     body = res.json()
@@ -75,10 +77,8 @@ async def test_update_account_not_found(client):
 async def test_delete_account(client):
     created = await client.post("/api/accounts", json={"phone": "+821066667777"})
     account_id = created.json()["id"]
-
     res = await client.delete(f"/api/accounts/{account_id}")
     assert res.status_code == 204
-
     follow_up = await client.get(f"/api/accounts/{account_id}")
     assert follow_up.status_code == 404
 
@@ -93,7 +93,126 @@ async def test_delete_account_not_found(client):
 async def test_list_accounts_returns_created_accounts(client):
     await client.post("/api/accounts", json={"phone": "+821077778888"})
     await client.post("/api/accounts", json={"phone": "+821099990000"})
-
     res = await client.get("/api/accounts")
     assert res.status_code == 200
-    assert len(res.json()) == 2
+    body = res.json()
+    assert len(body["items"]) == 2
+    assert body["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_search_accounts_by_phone(client):
+    await client.post("/api/accounts", json={"phone": "+821011111111", "name": "Alice"})
+    await client.post("/api/accounts", json={"phone": "+821022222222", "name": "Bob"})
+    res = await client.get("/api/accounts?search=Alice")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 1
+    assert body["items"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_filter_accounts_by_status(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821033333333"})
+    await client.put(f"/api/accounts/{a1.json()['id']}", json={"status": "active"})
+    await client.post("/api/accounts", json={"phone": "+821044444444"})
+    res = await client.get("/api/accounts?status=active")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] >= 1
+    for item in body["items"]:
+        assert item["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_paginated_accounts(client):
+    for i in range(5):
+        await client.post("/api/accounts", json={"phone": f"+8210{i:06d}0000"})
+    res = await client.get("/api/accounts?page=1&page_size=2")
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body["items"]) == 2
+    assert body["total"] >= 5
+    assert body["total_pages"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_account_summary(client):
+    res = await client.get("/api/accounts/summary")
+    assert res.status_code == 200
+    body = res.json()
+    assert "total" in body
+    assert "healthy" in body
+    assert "unhealthy" in body
+    assert "active_accounts" in body
+    assert "inactive_accounts" in body
+
+
+@pytest.mark.asyncio
+async def test_bulk_activate_accounts(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821055555555"})
+    a2 = await client.post("/api/accounts", json={"phone": "+821066666666"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"], a2.json()["id"]],
+        "action": "activate",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_processed"] == 2
+    assert body["total_failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_deactivate_accounts(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821077777777"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"]],
+        "action": "deactivate",
+    })
+    assert res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_bulk_reset_session(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821088888888"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"]],
+        "action": "reset_session",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_processed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_accounts(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821099999999"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"]],
+        "action": "delete",
+    })
+    assert res.status_code == 200
+    get_back = await client.get(f"/api/accounts/{a1.json()['id']}")
+    assert get_back.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_bulk_unknown_action(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821000000001"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"]],
+        "action": "fly_to_moon",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sort_accounts_by_phone(client):
+    await client.post("/api/accounts", json={"phone": "+8210AAAAAA", "name": "Z"})
+    await client.post("/api/accounts", json={"phone": "+8210BBBBBB", "name": "A"})
+    res = await client.get("/api/accounts?sort_by=phone&sort_dir=asc&page_size=100")
+    body = res.json()
+    phones = [item["phone"] for item in body["items"]]
+    assert phones == sorted(phones)

@@ -24,6 +24,11 @@ class Account(Base):
     # Master switch for the auto-reply listener (app/services/auto_reply_service.py).
     # Individual AutoReplyRule.is_active flags only matter while this is also True.
     auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Health tracking fields — updated by the delivery pipeline and health scanner
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -1,12 +1,9 @@
-"""Account Health API — tenant-isolated health monitoring.
-
-Uses existing Account and MessageLog data — no fake online status.
-"""
+"""Account Health API — tenant-isolated health monitoring with operational summary."""
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_identity, Identity
-from app.services.account_health import get_account_health
+from app.services.account_health import get_account_health, HealthSummary, AccountHealthItem
 
 router = APIRouter(prefix="/api/account-health", tags=["account-health"])
 
@@ -16,7 +13,7 @@ async def api_account_health(
     account_id: str | None = None,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Get account health status for all authorized accounts.
+    """Get detailed account health status for all authorized accounts.
 
     Derives health from Account model fields (status, session_data) and
     recent MessageLog delivery outcomes. Tenant-isolated.

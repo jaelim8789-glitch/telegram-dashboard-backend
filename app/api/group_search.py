@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
@@ -7,11 +7,14 @@ from app.crud import account as account_crud
 from app.crud import group_search as group_search_crud
 from app.database import get_db
 from app.schemas.group_search import (
+    GroupJoinLogList,
     GroupJoinLogRead,
     GroupSearchRequest,
+    GroupSearchResultList,
     GroupSearchResultRead,
     JoinGroupRequest,
     JoinInfo,
+    GroupJoinStats,
 )
 from app.services.group_search_service import DailyJoinLimitExceededError, search_public_groups, join_selected_groups
 from app.core.limits import MAX_DAILY_JOINS
@@ -20,7 +23,7 @@ router = APIRouter(prefix="/api/group-search", tags=["group-search"])
 logger = get_logger(__name__)
 
 
-@router.post("/search", response_model=list[GroupSearchResultRead])
+@router.post("/search", response_model=GroupSearchResultList)
 async def search_groups(
     payload: GroupSearchRequest,
     db: AsyncSession = Depends(get_db),
@@ -47,23 +50,26 @@ async def search_groups(
             detail=f'"{payload.keyword}" 검색 결과가 없습니다.',
         )
 
-    # Return from DB so we have the persisted IDs
     saved = await group_search_crud.get_recent_results(db, account.id, keyword=payload.keyword)
-    return saved[:100]
+    return GroupSearchResultList(items=saved[:100], total=len(saved), keyword=payload.keyword)
 
 
-@router.get("/results/{account_id}", response_model=list[GroupSearchResultRead])
+@router.get("/results/{account_id}", response_model=GroupSearchResultList)
 async def get_search_results(
     account_id: str,
+    keyword: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """Get recent search results for an account."""
+    """Get recent search results for an account with optional keyword filter."""
     await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
-    return await group_search_crud.get_recent_results(db, account_id)
+
+    results = await group_search_crud.get_recent_results(db, account_id, keyword=keyword)
+    total = await group_search_crud.count_search_results(db, account_id, keyword=keyword)
+    return GroupSearchResultList(items=results, total=total, keyword=keyword or "")
 
 
 @router.post("/join", response_model=list[dict])
@@ -76,7 +82,6 @@ async def join_groups(
 
     Enforces daily join limit (MAX_DAILY_JOINS per account).
     """
-    # Get the first result to determine account_id
     rows = await group_search_crud.get_results_by_ids(db, payload.result_ids)
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="선택된 결과가 없습니다.")
@@ -121,15 +126,45 @@ async def get_join_info(
     )
 
 
-@router.get("/join-logs/{account_id}", response_model=list[GroupJoinLogRead])
-async def get_join_logs(
+@router.get("/join-stats/{account_id}", response_model=GroupJoinStats)
+async def get_join_stats(
     account_id: str,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """Get join history for an account."""
+    """Get aggregated join statistics for an account."""
     await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
-    return await group_search_crud.get_join_logs(db, account_id)
+
+    stats = await group_search_crud.get_join_stats(db, account_id)
+    return GroupJoinStats(**stats)
+
+
+@router.get("/join-logs/{account_id}", response_model=GroupJoinLogList)
+async def get_join_logs(
+    account_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get paginated join history for an account."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    offset = (page - 1) * page_size
+    logs = await group_search_crud.get_join_logs(db, account_id, limit=page_size, offset=offset)
+    total = await group_search_crud.count_join_logs(db, account_id)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    return GroupJoinLogList(
+        items=logs,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )

@@ -1,10 +1,15 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
-from app.schemas.account import AccountCreate, AccountUpdate
+from app.schemas.account import (
+    AccountCreate,
+    AccountFilterParams,
+    AccountSortParams,
+    AccountUpdate,
+)
 
 
 async def list_accounts(db: AsyncSession) -> list[Account]:
@@ -68,18 +73,6 @@ async def set_auth_state(
 
 
 async def mark_account_session_invalid(db: AsyncSession, account: Account) -> Account:
-    """Clear the session data and mark the account as inactive.
-
-    Called when the delivery pipeline encounters a session/auth failure
-    (AccountNotAuthenticatedError).  After this call:
-      - ``session_data`` → ``None`` (encrypted session string is discarded)
-      - ``status`` → ``"inactive"``
-      - ``last_activity`` → now
-
-    Future delivery attempts will fast-fail at the get_authorized_client
-    check (``if not account.session_data``) without attempting a network
-    connection.
-    """
     account.session_data = None
     account.status = "inactive"
     account.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -89,20 +82,198 @@ async def mark_account_session_invalid(db: AsyncSession, account: Account) -> Ac
 
 
 async def mark_account_banned(db: AsyncSession, account: Account) -> Account:
-    """Mark the account as banned by Telegram.
-
-    Called when the delivery pipeline receives a confirmed banned error
-    (UserDeactivatedBanError, PhoneNumberBannedError).  After this call:
-      - ``status`` → ``"banned"``
-      - ``session_data`` → ``None`` (session is no longer usable)
-      - ``last_activity`` → now
-
-    Future delivery attempts will fast-fail at the top of deliver_message()
-    by checking ``account.status == "banned"`` without any Telegram call.
-    """
     account.status = "banned"
     account.session_data = None
     account.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(account)
     return account
+
+
+# ── Search / Filter / Sort / Paginate ────────────────────────────────────
+
+
+async def query_accounts(
+    db: AsyncSession,
+    tenant_id: str | None = None,
+    filters: AccountFilterParams | None = None,
+    sort: AccountSortParams | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Account], int]:
+    query = select(Account)
+    count_query = select(Account.id)
+
+    if tenant_id:
+        query = query.where(Account.tenant_id == tenant_id)
+        count_query = count_query.where(Account.tenant_id == tenant_id)
+
+    if filters:
+        if filters.search:
+            pattern = f"%{filters.search}%"
+            query = query.where(
+                or_(Account.phone.ilike(pattern), Account.name.ilike(pattern))
+            )
+            count_query = count_query.where(
+                or_(Account.phone.ilike(pattern), Account.name.ilike(pattern))
+            )
+        if filters.status:
+            query = query.where(Account.status == filters.status)
+            count_query = count_query.where(Account.status == filters.status)
+        if filters.has_session is not None:
+            if filters.has_session:
+                query = query.where(Account.session_data.isnot(None))
+                count_query = count_query.where(Account.session_data.isnot(None))
+            else:
+                query = query.where(Account.session_data.is_(None))
+                count_query = count_query.where(Account.session_data.is_(None))
+        if filters.has_error is not None:
+            if filters.has_error:
+                query = query.where(Account.last_error.isnot(None))
+                count_query = count_query.where(Account.last_error.isnot(None))
+            else:
+                query = query.where(Account.last_error.is_(None))
+                count_query = count_query.where(Account.last_error.is_(None))
+        if filters.auto_reply_enabled is not None:
+            query = query.where(Account.auto_reply_enabled == filters.auto_reply_enabled)
+            count_query = count_query.where(Account.auto_reply_enabled == filters.auto_reply_enabled)
+        if filters.phone:
+            query = query.where(Account.phone.ilike(f"%{filters.phone}%"))
+            count_query = count_query.where(Account.phone.ilike(f"%{filters.phone}%"))
+
+    # Count total before pagination
+    count_result = await db.execute(count_query)
+    total = len(list(count_result.scalars().all()))
+
+    # Sort
+    sort_field_map = {
+        "created_at": Account.created_at,
+        "updated_at": Account.updated_at,
+        "phone": Account.phone,
+        "name": Account.name,
+        "status": Account.status,
+        "today_sent": Account.today_sent,
+        "group_count": Account.group_count,
+        "last_activity": Account.last_activity,
+        "last_error_at": Account.last_error_at,
+        "last_success_at": Account.last_success_at,
+    }
+    sort_col = sort_field_map.get(sort.sort_by if sort else "created_at", Account.created_at)
+    if sort and sort.sort_dir == "asc":
+        query = query.order_by(sort_col.asc())
+    else:
+        query = query.order_by(sort_col.desc())
+
+    # Paginate
+    offset = (page - 1) * page_size
+    query = query.offset(offset).limit(page_size)
+
+    result = await db.execute(query)
+    accounts = list(result.scalars().all())
+
+    return accounts, total
+
+
+# ── Health field updates ─────────────────────────────────────────────────
+
+
+async def update_account_health(
+    db: AsyncSession,
+    account: Account,
+    *,
+    last_error: str | None = None,
+    last_error_at: datetime | None = None,
+    last_success_at: datetime | None = None,
+    health_checked_at: datetime | None = None,
+) -> Account:
+    if last_error is not None:
+        account.last_error = last_error
+    if last_error_at is not None:
+        account.last_error_at = last_error_at
+    if last_success_at is not None:
+        account.last_success_at = last_success_at
+    if health_checked_at is not None:
+        account.health_checked_at = health_checked_at
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+
+# ── Bulk Operations ──────────────────────────────────────────────────────
+
+
+async def bulk_activate_accounts(db: AsyncSession, account_ids: list[str]) -> int:
+    from sqlalchemy import update
+    result = await db.execute(
+        update(Account)
+        .where(Account.id.in_(account_ids))
+        .values(status="active")
+    )
+    await db.commit()
+    return result.rowcount
+
+
+async def bulk_deactivate_accounts(db: AsyncSession, account_ids: list[str]) -> int:
+    from sqlalchemy import update
+    result = await db.execute(
+        update(Account)
+        .where(Account.id.in_(account_ids))
+        .values(status="inactive")
+    )
+    await db.commit()
+    return result.rowcount
+
+
+async def bulk_reset_sessions(db: AsyncSession, account_ids: list[str]) -> int:
+    from sqlalchemy import update
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = await db.execute(
+        update(Account)
+        .where(Account.id.in_(account_ids))
+        .values(session_data=None, status="inactive", last_activity=now)
+    )
+    await db.commit()
+    return result.rowcount
+
+
+async def bulk_delete_accounts(db: AsyncSession, account_ids: list[str]) -> int:
+    from sqlalchemy import delete
+    result = await db.execute(
+        delete(Account).where(Account.id.in_(account_ids))
+    )
+    await db.commit()
+    return result.rowcount
+
+
+# ── Summary ──────────────────────────────────────────────────────────────
+
+
+async def get_account_summary(db: AsyncSession, tenant_id: str | None = None) -> dict:
+    from sqlalchemy import func
+
+    base_query = select(Account)
+    if tenant_id:
+        base_query = base_query.where(Account.tenant_id == tenant_id)
+
+    all_accounts = await db.execute(base_query)
+    accounts = list(all_accounts.scalars().all())
+
+    total = len(accounts)
+    active = sum(1 for a in accounts if a.status == "active")
+    inactive = sum(1 for a in accounts if a.status == "inactive")
+    banned = sum(1 for a in accounts if a.status == "banned")
+    has_session = sum(1 for a in accounts if a.session_data)
+    has_errors = sum(1 for a in accounts if a.last_error)
+    total_sent = sum(a.today_sent for a in accounts)
+    total_groups = sum(a.group_count for a in accounts)
+
+    return {
+        "total": total,
+        "active_accounts": active,
+        "inactive_accounts": inactive,
+        "banned": banned,
+        "has_session": has_session,
+        "has_errors": has_errors,
+        "total_today_sent": total_sent,
+        "total_groups": total_groups,
+    }

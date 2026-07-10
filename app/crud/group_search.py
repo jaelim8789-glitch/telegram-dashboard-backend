@@ -34,7 +34,7 @@ async def save_search_results(
     return rows
 
 
-async def get_recent_results(db: AsyncSession, account_id: str, keyword: str | None = None) -> list[GroupSearchResult]:
+async def get_recent_results(db: AsyncSession, account_id: str, keyword: str | None = None, limit: int = 50) -> list[GroupSearchResult]:
     query = (
         select(GroupSearchResult)
         .where(GroupSearchResult.account_id == account_id)
@@ -42,7 +42,7 @@ async def get_recent_results(db: AsyncSession, account_id: str, keyword: str | N
     )
     if keyword:
         query = query.where(GroupSearchResult.keyword == keyword)
-    result = await db.execute(query.limit(50))
+    result = await db.execute(query.limit(limit))
     return list(result.scalars().all())
 
 
@@ -52,10 +52,6 @@ async def get_results_by_ids(db: AsyncSession, result_ids: list[str]) -> list[Gr
 
 
 async def mark_results_joined(db: AsyncSession, result_ids: list[str]) -> None:
-    await db.execute(
-        select(GroupSearchResult).where(GroupSearchResult.id.in_(result_ids))
-        # We just update is_joined
-    )
     for rid in result_ids:
         row = await db.get(GroupSearchResult, rid)
         if row:
@@ -63,7 +59,16 @@ async def mark_results_joined(db: AsyncSession, result_ids: list[str]) -> None:
     await db.commit()
 
 
+async def count_search_results(db: AsyncSession, account_id: str, keyword: str | None = None) -> int:
+    query = select(func.count(GroupSearchResult.id)).where(GroupSearchResult.account_id == account_id)
+    if keyword:
+        query = query.where(GroupSearchResult.keyword == keyword)
+    result = await db.execute(query)
+    return result.scalar() or 0
+
+
 # --- Join log ---
+
 
 async def count_today_joins(db: AsyncSession, account_id: str) -> int:
     """Count successful joins made by this account today."""
@@ -103,11 +108,43 @@ async def create_join_log(
     return log
 
 
-async def get_join_logs(db: AsyncSession, account_id: str, limit: int = 50) -> list[GroupJoinLog]:
+async def get_join_logs(db: AsyncSession, account_id: str, limit: int = 50, offset: int = 0) -> list[GroupJoinLog]:
     result = await db.execute(
         select(GroupJoinLog)
         .where(GroupJoinLog.account_id == account_id)
         .order_by(GroupJoinLog.created_at.desc())
+        .offset(offset)
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def count_join_logs(db: AsyncSession, account_id: str) -> int:
+    result = await db.execute(
+        select(func.count(GroupJoinLog.id)).where(GroupJoinLog.account_id == account_id)
+    )
+    return result.scalar() or 0
+
+
+async def get_join_stats(db: AsyncSession, account_id: str) -> dict:
+    """Get aggregated join statistics for an account."""
+    total = await count_join_logs(db, account_id)
+    successful = await db.execute(
+        select(func.count(GroupJoinLog.id)).where(
+            GroupJoinLog.account_id == account_id,
+            GroupJoinLog.success == True,  # noqa: E712
+        )
+    )
+    success_count = successful.scalar() or 0
+    failed = total - success_count
+    success_rate = (success_count / total * 100) if total > 0 else 0.0
+    remaining_today = max(0, 5 - await count_today_joins(db, account_id))
+
+    return {
+        "total_attempts": total,
+        "successful_joins": success_count,
+        "failed_joins": failed,
+        "success_rate": round(success_rate, 1),
+        "today_remaining": remaining_today,
+        "max_daily": 5,
+    }

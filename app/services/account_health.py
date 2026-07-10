@@ -1,7 +1,7 @@
 """Account Health Monitoring — derived from existing account and delivery data.
 
 Health states are determined by combining:
-1. Account model fields (status, session_data, last_activity)
+1. Account model fields (status, session_data, last_activity, last_error*)
 2. Recent MessageLog delivery outcomes (last 100 attempts per account)
 
 No fake online status, no WebSocket, no external pings.
@@ -37,26 +37,41 @@ class AccountHealthItem:
     account_id: str
     phone: str
     name: str | None = None
-    status: str = "unknown"  # healthy, unauthorized, banned, rate_limited, error, unknown, not_configured
+    status: str = "unknown"
     has_session: bool = False
     last_activity: str | None = None
     last_error: str | None = None
     last_error_status: str | None = None
+    last_error_at: str | None = None
+    last_success_at: str | None = None
+    health_checked_at: str | None = None
     recent_success_count: int = 0
     recent_failure_count: int = 0
     total_delivery_attempts: int = 0
+
+
+@dataclass
+class HealthSummary:
+    total: int
+    healthy: int
+    unhealthy: int
+    not_configured: int
+    banned: int
+    rate_limited: int
+    unauthorized: int
+    error_count: int
+    unknown: int
+    has_session: int
+    has_errors: int
+    total_today_sent: int
+    total_groups: int
 
 
 async def get_account_health(
     identity: Identity,
     account_id: str | None = None,
 ) -> list[AccountHealthItem]:
-    """Get health status for all authorized accounts.
-
-    Derives health from Account model fields and recent MessageLog data.
-    Tenant-isolated: users only see their own tenant's accounts.
-    """
-    # Resolve authorized account IDs
+    """Get health status for all authorized accounts."""
     async with async_session_maker() as db:
         if identity.kind == "admin":
             query = select(Account)
@@ -77,12 +92,9 @@ async def get_account_health(
         return []
 
     account_ids = [a.id for a in accounts]
-
-    # Get recent delivery stats per account (last 7 days)
     since = utcnow_naive() - timedelta(days=7)
 
     async with async_session_maker() as db:
-        # Most recent delivery per account
         latest_rows = {}
         for aid in account_ids:
             latest_q = select(MessageLog).where(
@@ -94,7 +106,6 @@ async def get_account_health(
             if latest_list:
                 latest_rows[aid] = latest_list[0]
 
-        # Counts per account
         counts_q = select(
             MessageLog.account_id,
             func.count(MessageLog.id).label("total"),
@@ -111,7 +122,6 @@ async def get_account_health(
                 "successful": row.successful or 0,
             }
 
-    # Build health items
     items = []
     for account in accounts:
         latest = latest_rows.get(account.id)
@@ -121,30 +131,27 @@ async def get_account_health(
         recent_success = acct_counts["successful"]
         recent_failures = acct_counts["total"] - acct_counts["successful"]
 
-        # Determine health status
         if account.status == "banned":
-            status = "banned"
+            status_val = "banned"
         elif not has_session:
-            status = "not_configured"
+            status_val = "not_configured"
         elif latest and not latest.success:
-            # Most recent delivery failed — classify the failure
             if latest.status == "session_expired":
-                status = "unauthorized"
+                status_val = "unauthorized"
             elif latest.status == "banned":
-                status = "banned"
+                status_val = "banned"
             elif latest.status == "flood_wait":
-                status = "rate_limited"
+                status_val = "rate_limited"
             elif latest.status in ("network_error", "internal_error"):
-                status = "error"
+                status_val = "error"
             else:
-                status = "error"
+                status_val = "error"
         elif latest and latest.success:
-            status = "healthy"
+            status_val = "healthy"
         elif has_session:
-            # Has session but no recent delivery history
-            status = "unknown"
+            status_val = "unknown"
         else:
-            status = "not_configured"
+            status_val = "not_configured"
 
         last_error = latest.error_message if latest and not latest.success else None
         last_error_status = latest.status if latest and not latest.success else None
@@ -153,14 +160,55 @@ async def get_account_health(
             account_id=account.id,
             phone=account.phone,
             name=account.name,
-            status=status,
+            status=status_val,
             has_session=has_session,
             last_activity=latest.created_at.isoformat() if latest and latest.created_at else (account.last_activity.isoformat() if account.last_activity else None),
             last_error=last_error,
             last_error_status=last_error_status,
+            last_error_at=account.last_error_at.isoformat() if account.last_error_at else None,
+            last_success_at=account.last_success_at.isoformat() if account.last_success_at else None,
+            health_checked_at=account.health_checked_at.isoformat() if account.health_checked_at else None,
             recent_success_count=recent_success,
             recent_failure_count=recent_failures,
             total_delivery_attempts=acct_counts["total"],
         ))
 
     return items
+
+
+async def get_health_summary(
+    identity: Identity,
+) -> HealthSummary:
+    """Get aggregated health summary for the tenant."""
+    items = await get_account_health(identity)
+
+    total = len(items)
+    healthy = sum(1 for i in items if i.status == "healthy")
+    not_configured = sum(1 for i in items if i.status == "not_configured")
+    banned = sum(1 for i in items if i.status == "banned")
+    rate_limited = sum(1 for i in items if i.status == "rate_limited")
+    unauthorized = sum(1 for i in items if i.status == "unauthorized")
+    error_count = sum(1 for i in items if i.status == "error")
+    unknown = sum(1 for i in items if i.status == "unknown")
+    has_session = sum(1 for i in items if i.has_session)
+    has_errors = sum(1 for i in items if i.last_error is not None)
+
+    async with async_session_maker() as db:
+        from app.crud.account import get_account_summary
+        summary = await get_account_summary(db, identity.tenant_id if identity.kind != "admin" else None)
+
+    return HealthSummary(
+        total=total,
+        healthy=healthy,
+        unhealthy=total - healthy,
+        not_configured=not_configured,
+        banned=banned,
+        rate_limited=rate_limited,
+        unauthorized=unauthorized,
+        error_count=error_count,
+        unknown=unknown,
+        has_session=has_session,
+        has_errors=has_errors,
+        total_today_sent=summary["total_today_sent"],
+        total_groups=summary["total_groups"],
+    )

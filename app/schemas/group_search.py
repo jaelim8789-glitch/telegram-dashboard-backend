@@ -10,7 +10,7 @@ class GroupSearchRequest(BaseModel):
 
 
 class PublicGroupInfo(BaseModel):
-    """Result from Telegram search ? returned to frontend for user selection."""
+    """Result from Telegram search returned to frontend for user selection."""
     chat_id: str
     title: str
     chat_type: str | None = None
@@ -35,7 +35,18 @@ class GroupSearchResultRead(BaseModel):
     created_at: datetime
 
 
+class GroupSearchResultExtended(GroupSearchResultRead):
+    """Extended result with join eligibility info."""
+    can_join: bool = True
+    cannot_join_reason: str | None = None
+
+
 class JoinGroupRequest(BaseModel):
+    result_ids: list[str] = Field(min_length=1, max_length=50, description="IDs of GroupSearchResult rows to join")
+
+
+class JoinGroupV2Request(BaseModel):
+    account_id: str
     result_ids: list[str] = Field(min_length=1, max_length=50, description="IDs of GroupSearchResult rows to join")
 
 
@@ -53,8 +64,40 @@ class GroupJoinLogRead(BaseModel):
     created_at: datetime
 
 
+class GroupJoinLogExtended(GroupJoinLogRead):
+    """Join log with retry information."""
+    can_retry: bool = False
+    retry_action: str | None = None
+
+
 class JoinInfo(BaseModel):
     """Status of daily join limit."""
     joined_today: int
     max_daily: int
     remaining: int
+
+
+class GroupJoinStats(BaseModel):
+    """Aggregated join statistics for an account."""
+    total_attempts: int
+    successful_joins: int
+    failed_joins: int
+    success_rate: float
+    today_remaining: int
+    max_daily: int
+
+
+class GroupSearchResultList(BaseModel):
+    """Paginated search results."""
+    items: list[GroupSearchResultRead]
+    total: int
+    keyword: str
+
+
+class GroupJoinLogList(BaseModel):
+    """Paginated join logs."""
+    items: list[GroupJoinLogRead]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
