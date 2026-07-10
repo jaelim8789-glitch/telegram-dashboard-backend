@@ -181,3 +181,99 @@ async def test_process_broadcast_timeout_configurable_via_limits(db_session, mon
 
     assert limits.BROADCAST_TIMEOUT_SECONDS == 300
     assert hasattr(limits, "BROADCAST_TIMEOUT_SECONDS")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 24 — Broadcast retry (CRUD-level)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_resets_failed_to_pending(db_session):
+    """retry_broadcast resets a failed broadcast to pending, clearing error and sent_at."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    # Manually set to failed (simulating a failed delivery)
+    broadcast.status = "failed"
+    broadcast.error_message = "Some error"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.error_message is None
+    assert updated.sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_rejects_sending_state(db_session):
+    """retry_broadcast returns None for a broadcast in 'sending' state."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+    broadcast.status = "sending"
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_rejects_sent_state(db_session):
+    """retry_broadcast returns None for a broadcast in 'sent' state."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+    broadcast.status = "sent"
+    await db_session.commit()
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_rejects_pending_state(db_session):
+    """retry_broadcast returns None for a broadcast already in 'pending' state."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+    # Already pending by default
+
+    result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retry_broadcast_returns_none_for_missing(db_session):
+    """retry_broadcast returns None for a non-existent broadcast."""
+    result = await broadcast_crud.retry_broadcast(db_session, "does-not-exist")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch):
+    """After retry, the broadcast can be picked up and processed successfully."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    # Simulate a failed broadcast
+    broadcast.status = "failed"
+    broadcast.error_message = "First attempt failed"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    # Retry it
+    updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
+    assert updated is not None
+    assert updated.status == "pending"
+
+    # Now process it — should succeed
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_success_result()]),
+    )
+
+    await process_broadcast(broadcast.id)
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "sent"
+    assert broadcast.sent_at is not None

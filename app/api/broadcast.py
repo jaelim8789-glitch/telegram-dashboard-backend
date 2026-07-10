@@ -7,12 +7,15 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
 from app.schemas.broadcast import BroadcastCreate, BroadcastRead
 from app.services.broadcast_processor import process_broadcast
 from app.services.media import save_broadcast_media
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/broadcast", tags=["broadcast"])
 
@@ -79,6 +82,41 @@ async def create_broadcast(
         background_tasks.add_task(process_broadcast, broadcast.id)
 
     return broadcast
+
+
+@router.post("/{broadcast_id}/retry", response_model=BroadcastRead)
+async def retry_broadcast(
+    broadcast_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Reset a failed broadcast to pending so it can be re-dispatched.
+
+    Only works if the broadcast is currently in ``"failed"`` status.
+    Clears the error message and ``sent_at`` timestamp.  The next scheduler
+    tick (or a manual call to ``process_broadcast``) will pick it up.
+
+    Tenant access is verified before the state transition.
+    """
+    broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+
+    # Verify the broadcast's account belongs to the caller's tenant
+    account = await account_crud.get_account(db, broadcast.account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+    await require_account_tenant_access(broadcast.account_id, db, identity)
+
+    updated = await broadcast_crud.retry_broadcast(db, broadcast_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"재시도할 수 없는 상태입니다 (현재: {broadcast.status}). 실패한 발송만 재시도 가능합니다.",
+        )
+
+    logger.info("broadcast_retried", broadcast_id=broadcast_id, account_id=broadcast.account_id)
+    return updated
 
 
 @router.get("/{broadcast_id}", response_model=BroadcastRead)

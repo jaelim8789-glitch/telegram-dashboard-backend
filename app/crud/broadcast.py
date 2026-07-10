@@ -133,6 +133,29 @@ async def record_broadcast_error(db: AsyncSession, broadcast_id: str, error_mess
     await db.commit()
 
 
+async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
+    """Reset a failed broadcast to pending for retry.
+
+    Only transitions if current status is ``"failed"``.
+    Clears ``status`` → ``"pending"``, ``error_message`` → ``None``,
+    ``sent_at`` → ``None``.
+
+    Returns the updated broadcast, or ``None`` if the broadcast is not in a
+    retryable state (not found, already ``"pending"``, ``"sending"``, or ``"sent"``).
+    """
+    broadcast = await db.get(Broadcast, broadcast_id)
+    if broadcast is None:
+        return None
+    if broadcast.status != "failed":
+        return None
+    broadcast.status = "pending"
+    broadcast.error_message = None
+    broadcast.sent_at = None
+    await db.commit()
+    await db.refresh(broadcast)
+    return broadcast
+
+
 async def list_upcoming_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
     now = utcnow_naive()
     result = await db.execute(
