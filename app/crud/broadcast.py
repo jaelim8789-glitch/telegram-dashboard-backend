@@ -393,3 +393,101 @@ async def list_due_recurring_parents(db: AsyncSession) -> list[Broadcast]:
         )
     )
     return list(result.scalars().all())
+
+
+# ── Pause / Unpause ────────────────────────────────────────────────
+
+
+async def pause_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
+    broadcast = await db.get(Broadcast, broadcast_id)
+    if broadcast is None:
+        return None
+    if broadcast.recurring_interval_minutes is None:
+        return None
+    if broadcast.status == "cancelled":
+        return None
+    broadcast.is_recurring_paused = True
+    await db.commit()
+    await db.refresh(broadcast)
+    return broadcast
+
+
+async def unpause_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
+    broadcast = await db.get(Broadcast, broadcast_id)
+    if broadcast is None:
+        return None
+    if broadcast.recurring_interval_minutes is None:
+        return None
+    if broadcast.status == "cancelled":
+        return None
+    if not broadcast.is_recurring_paused:
+        return broadcast
+    broadcast.is_recurring_paused = False
+    now = utcnow_naive()
+    if broadcast.next_scheduled_at is None or broadcast.next_scheduled_at <= now:
+        broadcast.next_scheduled_at = now
+    await db.commit()
+    await db.refresh(broadcast)
+    return broadcast
+
+
+# ── Child broadcast queries (execution history) ────────────────────
+
+
+async def list_child_broadcasts(
+    db: AsyncSession, parent_id: str, limit: int = 20, offset: int = 0
+) -> list[Broadcast]:
+    result = await db.execute(
+        select(Broadcast)
+        .where(Broadcast.parent_broadcast_id == parent_id)
+        .order_by(Broadcast.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_child_broadcasts(db: AsyncSession, parent_id: str) -> int:
+    from sqlalchemy import func as sa_func
+    result = await db.execute(
+        select(sa_func.count(Broadcast.id)).where(Broadcast.parent_broadcast_id == parent_id)
+    )
+    return result.scalar() or 0
+
+
+async def get_last_child_broadcast(db: AsyncSession, parent_id: str) -> Broadcast | None:
+    result = await db.execute(
+        select(Broadcast)
+        .where(Broadcast.parent_broadcast_id == parent_id)
+        .order_by(Broadcast.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_recurring_with_child_counts(
+    db: AsyncSession, identity: Identity | None = None,
+) -> list[tuple[Broadcast, int, Broadcast | None]]:
+    query = select(Broadcast).where(
+        Broadcast.recurring_interval_minutes.is_not(None),
+        Broadcast.status != "cancelled",
+    )
+
+    if identity is not None and identity.kind != "admin":
+        if identity.tenant_id:
+            account_ids = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+            query = query.where(Broadcast.account_id.in_(account_ids))
+        else:
+            return []
+
+    query = query.order_by(Broadcast.created_at.desc())
+    result = await db.execute(query)
+    parents = list(result.scalars().all())
+
+    enriched = []
+    for parent in parents:
+        child_count = await count_child_broadcasts(db, parent.id)
+        last_child = await get_last_child_broadcast(db, parent.id)
+        enriched.append((parent, child_count, last_child))
+
+    return enriched

@@ -12,7 +12,7 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
-from app.schemas.broadcast import BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES
+from app.schemas.broadcast import BroadcastChildrenRead, BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES
 from app.services.broadcast_processor import process_broadcast
 from app.services.media import save_broadcast_media
 
@@ -241,3 +241,113 @@ async def cancel_broadcast(
         account_id=broadcast.account_id,
     )
     return updated
+
+
+@router.post("/{broadcast_id}/pause", response_model=BroadcastRead)
+async def pause_broadcast(
+    broadcast_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Pause a recurring broadcast. The scheduler skips paused broadcasts
+    but preserves the schedule config. Only works on recurring broadcasts."""
+    broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+
+    await require_account_tenant_access(broadcast.account_id, db, identity)
+
+    if broadcast.recurring_interval_minutes is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="반복 발송이 아닌 작업은 일시중지할 수 없습니다.",
+        )
+
+    if broadcast.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="취소된 반복 발송은 일시중지할 수 없습니다.",
+        )
+
+    if broadcast.is_recurring_paused:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 일시중지된 반복 발송입니다.",
+        )
+
+    updated = await broadcast_crud.pause_recurring_broadcast(db, broadcast_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="일시중지 처리 중 상태가 변경되었습니다. 다시 시도해주세요.",
+        )
+
+    logger.info("recurring_broadcast_paused", broadcast_id=broadcast_id, account_id=broadcast.account_id)
+    return updated
+
+
+@router.post("/{broadcast_id}/unpause", response_model=BroadcastRead)
+async def unpause_broadcast(
+    broadcast_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Unpause a recurring broadcast. The scheduler resumes dispatching it
+    on its next scheduled run. Only works on paused recurring broadcasts."""
+    broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+
+    await require_account_tenant_access(broadcast.account_id, db, identity)
+
+    if broadcast.recurring_interval_minutes is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="반복 발송이 아닌 작업은 재개할 수 없습니다.",
+        )
+
+    if broadcast.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="취소된 반복 발송은 재개할 수 없습니다.",
+        )
+
+    if not broadcast.is_recurring_paused:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="일시중지되지 않은 반복 발송입니다.",
+        )
+
+    updated = await broadcast_crud.unpause_recurring_broadcast(db, broadcast_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="재개 처리 중 상태가 변경되었습니다. 다시 시도해주세요.",
+        )
+
+    logger.info("recurring_broadcast_unpaused", broadcast_id=broadcast_id, account_id=broadcast.account_id)
+    return updated
+
+
+@router.get("/{broadcast_id}/children", response_model=list[BroadcastChildrenRead])
+async def read_recurring_children(
+    broadcast_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get execution history (child broadcasts) for a recurring parent broadcast."""
+    broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
+
+    await require_account_tenant_access(broadcast.account_id, db, identity)
+
+    if broadcast.recurring_interval_minutes is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="반복 발송이 아닌 작업입니다.",
+        )
+
+    return await broadcast_crud.list_child_broadcasts(db, broadcast_id, limit=limit, offset=offset)

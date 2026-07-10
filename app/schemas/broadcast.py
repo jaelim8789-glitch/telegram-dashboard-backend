@@ -44,3 +44,23 @@ class BroadcastRead(BaseModel):
     cancelled_at: datetime | None = None
     next_scheduled_at: datetime | None = None
     parent_broadcast_id: str | None = None
+    is_recurring_paused: bool = False
+
+
+class BroadcastChildrenRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    message: str
+    status: BroadcastStatus
+    scheduled_at: datetime | None
+    sent_at: datetime | None
+    created_at: datetime
+    error_message: str | None
+
+
+class BroadcastWithChildCount(BroadcastRead):
+    child_count: int = 0
+    last_child_status: str | None = None
+    last_child_created_at: datetime | None = None
