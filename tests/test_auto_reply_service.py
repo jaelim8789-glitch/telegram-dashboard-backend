@@ -139,7 +139,10 @@ async def test_handle_incoming_message_cooldown_blocks_repeat_from_same_user(db_
     event.reply.assert_not_called()
     logs = await auto_reply_crud.list_logs(db_session, account.id)
     assert len(logs) == 2
-    assert logs[0].status == "rate_limited"
+    rate_limited_logs = [log for log in logs if log.status == "rate_limited"]
+    assert len(rate_limited_logs) == 1, f"Expected 1 rate_limited log, got {len(rate_limited_logs)}: {[(l.status, l.created_at) for l in logs]}"
+    success_logs = [log for log in logs if log.status == "success"]
+    assert len(success_logs) == 1
 
 
 @pytest.mark.asyncio
