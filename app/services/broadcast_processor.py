@@ -1,6 +1,6 @@
 import asyncio
 
-from app.core.limits import BROADCAST_TIMEOUT_SECONDS
+from app.config import settings
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
@@ -18,12 +18,14 @@ async def process_broadcast(broadcast_id: str) -> None:
 
     Execution timeout:
       ``deliver_message`` is wrapped in ``asyncio.wait_for`` with a timeout of
-      ``BROADCAST_TIMEOUT_SECONDS`` (default 300 s).  If the timeout fires:
+      ``settings.broadcast_timeout_seconds`` (default 300 s).  If the timeout fires:
       - the broadcast is persisted with status ``failed`` and a safe error message
       - the ``asyncio.TimeoutError`` is *re-raised* so that the scheduler's
         ``try/except/finally`` can release the in-memory concurrency guard
         (``_running_broadcasts``).
     """
+    timeout = settings.broadcast_timeout_seconds
+
     async with async_session_maker() as db:
         broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
         if broadcast is None:
@@ -67,13 +69,13 @@ async def process_broadcast(broadcast_id: str) -> None:
     try:
         results = await asyncio.wait_for(
             deliver_message(request),
-            timeout=BROADCAST_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except asyncio.TimeoutError:
         logger.error(
             "broadcast_timeout",
             broadcast_id=broadcast_id,
-            timeout_seconds=BROADCAST_TIMEOUT_SECONDS,
+            timeout_seconds=timeout,
         )
         async with async_session_maker() as db:
             broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
@@ -82,7 +84,7 @@ async def process_broadcast(broadcast_id: str) -> None:
                     db,
                     broadcast,
                     status="failed",
-                    error_message=f"발송 시간이 초과되었습니다 ({BROADCAST_TIMEOUT_SECONDS}초).",
+                    error_message=f"발송 시간이 초과되었습니다 ({timeout}초).",
                 )
         raise  # re-raise so scheduler's finally discards the in-memory guard
 

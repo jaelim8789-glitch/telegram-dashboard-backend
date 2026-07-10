@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     coolsms_api_secret: str = ""
     coolsms_phone_number: str = ""
 
+    # Broadcast execution timeout in seconds (Sprint 23+).
+    # Prevents a stuck delivery from blocking the scheduler indefinitely.
+    # Configurable via BROADCAST_TIMEOUT_SECONDS env var.  Must be >= 1.
+    broadcast_timeout_seconds: int = 300
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")
@@ -50,6 +55,22 @@ class Settings(BaseSettings):
             return "postgresql+asyncpg://" + value[len("postgres://") :]
         if value.startswith("postgresql://"):
             return "postgresql+asyncpg://" + value[len("postgresql://") :]
+        return value
+
+    @field_validator("broadcast_timeout_seconds")
+    @classmethod
+    def _validate_broadcast_timeout(cls, value: int) -> int:
+        """Reject zero, negative, or unreasonably small values.
+
+        A timeout < 1 second would make even a single-message send impossible;
+        values between 1 and 9 are accepted (useful for testing) but warned against
+        in production documentation.
+        """
+        if value < 1:
+            raise ValueError(
+                f"BROADCAST_TIMEOUT_SECONDS must be >= 1, got {value}. "
+                "Set a positive integer (default 300) in your .env file."
+            )
         return value
 
     @property

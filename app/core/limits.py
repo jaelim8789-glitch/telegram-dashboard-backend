@@ -24,7 +24,3 @@ MACRO_MIN_INTERVAL_HOURS = 1  # minimum interval_hours for interval-type macros
 # limits and avoid looking like a bot.
 MAX_DAILY_JOINS = 5
 
-# Broadcast execution timeout — prevents a stuck delivery from blocking
-# the scheduler indefinitely. Set high enough for real Telegram sends
-# (including retries and media uploads) across all recipients.
-BROADCAST_TIMEOUT_SECONDS = 300

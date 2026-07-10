@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.limits import BROADCAST_TIMEOUT_SECONDS
+from app.config import settings
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.schemas.account import AccountCreate
@@ -134,7 +134,7 @@ async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, mon
         AsyncMock(side_effect=_never_completes),
     )
     # Use a very short timeout for the test
-    monkeypatch.setattr("app.services.broadcast_processor.BROADCAST_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.config.settings.broadcast_timeout_seconds", 0.01)
 
     with pytest.raises(asyncio.TimeoutError):
         await process_broadcast(broadcast.id)
@@ -158,7 +158,7 @@ async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, mo
         "app.services.broadcast_processor.deliver_message",
         AsyncMock(side_effect=_never_completes),
     )
-    monkeypatch.setattr("app.services.broadcast_processor.BROADCAST_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.config.settings.broadcast_timeout_seconds", 0.01)
 
     import app.scheduler.scheduler as scheduler_module
 
@@ -175,12 +175,10 @@ async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, mo
 
 
 @pytest.mark.asyncio
-async def test_process_broadcast_timeout_configurable_via_limits(db_session, monkeypatch):
-    """The timeout value is read from BROADCAST_TIMEOUT_SECONDS in limits.py."""
-    from app.core import limits
-
-    assert limits.BROADCAST_TIMEOUT_SECONDS == 300
-    assert hasattr(limits, "BROADCAST_TIMEOUT_SECONDS")
+async def test_process_broadcast_timeout_configurable_via_settings(db_session, monkeypatch):
+    """The timeout value is read from settings.broadcast_timeout_seconds."""
+    assert settings.broadcast_timeout_seconds == 300
+    assert hasattr(settings, "broadcast_timeout_seconds")
 
 
 # ═══════════════════════════════════════════════════════════════════════
