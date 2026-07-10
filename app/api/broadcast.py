@@ -186,8 +186,8 @@ async def read_recurring_broadcasts(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """Return all active (non-cancelled) recurring broadcasts."""
-    return await broadcast_crud.list_recurring_broadcasts(db)
+    """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
+    return await broadcast_crud.list_recurring_broadcasts(db, identity=identity)
 
 
 @router.post("/{broadcast_id}/cancel", response_model=BroadcastRead)

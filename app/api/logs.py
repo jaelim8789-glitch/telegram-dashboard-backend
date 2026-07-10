@@ -20,4 +20,4 @@ async def read_logs(
 ):
     if account_id:
         await require_account_tenant_access(account_id, db, identity)
-    return await broadcast_crud.list_logs(db, account_id=account_id, status=status, date=date)
+    return await broadcast_crud.list_logs(db, identity=identity, account_id=account_id, status=status, date=date)
