@@ -33,4 +33,5 @@ EXPOSE 8000
 
 # Shell form (not exec form) so $PORT actually expands — Render and similar free-tier
 # hosts assign the port dynamically via this env var instead of a fixed 8000.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Runs migrations before starting the app so a fresh database is always ready.
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
