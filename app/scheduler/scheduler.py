@@ -45,7 +45,20 @@ async def dispatch_due_broadcasts() -> None:
 
     Recurring parent broadcasts are dispatched via process_recurring_parent
     which creates a child record first for history tracking.
+
+    Stale recurring parents (crashed workers) are recovered at the start of
+    each tick.  Recovery resets them to "pending" so the rest of this tick
+    re-dispatches them.
     """
+    # Recover stale recurring parents first so they are eligible this tick
+    try:
+        async with async_session_maker() as db:
+            recovered = await broadcast_crud.recover_stale_recurring_parents(db)
+            if recovered:
+                logger.info("recurring_stale_recovered", count=len(recovered))
+    except Exception as exc:
+        logger.error("recurring_stale_recovery_failed", error=str(exc))
+
     async with async_session_maker() as db:
         due = await broadcast_crud.list_due_scheduled_broadcasts(db)
         one_time_ids: list[str] = []

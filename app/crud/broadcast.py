@@ -3,10 +3,16 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import Identity
 from app.config import settings
 from app.core.limits import BROADCAST_MIN_INTERVAL_SECONDS
+from app.core.logging import get_logger
 from app.models.broadcast import Broadcast
+from app.models.account import Account
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
+
+
+logger = get_logger(__name__)
 
 
 def utcnow_naive() -> datetime:
@@ -33,12 +39,9 @@ async def create_broadcast(
         status="pending",
         scheduled_at=scheduled_at,
         recurring_interval_minutes=data.recurring_interval_minutes,
-        # If recurring, set first next_scheduled_at to now (will be recalculated
-        # after the first send). If immediate, next_scheduled_at = now + interval.
         next_scheduled_at=None,
     )
     if data.recurring_interval_minutes is not None:
-        # For recurring broadcasts: if immediate send, set first due immediately
         if scheduled_at is None or scheduled_at <= now:
             broadcast.next_scheduled_at = now
         else:
@@ -57,18 +60,6 @@ async def get_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None
 async def seconds_until_next_allowed_broadcast(
     db: AsyncSession, account_id: str, *, exclude_id: str | None = None
 ) -> float:
-    """Returns 0 if a broadcast may fire now, otherwise the seconds to wait.
-
-    Looks at every broadcast for this account that is due "now or earlier" (i.e. not one
-    scheduled for later), using sent_at when set (actual send-attempt time) and falling
-    back to created_at for ones that haven't started yet. Status is deliberately NOT
-    filtered here — a broadcast that failed still reached the "sending" stage and got
-    sent_at stamped, so it still counts against the cooldown; only an in-progress attempt
-    that hasn't reached "sending" yet has no sent_at and falls back to created_at.
-    Checked both when a broadcast is created (immediate sends) and again right before a
-    worker actually executes one — the second check is what keeps the cap correct once
-    a queue/scheduler can dispatch multiple jobs close together.
-    """
     now = utcnow_naive()
     reference_time = func.coalesce(Broadcast.sent_at, Broadcast.created_at)
     query = (
@@ -109,14 +100,8 @@ async def update_broadcast_status(
 
 
 async def list_due_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
-    """Returns both one-time scheduled broadcasts that are due AND
-    recurring parent broadcasts whose next_scheduled_at is due.
-
-    Filters out cancelled or paused recurring broadcasts.
-    """
     now = utcnow_naive()
 
-    # One-time scheduled broadcasts that are due
     one_time_query = select(Broadcast).where(
         Broadcast.status == "pending",
         Broadcast.recurring_interval_minutes.is_(None),
@@ -124,7 +109,6 @@ async def list_due_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
         Broadcast.scheduled_at <= now,
     )
 
-    # Recurring parent broadcasts whose next_scheduled_at is due
     recurring_query = select(Broadcast).where(
         Broadcast.recurring_interval_minutes.is_not(None),
         Broadcast.status != "cancelled",
@@ -140,11 +124,6 @@ async def list_due_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
 
 
 async def claim_broadcast_dispatch(db: AsyncSession, broadcast_id: str) -> bool:
-    """Atomically claim a broadcast for dispatch.
-
-    Sets status to 'sending' only if currently 'pending'.
-    Returns True if claimed, False if another tick/worker already claimed it.
-    """
     result = await db.execute(
         select(Broadcast).where(
             Broadcast.id == broadcast_id,
@@ -160,29 +139,16 @@ async def claim_broadcast_dispatch(db: AsyncSession, broadcast_id: str) -> bool:
 
 
 async def record_broadcast_error(db: AsyncSession, broadcast_id: str, error_message: str) -> None:
-    """Record a safe error message on a broadcast without changing its status.
-
-    Only updates if the broadcast is still in a non-terminal state.
-    """
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return
     if broadcast.status in ("sent", "failed", "cancelled"):
         return
-    broadcast.error_message = error_message[:500]  # truncate to fit column
+    broadcast.error_message = error_message[:500]
     await db.commit()
 
 
 async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
-    """Reset a failed broadcast to pending for retry.
-
-    Only transitions if current status is ``"failed"``.
-    Clears ``status`` → ``"pending"``, ``error_message`` → ``None``,
-    ``sent_at`` → ``None``.  Increments ``retry_count``.
-
-    Returns the updated broadcast, or ``None`` if the broadcast is not in a
-    retryable state (not found, not ``"failed"``, or retry limit reached).
-    """
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return None
@@ -219,13 +185,23 @@ async def list_upcoming_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast
 async def list_logs(
     db: AsyncSession,
     *,
+    identity: Identity | None = None,
     account_id: str | None = None,
     status: str | None = None,
     date: str | None = None,
 ) -> list[Broadcast]:
     query = select(Broadcast).where(
-        Broadcast.recurring_interval_minutes.is_(None)  # exclude recurring parent records
-    ).order_by(Broadcast.created_at.desc())
+        Broadcast.recurring_interval_minutes.is_(None)
+    )
+
+    if identity is not None and identity.kind != "admin" and account_id is None:
+        if identity.tenant_id:
+            account_ids_subq = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+            query = query.where(Broadcast.account_id.in_(account_ids_subq))
+        else:
+            return []
+
+    query = query.order_by(Broadcast.created_at.desc())
     if account_id:
         query = query.where(Broadcast.account_id == account_id)
     if status:
@@ -241,24 +217,116 @@ async def list_logs(
 # ── Recurring broadcast CRUD ──────────────────────────────────────
 
 
-async def list_recurring_broadcasts(db: AsyncSession) -> list[Broadcast]:
-    """Return all active (non-cancelled) recurring broadcasts."""
-    result = await db.execute(
-        select(Broadcast).where(
-            Broadcast.recurring_interval_minutes.is_not(None),
-            Broadcast.status != "cancelled",
-        ).order_by(Broadcast.created_at.desc())
+# How long a recurring parent may stay in "sending" before we consider
+# it stale (crashed worker) and recover it.  Must be > DISPATCH_INTERVAL_SECONDS
+# * 2 to prevent false-positive recovery while a slow tick is still running.
+RECURRING_STALE_TIMEOUT_SECONDS = 120  # 4x the 30s tick interval
+
+
+async def list_recurring_broadcasts(db: AsyncSession, identity: Identity | None = None) -> list[Broadcast]:
+    query = select(Broadcast).where(
+        Broadcast.recurring_interval_minutes.is_not(None),
+        Broadcast.status != "cancelled",
     )
+
+    if identity is not None and identity.kind != "admin":
+        if identity.tenant_id:
+            account_ids = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+            query = query.where(Broadcast.account_id.in_(account_ids))
+        else:
+            return []
+
+    query = query.order_by(Broadcast.created_at.desc())
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
-async def cancel_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
-    """Cancel a recurring broadcast by setting status='cancelled' and cancelled_at.
+async def recover_stale_recurring_parents(db: AsyncSession) -> list[Broadcast]:
+    """Find and recover recurring parent broadcasts stuck in "sending" beyond
+    ``RECURRING_STALE_TIMEOUT_SECONDS`` (120s, configurable at module level).
 
-    Only works on broadcasts that have recurring_interval_minutes set and are
-    not already cancelled. Returns the updated broadcast, or None if not found
-    or not a recurring broadcast.
+    Crash windows handled:
+      1. Crash immediately after parent claim (status → 'sending', ``sent_at`` set,
+         ``next_scheduled_at`` unchanged).  Parent reset to "pending", next tick
+         re-dispatches if ``next_scheduled_at`` is past due.
+      2. Crash after child creation but before next_scheduled_at advancement
+         (status → 'sending', child exists with status 'pending').  Orphan child
+         is marked "failed" with safe error message; parent is reset to "pending".
+      3. Crash during child dispatch (``next_scheduled_at`` already advanced by
+         Bug-1 fix, child mid-flight).  Orphan child (if any) cleaned; parent reset
+         so tick re-dispatches if ``next_scheduled_at`` is due.
+      4. Crash after child completes, before parent status cleanup.  Same as above.
+      5. Restart while recovered work is overdue — only ONE catch-up fires because
+         ``next_scheduled_at`` prevents backlog.
+
+    Recovery is safe because:
+      - Only recurring parents (``recurring_interval_minutes IS NOT NULL``) are
+        touched — never normal broadcasts or child records.
+      - Only status='sending' with ``sent_at`` beyond the timeout qualifies.
+      - ``with_for_update(skip_locked=True)`` prevents duplicate recovery across
+        workers.
+      - Cancelled/paused broadcasts are never touched.
+      - Orphaned child broadcasts (created before crash, never dispatched) are
+        marked "failed" so they don't duplicate history.
+      - ``next_scheduled_at`` is left as-is: if it's still in the past, the
+        scheduler tick will dispatch; if advanced past now, the tick skips.
     """
+    now = utcnow_naive()
+    cutoff = now - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS)
+
+    result = await db.execute(
+        select(Broadcast).where(
+            Broadcast.recurring_interval_minutes.is_not(None),
+            Broadcast.status == "sending",
+            Broadcast.sent_at.isnot(None),
+            Broadcast.sent_at <= cutoff,
+        ).with_for_update()
+    )
+    stale = list(result.scalars().all())
+
+    if not stale:
+        return []
+
+    recovered: list[Broadcast] = []
+    for parent in stale:
+        if parent.status == "cancelled" or parent.is_recurring_paused:
+            continue
+
+        # Look for orphaned child created before the crash
+        orphan_result = await db.execute(
+            select(Broadcast).where(
+                Broadcast.parent_broadcast_id == parent.id,
+                Broadcast.status == "pending",
+            ).with_for_update(skip_locked=True).limit(1)
+        )
+        orphan = orphan_result.scalar_one_or_none()
+
+        if orphan is not None:
+            orphan.status = "failed"
+            orphan.error_message = "반복 발송 복구: 중복 방지를 위해 이전 발송을 취소했습니다."
+            logger.info(
+                "recurring_orphan_cleaned",
+                orphan_id=orphan.id,
+                parent_id=parent.id,
+            )
+
+        parent.status = "pending"
+        parent.error_message = None
+        recovered.append(parent)
+
+        logger.info(
+            "recurring_parent_recovered",
+            parent_id=parent.id,
+            orphan_cleaned=orphan is not None,
+        )
+
+    await db.commit()
+    for parent in recovered:
+        await db.refresh(parent)
+    return recovered
+
+
+async def cancel_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return None
@@ -277,11 +345,6 @@ async def cancel_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Bro
 
 
 async def reschedule_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
-    """Advance next_scheduled_at for a recurring parent broadcast by its interval.
-
-    Called after a recurring child broadcast completes. If the broadcast has been
-    cancelled or paused in the meantime, does nothing.
-    """
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return None
@@ -302,11 +365,6 @@ async def reschedule_recurring_broadcast(db: AsyncSession, broadcast_id: str) ->
 async def create_recurring_child_broadcast(
     db: AsyncSession, parent: Broadcast, scheduled_at: datetime
 ) -> Broadcast:
-    """Create a child broadcast record for a recurring execution.
-
-    This records the execution in the broadcast history while the parent
-    tracks the recurring schedule.
-    """
     child = Broadcast(
         account_id=parent.account_id,
         message=parent.message,
@@ -323,10 +381,6 @@ async def create_recurring_child_broadcast(
 
 
 async def list_due_recurring_parents(db: AsyncSession) -> list[Broadcast]:
-    """Return recurring parent broadcasts whose next_scheduled_at is due.
-
-    Excludes cancelled, paused, or already-sending ones.
-    """
     now = utcnow_naive()
     result = await db.execute(
         select(Broadcast).where(

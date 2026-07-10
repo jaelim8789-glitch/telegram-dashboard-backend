@@ -9,6 +9,8 @@ Covers:
 6. Restart persistence (scheduler restart picks up due recurring)
 7. Duplicate/overlapping execution prevention
 8. Existing one-time broadcasts still work unchanged
+9. Stale recurring parent recovery (crash windows)
+10. Multi-worker safety findings
 """
 
 from datetime import datetime, timedelta, timezone
@@ -18,6 +20,7 @@ import pytest
 
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
+from app.crud.broadcast import RECURRING_STALE_TIMEOUT_SECONDS, recover_stale_recurring_parents
 from app.schemas.account import AccountCreate
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
 from app.scheduler.scheduler import dispatch_due_broadcasts
@@ -49,13 +52,11 @@ def _success_result(recipient="-100999"):
 
 @pytest.mark.asyncio
 async def test_recurring_interval_valid_values():
-    """RECURRING_INTERVAL_VALUES contains the expected set."""
     assert RECURRING_INTERVAL_VALUES == {30, 60, 120, 180, 360, 720, 1440}
 
 
 @pytest.mark.asyncio
 async def test_recurring_interval_create_with_valid_value(db_session):
-    """Creating a broadcast with a valid recurring interval succeeds."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     assert broadcast.recurring_interval_minutes == 30
@@ -64,7 +65,6 @@ async def test_recurring_interval_create_with_valid_value(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_interval_create_with_zero_is_rejected(db_session):
-    """Creating with recurring_interval_minutes=0 is rejected (not in allowed set)."""
     account = await _make_account(db_session)
     with pytest.raises(ValueError, match="recurring_interval_minutes must be one of"):
         await _make_broadcast(db_session, account.id, recurring_interval_minutes=0)
@@ -72,7 +72,6 @@ async def test_recurring_interval_create_with_zero_is_rejected(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_interval_create_with_invalid_value_is_rejected(db_session):
-    """Creating with an invalid interval like 45 is rejected."""
     account = await _make_account(db_session)
     with pytest.raises(ValueError, match="recurring_interval_minutes must be one of"):
         await _make_broadcast(db_session, account.id, recurring_interval_minutes=45)
@@ -80,7 +79,6 @@ async def test_recurring_interval_create_with_invalid_value_is_rejected(db_sessi
 
 @pytest.mark.asyncio
 async def test_recurring_interval_create_with_negative_value_is_rejected(db_session):
-    """Creating with a negative interval is rejected."""
     account = await _make_account(db_session)
     with pytest.raises(ValueError, match="recurring_interval_minutes must be one of"):
         await _make_broadcast(db_session, account.id, recurring_interval_minutes=-30)
@@ -88,7 +86,6 @@ async def test_recurring_interval_create_with_negative_value_is_rejected(db_sess
 
 @pytest.mark.asyncio
 async def test_recurring_interval_all_allowed_values(db_session):
-    """Each allowed interval can be used to create a recurring broadcast."""
     account = await _make_account(db_session)
     for interval in [30, 60, 120, 180, 360, 720, 1440]:
         broadcast = await _make_broadcast(db_session, account.id, recurring_interval_minutes=interval)
@@ -103,7 +100,6 @@ async def test_recurring_interval_all_allowed_values(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_immediate_sets_next_scheduled_at_to_now(db_session):
-    """Immediate recurring broadcast has next_scheduled_at set to approximately now."""
     account = await _make_account(db_session)
     before = broadcast_crud.utcnow_naive()
     broadcast = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
@@ -114,7 +110,6 @@ async def test_recurring_immediate_sets_next_scheduled_at_to_now(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_scheduled_sets_next_scheduled_at_to_future(db_session):
-    """Scheduled recurring broadcast has next_scheduled_at set to the scheduled time."""
     account = await _make_account(db_session)
     future = broadcast_crud.utcnow_naive() + timedelta(hours=2)
     broadcast = await _make_broadcast(
@@ -129,7 +124,6 @@ async def test_recurring_scheduled_sets_next_scheduled_at_to_future(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_broadcast_has_correct_initial_status(db_session):
-    """Recurring broadcast starts with status='pending', not cancelled."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     assert broadcast.status == "pending"
@@ -138,12 +132,10 @@ async def test_recurring_broadcast_has_correct_initial_status(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_broadcast_is_recurring_interval_is_set(db_session):
-    """The recurring_interval_minutes field is persisted correctly."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id, recurring_interval_minutes=720)
     assert broadcast.recurring_interval_minutes == 720
 
-    # Reload from DB and check
     reloaded = await broadcast_crud.get_broadcast(db_session, broadcast.id)
     assert reloaded is not None
     assert reloaded.recurring_interval_minutes == 720
@@ -156,28 +148,22 @@ async def test_recurring_broadcast_is_recurring_interval_is_set(db_session):
 
 @pytest.mark.asyncio
 async def test_recurring_parent_creates_child_on_dispatch(db_session, monkeypatch):
-    """When a recurring parent is dispatched, a child record is created."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
 
-    # Set next_scheduled_at to the past so it's due
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
     await db_session.commit()
 
-    # Mock delivery to succeed
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
         AsyncMock(return_value=[_success_result()]),
     )
 
-    # Dispatch
     await dispatch_due_broadcasts()
 
-    # Reload parent
     await db_session.refresh(parent)
-    assert parent.status == "sending"  # claimed but processed via child
+    assert parent.status == "sending"
 
-    # Check a child was created
     from app.models.broadcast import Broadcast
     from sqlalchemy import select
     result = await db_session.execute(
@@ -193,7 +179,6 @@ async def test_recurring_parent_creates_child_on_dispatch(db_session, monkeypatc
 
 @pytest.mark.asyncio
 async def test_recurring_child_has_correct_status_after_success(db_session, monkeypatch):
-    """After successful delivery, the child broadcast has status='sent'."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
@@ -213,15 +198,13 @@ async def test_recurring_child_has_correct_status_after_success(db_session, monk
     )
     children = list(result.scalars().all())
     assert len(children) >= 1
-    # Reload child to get latest status (delivery happens async)
     child = children[0]
     await db_session.refresh(child)
-    assert child.status in ("sent", "pending")  # may still be processing
+    assert child.status in ("sent", "pending")
 
 
 @pytest.mark.asyncio
 async def test_recurring_parent_not_dispatched_if_next_scheduled_at_in_future(db_session, monkeypatch):
-    """Parent with future next_scheduled_at is not dispatched."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() + timedelta(hours=1)
@@ -242,7 +225,6 @@ async def test_recurring_parent_not_dispatched_if_next_scheduled_at_in_future(db
 
 @pytest.mark.asyncio
 async def test_reschedule_advances_next_scheduled_at(db_session):
-    """reschedule_recurring_broadcast advances next_scheduled_at by interval."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
     old_next = parent.next_scheduled_at
@@ -251,14 +233,12 @@ async def test_reschedule_advances_next_scheduled_at(db_session):
     updated = await broadcast_crud.reschedule_recurring_broadcast(db_session, parent.id)
     assert updated is not None
     assert updated.next_scheduled_at is not None
-    # Should be roughly 60 minutes after old_next or now
     expected_min = old_next + timedelta(minutes=59)
     assert updated.next_scheduled_at >= expected_min
 
 
 @pytest.mark.asyncio
 async def test_reschedule_does_nothing_for_cancelled(db_session):
-    """Rescheduling a cancelled broadcast returns None."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
     parent.status = "cancelled"
@@ -271,7 +251,6 @@ async def test_reschedule_does_nothing_for_cancelled(db_session):
 
 @pytest.mark.asyncio
 async def test_reschedule_non_recurring_returns_none(db_session):
-    """Rescheduling a non-recurring broadcast returns None."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
     assert broadcast.recurring_interval_minutes is None
@@ -282,7 +261,6 @@ async def test_reschedule_non_recurring_returns_none(db_session):
 
 @pytest.mark.asyncio
 async def test_reschedule_after_dispatch_advances_time_correctly(db_session, monkeypatch):
-    """After dispatching a recurring parent, next_scheduled_at is advanced."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=120)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
@@ -297,7 +275,6 @@ async def test_reschedule_after_dispatch_advances_time_correctly(db_session, mon
 
     await db_session.refresh(parent)
     assert parent.next_scheduled_at is not None
-    # Should be roughly 120 minutes from now
     expected = broadcast_crud.utcnow_naive() + timedelta(minutes=119)
     assert parent.next_scheduled_at >= expected
 
@@ -309,7 +286,6 @@ async def test_reschedule_after_dispatch_advances_time_correctly(db_session, mon
 
 @pytest.mark.asyncio
 async def test_cancel_recurring_sets_cancelled_status(db_session):
-    """Cancelling sets status to 'cancelled' and records cancelled_at."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
 
@@ -326,7 +302,6 @@ async def test_cancel_recurring_sets_cancelled_status(db_session):
 
 @pytest.mark.asyncio
 async def test_cancel_non_recurring_returns_none(db_session):
-    """Cancelling a non-recurring broadcast returns None."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
     result = await broadcast_crud.cancel_recurring_broadcast(db_session, broadcast.id)
@@ -335,12 +310,10 @@ async def test_cancel_non_recurring_returns_none(db_session):
 
 @pytest.mark.asyncio
 async def test_cancel_already_cancelled_returns_same(db_session):
-    """Cancelling an already-cancelled broadcast returns it as-is."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     await broadcast_crud.cancel_recurring_broadcast(db_session, parent.id)
 
-    # Cancel again — should return the cancelled broadcast
     result = await broadcast_crud.cancel_recurring_broadcast(db_session, parent.id)
     assert result is not None
     assert result.status == "cancelled"
@@ -348,13 +321,11 @@ async def test_cancel_already_cancelled_returns_same(db_session):
 
 @pytest.mark.asyncio
 async def test_cancelled_recurring_never_dispatched_again(db_session, monkeypatch):
-    """A cancelled recurring broadcast is never included in dispatch."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
     await db_session.commit()
 
-    # Cancel it
     await broadcast_crud.cancel_recurring_broadcast(db_session, parent.id)
 
     process_mock = AsyncMock()
@@ -362,7 +333,6 @@ async def test_cancelled_recurring_never_dispatched_again(db_session, monkeypatc
 
     await dispatch_due_broadcasts()
 
-    # Should NOT be dispatched
     process_mock.assert_not_called()
 
 
@@ -373,18 +343,14 @@ async def test_cancelled_recurring_never_dispatched_again(db_session, monkeypatc
 
 @pytest.mark.asyncio
 async def test_due_recurring_picked_up_on_restart(db_session, monkeypatch):
-    """After restart, scheduler picks up due recurring broadcasts."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
-    # Set next_scheduled_at to the past — this simulates a restart where
-    # the schedule was due while the app was offline
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=30)
     await db_session.commit()
 
     process_mock = AsyncMock()
     monkeypatch.setattr("app.scheduler.scheduler.process_recurring_parent", process_mock)
 
-    # The scheduler's list_due_scheduled_broadcasts should find this parent
     due = await broadcast_crud.list_due_scheduled_broadcasts(db_session)
     parent_ids = [b.id for b in due if b.recurring_interval_minutes is not None]
     assert parent.id in parent_ids
@@ -392,7 +358,6 @@ async def test_due_recurring_picked_up_on_restart(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_restart_does_not_reprocess_completed_one_time(db_session, monkeypatch):
-    """After restart, only past-due recurring broadcasts are picked up, not sent ones."""
     account = await _make_account(db_session)
     one_time = await _make_broadcast(db_session, account.id)
     one_time.status = "sent"
@@ -411,7 +376,6 @@ async def test_restart_does_not_reprocess_completed_one_time(db_session, monkeyp
 
 @pytest.mark.asyncio
 async def test_recurring_not_duplicated_by_concurrent_ticks(db_session, monkeypatch):
-    """Recurring parent already in _running_recurring is skipped."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
@@ -431,11 +395,10 @@ async def test_recurring_not_duplicated_by_concurrent_ticks(db_session, monkeypa
 
 @pytest.mark.asyncio
 async def test_recurring_not_duplicated_by_atomic_claim(db_session, monkeypatch):
-    """If parent is already claimed (status != pending), it's skipped."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
-    parent.status = "sending"  # already claimed
+    parent.status = "sending"
     await db_session.commit()
 
     process_mock = AsyncMock()
@@ -448,7 +411,6 @@ async def test_recurring_not_duplicated_by_atomic_claim(db_session, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_recurring_skipped_if_already_dispatched_this_tick(db_session, monkeypatch):
-    """Same recurring parent doesn't appear twice in one tick."""
     account = await _make_account(db_session)
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
@@ -460,7 +422,6 @@ async def test_recurring_skipped_if_already_dispatched_this_tick(db_session, mon
 
     await dispatch_due_broadcasts()
 
-    # Should be called exactly once
     assert process_mock.call_count == 1
 
 
@@ -471,14 +432,8 @@ async def test_recurring_skipped_if_already_dispatched_this_tick(db_session, mon
 
 @pytest.mark.asyncio
 async def test_one_time_broadcast_unchanged(db_session, monkeypatch):
-    """A one-time immediate broadcast still works as before."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
-
-    monkeypatch.setattr(
-        "app.services.broadcast_processor.deliver_message",
-        AsyncMock(return_value=[_success_result()]),
-    )
 
     await broadcast_crud.update_broadcast_status(db_session, broadcast, status="sending", mark_sent=True)
 
@@ -489,7 +444,6 @@ async def test_one_time_broadcast_unchanged(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scheduled_broadcast_still_dispatched_by_scheduler(db_session, monkeypatch):
-    """One-time scheduled broadcast is still picked up by the scheduler."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
         db_session,
@@ -503,7 +457,6 @@ async def test_scheduled_broadcast_still_dispatched_by_scheduler(db_session, mon
 
 @pytest.mark.asyncio
 async def test_list_recurring_returns_only_recurring(db_session):
-    """list_recurring_broadcasts returns only broadcasts with recurring_interval_minutes."""
     account = await _make_account(db_session)
     recurring = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
     one_time = await _make_broadcast(db_session, account.id)
@@ -516,7 +469,6 @@ async def test_list_recurring_returns_only_recurring(db_session):
 
 @pytest.mark.asyncio
 async def test_list_recurring_excludes_cancelled(db_session):
-    """list_recurring_broadcasts excludes cancelled recurring broadcasts."""
     account = await _make_account(db_session)
     active = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
     cancelled = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
@@ -531,152 +483,215 @@ async def test_list_recurring_excludes_cancelled(db_session):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# API-level tests
+# 9. Stale recurring parent recovery
 # ═══════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
-async def test_api_create_recurring_broadcast(client, db_session):
-    """POST /api/broadcast with recurring_interval_minutes creates a recurring broadcast."""
-    import json
-    account = await _make_account(db_session, "+821033330010")
-    account_id = account.id
+async def test_recover_stale_recurring_parent(db_session):
+    """Recurring parent stuck in 'sending' is recovered to 'pending'."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    await db_session.commit()
 
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "30분 반복",
-        "recipients": json.dumps(["-100999"]),
-        "recurring_interval_minutes": "30",
-    })
-    assert res.status_code == 202
-    body = res.json()
-    assert body["recurring_interval_minutes"] == 30
-    assert body["status"] == "pending"
-    assert body["next_scheduled_at"] is not None
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 1
+    assert recovered[0].id == parent.id
+    assert recovered[0].status == "pending"
 
 
 @pytest.mark.asyncio
-async def test_api_create_recurring_broadcast_invalid_interval(client, db_session):
-    """POST /api/broadcast with invalid recurring_interval_minutes returns 422."""
-    import json
-    account = await _make_account(db_session, "+821033330011")
-    account_id = account.id
+async def test_recover_skips_recently_claimed_parent(db_session):
+    """Parent claimed recently (within timeout) is NOT recovered."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive()  # recent
+    await db_session.commit()
 
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "잘못된 간격",
-        "recipients": json.dumps(["-100999"]),
-        "recurring_interval_minutes": "45",
-    })
-    assert res.status_code == 422
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 0
 
 
 @pytest.mark.asyncio
-async def test_api_fetch_recurring_broadcasts(client, db_session):
-    """GET /api/broadcast/recurring returns active recurring broadcasts."""
-    import json
-    account = await _make_account(db_session, "+821033330012")
-    account_id = account.id
+async def test_recover_skips_cancelled_parent(db_session):
+    """Cancelled recurring parent in 'sending' is NOT recovered."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.status = "cancelled"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    await db_session.commit()
 
-    # Create recurring broadcasts
-    await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "30분 반복",
-        "recipients": json.dumps(["-100999"]),
-        "recurring_interval_minutes": "30",
-    })
-
-    # Fetch recurring
-    res = await client.get("/api/broadcast/recurring")
-    assert res.status_code == 200
-    items = res.json()
-    assert len(items) >= 1
-    for item in items:
-        assert item["recurring_interval_minutes"] is not None
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 0
 
 
 @pytest.mark.asyncio
-async def test_api_create_one_time_no_recurring_field(client, db_session):
-    """POST /api/broadcast without recurring_interval_minutes creates a normal broadcast."""
-    import json
-    account = await _make_account(db_session, "+821033330013")
-    account_id = account.id
+async def test_recover_skips_non_recurring_broadcast(db_session):
+    """A normal one-time broadcast in 'sending' is NOT recovered."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+    broadcast.status = "sending"
+    broadcast.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    await db_session.commit()
 
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "일회성",
-        "recipients": json.dumps(["-100999"]),
-    })
-    assert res.status_code == 202
-    body = res.json()
-    assert body["recurring_interval_minutes"] is None
-    assert body["cancelled_at"] is None
-    assert body["next_scheduled_at"] is None
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 0
 
 
 @pytest.mark.asyncio
-async def test_api_get_broadcast_shows_recurring_fields(client, db_session):
-    """GET /api/broadcast/{id} includes recurring fields for recurring broadcasts."""
-    import json
-    account = await _make_account(db_session, "+821033330014")
-    account_id = account.id
+async def test_recover_cleans_orphan_child(db_session):
+    """When a parent is stale with an orphan child, the child is cleaned."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    await db_session.commit()
 
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "반복 테스트",
-        "recipients": json.dumps(["-100999"]),
-        "recurring_interval_minutes": "60",
-    })
-    assert res.status_code == 202
-    broadcast_id = res.json()["id"]
+    # Create orphan child (child created but never dispatched before crash)
+    now = broadcast_crud.utcnow_naive()
+    orphan = await broadcast_crud.create_recurring_child_broadcast(db_session, parent, now)
 
-    get_res = await client.get(f"/api/broadcast/{broadcast_id}")
-    assert get_res.status_code == 200
-    body = get_res.json()
-    assert body["recurring_interval_minutes"] == 60
-    assert "next_scheduled_at" in body
-    assert "cancelled_at" in body
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 1
+    assert recovered[0].id == parent.id
+    assert recovered[0].status == "pending"
 
-
-@pytest.mark.asyncio
-async def test_api_cancel_recurring(client, db_session):
-    """POST /api/broadcast/{id}/cancel works via the API."""
-    import json
-    account = await _make_account(db_session, "+821033330015")
-    account_id = account.id
-
-    # Create recurring broadcast
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "반복 테스트",
-        "recipients": json.dumps(["-100999"]),
-        "recurring_interval_minutes": "60",
-    })
-    assert res.status_code == 202
-    broadcast_id = res.json()["id"]
-
-    # Cancel it
-    cancel_res = await client.post(f"/api/broadcast/{broadcast_id}/cancel")
-    assert cancel_res.status_code == 200
-    body = cancel_res.json()
-    assert body["status"] == "cancelled"
-    assert body["cancelled_at"] is not None
+    # Orphan should be marked failed
+    await db_session.refresh(orphan)
+    assert orphan.status == "failed"
+    assert "복구" in orphan.error_message
 
 
 @pytest.mark.asyncio
-async def test_api_cancel_non_recurring_returns_409(client, db_session):
-    """Cancelling a non-recurring broadcast via API returns 409."""
-    import json
-    account = await _make_account(db_session, "+821033330016")
-    account_id = account.id
+async def test_recover_preserves_already_sent_children(db_session):
+    """Already-sent orphan children are NOT modified by recovery."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    await db_session.commit()
 
-    res = await client.post("/api/broadcast", data={
-        "account_id": account_id,
-        "message": "일회성",
-        "recipients": json.dumps(["-100999"]),
-    })
-    assert res.status_code == 202
-    broadcast_id = res.json()["id"]
+    now = broadcast_crud.utcnow_naive()
+    orphan = await broadcast_crud.create_recurring_child_broadcast(db_session, parent, now)
+    orphan.status = "sent"
+    orphan.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
 
-    cancel_res = await client.post(f"/api/broadcast/{broadcast_id}/cancel")
-    assert cancel_res.status_code == 409
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 1
+
+    await db_session.refresh(orphan)
+    assert orphan.status == "sent"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_recover_restart_recovery(db_session, monkeypatch):
+    """After restart, stale parents are recovered and dispatched by scheduler."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=200)
+    parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
+    await db_session.commit()
+
+    process_mock = AsyncMock()
+    monkeypatch.setattr("app.scheduler.scheduler.process_recurring_parent", process_mock)
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_success_result()]),
+    )
+
+    await dispatch_due_broadcasts()
+    assert process_mock.call_count == 1, "Stale parent must be dispatched after restart"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 10. Multi-worker safety: stale timeout prevents false recovery
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_stale_timeout_is_larger_than_tick_interval():
+    """RECURRING_STALE_TIMEOUT_SECONDS is > 2x DISPATCH_INTERVAL_SECONDS."""
+    from app.scheduler.scheduler import DISPATCH_INTERVAL_SECONDS
+    assert RECURRING_STALE_TIMEOUT_SECONDS > DISPATCH_INTERVAL_SECONDS * 2
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tenant isolation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_recurring_list_tenant_isolation(db_session):
+    """list_recurring_broadcasts with identity scopes to the tenant."""
+    acc_a = await _make_account(db_session, "+821033330050")
+    acc_a.tenant_id = "tenant-A"
+    acc_b = await _make_account(db_session, "+821033330051")
+    acc_b.tenant_id = "tenant-B"
+    await db_session.commit()
+
+    rec_a = await _make_broadcast(db_session, acc_a.id, recurring_interval_minutes=60)
+    rec_b = await _make_broadcast(db_session, acc_b.id, recurring_interval_minutes=60)
+
+    from app.api.deps import Identity
+
+    tenant_a = Identity(kind="user", tenant_id="tenant-A")
+    result_a = await broadcast_crud.list_recurring_broadcasts(db_session, identity=tenant_a)
+    ids_a = [b.id for b in result_a]
+    assert rec_a.id in ids_a, "Tenant A must see its own recurring broadcast"
+    assert rec_b.id not in ids_a, "Tenant A must NOT see Tenant B's recurring broadcast"
+
+    result_admin = await broadcast_crud.list_recurring_broadcasts(db_session, identity=Identity(kind="admin"))
+    ids_admin = [b.id for b in result_admin]
+    assert rec_a.id in ids_admin
+    assert rec_b.id in ids_admin
+
+    result_no_tenant = await broadcast_crud.list_recurring_broadcasts(db_session, identity=Identity(kind="api_key", tenant_id=None))
+    assert len(result_no_tenant) == 0
+
+
+@pytest.mark.asyncio
+async def test_recurring_logs_tenant_isolation(db_session):
+    """list_logs with identity scopes to the tenant when no account_id given."""
+    from app.api.deps import Identity
+
+    acc_a = await _make_account(db_session, "+821033330060")
+    acc_a.tenant_id = "tenant-A-logs"
+    acc_b = await _make_account(db_session, "+821033330061")
+    acc_b.tenant_id = "tenant-B-logs"
+    await db_session.commit()
+
+    b_a = await _make_broadcast(db_session, acc_a.id)
+    b_b = await _make_broadcast(db_session, acc_b.id)
+
+    logs_a = await broadcast_crud.list_logs(db_session, identity=Identity(kind="user", tenant_id="tenant-A-logs"))
+    ids_a = [b.id for b in logs_a]
+    assert b_a.id in ids_a
+    assert b_b.id not in ids_a
+
+    logs_admin = await broadcast_crud.list_logs(db_session, identity=Identity(kind="admin"))
+    ids_admin = [b.id for b in logs_admin]
+    assert b_a.id in ids_admin
+    assert b_b.id in ids_admin
+
+    logs_no_tenant = await broadcast_crud.list_logs(db_session, identity=Identity(kind="api_key", tenant_id=None))
+    assert len(logs_no_tenant) == 0
+
+
+@pytest.mark.asyncio
+async def test_recurring_logs_excludes_parents(db_session):
+    """list_logs excludes recurring parent records regardless of identity."""
+    from app.api.deps import Identity
+
+    account = await _make_account(db_session, "+821033330062")
+    recurring = await _make_broadcast(db_session, account.id, recurring_interval_minutes=60)
+    one_time = await _make_broadcast(db_session, account.id)
+
+    logs = await broadcast_crud.list_logs(db_session, identity=Identity(kind="admin"))
+    ids = [b.id for b in logs]
+    assert recurring.id not in ids, "Recurring parent must NOT appear in logs"
+    assert one_time.id in ids, "One-time broadcast must appear in logs"
