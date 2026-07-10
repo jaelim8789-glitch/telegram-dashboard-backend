@@ -373,6 +373,29 @@ async def deliver_message(
                 results.append(result)
             return results
 
+        # Fast-fail for banned accounts — no Telegram call needed
+        if account.status == "banned":
+            for recipient in request.recipients:
+                result = DeliveryResult(
+                    status=DeliveryStatus.BANNED,
+                    recipient=recipient,
+                    error_message="계정이 텔레그램에서 차단되었습니다.",
+                )
+                await _persist_log(
+                    account_id=request.account_id,
+                    recipient=recipient,
+                    source=request.source,
+                    source_id=request.source_id,
+                    status=DeliveryStatus.BANNED,
+                    success=False,
+                    telegram_message_id=None,
+                    error_message=result.error_message,
+                    attempt_count=1,
+                    message_content=request.message,
+                )
+                results.append(result)
+            return results
+
     # 2. Get authorized client (decrypts session, checks authorization)
     try:
         client = await get_authorized_client(account)
@@ -424,6 +447,17 @@ async def deliver_message(
             on_status_change=on_status_change,
         )
         results.append(result)
+
+        # If Telegram told us the account is banned, persist it so future
+        # deliveries fast-fail without a network call.
+        if result.status == DeliveryStatus.BANNED:
+            try:
+                async with async_session_maker() as db:
+                    account_to_ban = await account_crud.get_account(db, request.account_id)
+                    if account_to_ban is not None:
+                        await account_crud.mark_account_banned(db, account_to_ban)
+            except Exception as persist_err:
+                logger.warning("banned_persistence_failed", account_id=request.account_id, error=str(persist_err))
 
         # Pacing delay between recipients
         if i < len(request.recipients) - 1:

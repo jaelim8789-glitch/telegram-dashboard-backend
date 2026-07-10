@@ -86,3 +86,23 @@ async def mark_account_session_invalid(db: AsyncSession, account: Account) -> Ac
     await db.commit()
     await db.refresh(account)
     return account
+
+
+async def mark_account_banned(db: AsyncSession, account: Account) -> Account:
+    """Mark the account as banned by Telegram.
+
+    Called when the delivery pipeline receives a confirmed banned error
+    (UserDeactivatedBanError, PhoneNumberBannedError).  After this call:
+      - ``status`` → ``"banned"``
+      - ``session_data`` → ``None`` (session is no longer usable)
+      - ``last_activity`` → now
+
+    Future delivery attempts will fast-fail at the top of deliver_message()
+    by checking ``account.status == "banned"`` without any Telegram call.
+    """
+    account.status = "banned"
+    account.session_data = None
+    account.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(account)
+    return account

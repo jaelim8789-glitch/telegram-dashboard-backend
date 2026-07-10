@@ -47,6 +47,114 @@ async def test_process_broadcast_success(db_session, monkeypatch):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Sprint 28 — Banned account state synchronization
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_mark_account_banned_clears_session_and_sets_banned(db_session):
+    """mark_account_banned sets status to banned and clears session_data."""
+    account = await _make_account(db_session)
+    account.session_data = "some-encrypted-session"
+    account.status = "active"
+    account.last_activity = None
+    await db_session.commit()
+
+    updated = await account_crud.mark_account_banned(db_session, account)
+    assert updated.status == "banned"
+    assert updated.session_data is None
+    assert updated.last_activity is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_account_banned_persisted(db_session):
+    """The banned state is persisted to the database."""
+    account = await _make_account(db_session)
+    account.session_data = "some-encrypted-session"
+    account.status = "active"
+    await db_session.commit()
+
+    await account_crud.mark_account_banned(db_session, account)
+
+    reloaded = await account_crud.get_account(db_session, account.id)
+    assert reloaded is not None
+    assert reloaded.status == "banned"
+    assert reloaded.session_data is None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_banned_account_fast_fails(db_session, monkeypatch):
+    """A banned account fast-fails without any Telegram call."""
+    account = await _make_account(db_session)
+    account.session_data = "some-session"
+    account.status = "banned"
+    await db_session.commit()
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    get_client_mock = AsyncMock()
+    monkeypatch.setattr("app.services.delivery.get_authorized_client", get_client_mock)
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100999"],
+        message="test",
+        source="manual",
+    )
+
+    results = await deliver_message(request)
+    assert len(results) == 1
+    assert results[0].status.value == "banned"
+    assert "차단" in results[0].error_message
+
+    # No Telegram call should have been made
+    get_client_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_persists_banned_on_banned_result(db_session, monkeypatch):
+    """When _deliver_with_retry returns BANNED, the account is marked banned in DB."""
+    account = await _make_account(db_session)
+    account.session_data = "valid-session"
+    account.status = "active"
+    await db_session.commit()
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    # Mock get_authorized_client to return a dummy client
+    monkeypatch.setattr(
+        "app.services.delivery.get_authorized_client",
+        AsyncMock(return_value="dummy-client"),
+    )
+
+    # Mock _deliver_with_retry to return BANNED
+    monkeypatch.setattr(
+        "app.services.delivery._deliver_with_retry",
+        AsyncMock(return_value=DeliveryResult(
+            status=DeliveryStatus.BANNED,
+            recipient="-100999",
+            error_message="계정이 텔레그램에서 차단되었습니다.",
+        )),
+    )
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100999"],
+        message="test",
+        source="manual",
+    )
+
+    results = await deliver_message(request)
+    assert len(results) == 1
+    assert results[0].status.value == "banned"
+
+    # Verify account was marked banned in DB
+    await db_session.refresh(account)
+    assert account.status == "banned"
+    assert account.session_data is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Sprint 27 — Telegram session recovery
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -76,7 +184,6 @@ async def test_mark_account_session_invalid_persisted(db_session):
 
     await account_crud.mark_account_session_invalid(db_session, account)
 
-    # Reload from DB to verify persistence
     reloaded = await account_crud.get_account(db_session, account.id)
     assert reloaded is not None
     assert reloaded.session_data is None
@@ -95,7 +202,6 @@ async def test_deliver_message_clears_session_on_auth_failure(db_session, monkey
     from app.services.delivery import DeliveryRequest, deliver_message
     from app.services.telegram_actions import AccountNotAuthenticatedError
 
-    # Make get_authorized_client raise auth error
     monkeypatch.setattr(
         "app.services.delivery.get_authorized_client",
         AsyncMock(side_effect=AccountNotAuthenticatedError("Session expired")),
@@ -112,7 +218,6 @@ async def test_deliver_message_clears_session_on_auth_failure(db_session, monkey
     assert len(results) == 1
     assert results[0].status.value == "session_expired"
 
-    # Verify session was cleared in DB
     await db_session.refresh(account)
     assert account.session_data is None
     assert account.status == "inactive"
@@ -142,7 +247,6 @@ async def test_deliver_message_without_session_fast_fails(db_session, monkeypatc
     assert len(results) == 1
     assert results[0].status.value == "session_expired"
 
-    # The mock should not have been called — the session check happens before it
     get_client_mock.assert_not_called()
 
 
@@ -176,7 +280,7 @@ async def test_retry_broadcast_hits_limit_at_3(db_session, monkeypatch):
     broadcast.status = "failed"
     broadcast.error_message = "fail"
     broadcast.sent_at = broadcast_crud.utcnow_naive()
-    broadcast.retry_count = 3  # already at the default limit
+    broadcast.retry_count = 3
     await db_session.commit()
 
     result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
@@ -235,7 +339,6 @@ async def test_retry_broadcast_increments_on_each_retry(db_session):
         assert updated is not None
         assert updated.retry_count == expected
 
-    # Fourth attempt should fail
     broadcast.status = "failed"
     broadcast.error_message = "attempt 4"
     broadcast.sent_at = broadcast_crud.utcnow_naive()
@@ -265,7 +368,6 @@ async def test_process_broadcast_failure_records_error(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_process_broadcast_missing_broadcast_is_a_noop(db_session):
-    # Should not raise even though this id doesn't exist.
     await process_broadcast("does-not-exist")
 
 
@@ -274,8 +376,6 @@ async def test_process_broadcast_missing_account_marks_failed(db_session, monkey
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
-    # Simulate the account having vanished between creation and processing without
-    # touching the FK-constrained accounts table directly.
     monkeypatch.setattr("app.services.broadcast_processor.account_crud.get_account", AsyncMock(return_value=None))
     deliver_mock = AsyncMock()
     monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
@@ -296,16 +396,12 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
     deliver_mock = AsyncMock(return_value=[_success_result()])
     monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
 
-    # Process the first one to completion so it actually records a sent_at close to "now"
     await process_broadcast(first.id)
     deliver_mock.reset_mock()
 
     second = await _make_broadcast(db_session, account.id, message="두번째")
     await process_broadcast(second.id)
 
-    # Still within the 1/min cooldown from the first send -> the real Telegram-calling
-    # path must not run, and — with no queue to push a retry into — this is reported as
-    # a clean failure rather than silently retried.
     deliver_mock.assert_not_called()
 
     await db_session.refresh(second)
@@ -320,19 +416,16 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
 
 @pytest.mark.asyncio
 async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, monkeypatch):
-    """When deliver_message exceeds the timeout, the broadcast is marked failed
-    and the TimeoutError propagates so the scheduler can release its guard."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
     async def _never_completes(*args, **kwargs):
-        await asyncio.sleep(3600)  # longer than any test timeout
+        await asyncio.sleep(3600)
 
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
         AsyncMock(side_effect=_never_completes),
     )
-    # Use a very short timeout for the test
     monkeypatch.setattr("app.config.settings.broadcast_timeout_seconds", 0.01)
 
     with pytest.raises(asyncio.TimeoutError):
@@ -345,8 +438,6 @@ async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, mon
 
 @pytest.mark.asyncio
 async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, monkeypatch):
-    """Simulate the full scheduler path: the in-memory guard is cleaned up
-    even when a broadcast times out."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
@@ -361,21 +452,17 @@ async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, mo
 
     import app.scheduler.scheduler as scheduler_module
 
-    # Simulate the scheduler's claim + guard pattern
     scheduler_module._running_broadcasts.add(broadcast.id)
 
     with pytest.raises(asyncio.TimeoutError):
         await process_broadcast(broadcast.id)
 
-    # The guard must be released (the scheduler's finally block does this,
-    # but we verify the broadcast is no longer in the set)
     scheduler_module._running_broadcasts.discard(broadcast.id)
     assert broadcast.id not in scheduler_module._running_broadcasts
 
 
 @pytest.mark.asyncio
 async def test_process_broadcast_timeout_configurable_via_settings(db_session, monkeypatch):
-    """The timeout value is read from settings.broadcast_timeout_seconds."""
     assert settings.broadcast_timeout_seconds == 300
     assert hasattr(settings, "broadcast_timeout_seconds")
 
@@ -387,11 +474,9 @@ async def test_process_broadcast_timeout_configurable_via_settings(db_session, m
 
 @pytest.mark.asyncio
 async def test_retry_broadcast_resets_failed_to_pending(db_session):
-    """retry_broadcast resets a failed broadcast to pending, clearing error and sent_at."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
-    # Manually set to failed (simulating a failed delivery)
     broadcast.status = "failed"
     broadcast.error_message = "Some error"
     broadcast.sent_at = broadcast_crud.utcnow_naive()
@@ -406,7 +491,6 @@ async def test_retry_broadcast_resets_failed_to_pending(db_session):
 
 @pytest.mark.asyncio
 async def test_retry_broadcast_rejects_sending_state(db_session):
-    """retry_broadcast returns None for a broadcast in 'sending' state."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
     broadcast.status = "sending"
@@ -418,7 +502,6 @@ async def test_retry_broadcast_rejects_sending_state(db_session):
 
 @pytest.mark.asyncio
 async def test_retry_broadcast_rejects_sent_state(db_session):
-    """retry_broadcast returns None for a broadcast in 'sent' state."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
     broadcast.status = "sent"
@@ -430,10 +513,8 @@ async def test_retry_broadcast_rejects_sent_state(db_session):
 
 @pytest.mark.asyncio
 async def test_retry_broadcast_rejects_pending_state(db_session):
-    """retry_broadcast returns None for a broadcast already in 'pending' state."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
-    # Already pending by default
 
     result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
     assert result is None
@@ -441,29 +522,24 @@ async def test_retry_broadcast_rejects_pending_state(db_session):
 
 @pytest.mark.asyncio
 async def test_retry_broadcast_returns_none_for_missing(db_session):
-    """retry_broadcast returns None for a non-existent broadcast."""
     result = await broadcast_crud.retry_broadcast(db_session, "does-not-exist")
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch):
-    """After retry, the broadcast can be picked up and processed successfully."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
 
-    # Simulate a failed broadcast
     broadcast.status = "failed"
     broadcast.error_message = "First attempt failed"
     broadcast.sent_at = broadcast_crud.utcnow_naive()
     await db_session.commit()
 
-    # Retry it
     updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
     assert updated is not None
     assert updated.status == "pending"
 
-    # Now process it — should succeed
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
         AsyncMock(return_value=[_success_result()]),
