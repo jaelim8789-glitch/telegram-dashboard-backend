@@ -19,7 +19,7 @@ from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
-from app.services.broadcast_processor import process_broadcast
+from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.reply_macro_service import execute_reply_macro
 from app.services.usdt_watcher import check_usdt_payments
 
@@ -32,6 +32,7 @@ scheduler = AsyncIOScheduler()
 # In-memory concurrency guard: set of schedule IDs currently being executed.
 # Prevents duplicate concurrent execution of the same schedule within this process.
 _running_broadcasts: set[str] = set()
+_running_recurring: set[str] = set()
 _running_macros: set[str] = set()
 
 
@@ -41,31 +42,43 @@ async def dispatch_due_broadcasts() -> None:
     Each broadcast is processed independently — one failure does not
     block others. Atomic claim via status='sending' prevents duplicate
     execution across ticks or workers.
+
+    Recurring parent broadcasts are dispatched via process_recurring_parent
+    which creates a child record first for history tracking.
     """
     async with async_session_maker() as db:
         due = await broadcast_crud.list_due_scheduled_broadcasts(db)
-        ready_ids: list[str] = []
+        one_time_ids: list[str] = []
+        recurring_ids: list[str] = []
         for broadcast in due:
             # Skip if already running in this process
-            if broadcast.id in _running_broadcasts:
-                logger.info("scheduled_broadcast_skipped_already_running", broadcast_id=broadcast.id)
-                continue
+            if broadcast.recurring_interval_minutes is not None:
+                # Recurring parent
+                if broadcast.id in _running_recurring:
+                    logger.info("recurring_skipped_already_running", parent_id=broadcast.id)
+                    continue
+                recurring_ids.append(broadcast.id)
+            else:
+                # One-time broadcast
+                if broadcast.id in _running_broadcasts:
+                    logger.info("scheduled_broadcast_skipped_already_running", broadcast_id=broadcast.id)
+                    continue
 
-            wait_seconds = await broadcast_crud.seconds_until_next_allowed_broadcast(
-                db, broadcast.account_id, exclude_id=broadcast.id
-            )
-            if wait_seconds > 0:
-                logger.info(
-                    "scheduled_broadcast_deferred_rate_limited",
-                    broadcast_id=broadcast.id,
-                    account_id=broadcast.account_id,
-                    wait_seconds=round(wait_seconds, 1),
+                wait_seconds = await broadcast_crud.seconds_until_next_allowed_broadcast(
+                    db, broadcast.account_id, exclude_id=broadcast.id
                 )
-                continue
-            ready_ids.append(broadcast.id)
+                if wait_seconds > 0:
+                    logger.info(
+                        "scheduled_broadcast_deferred_rate_limited",
+                        broadcast_id=broadcast.id,
+                        account_id=broadcast.account_id,
+                        wait_seconds=round(wait_seconds, 1),
+                    )
+                    continue
+                one_time_ids.append(broadcast.id)
 
-    for broadcast_id in ready_ids:
-        # Atomic claim: set status to 'sending' — skip if another tick/worker won
+    # Dispatch one-time broadcasts (existing flow)
+    for broadcast_id in one_time_ids:
         async with async_session_maker() as db:
             claimed = await broadcast_crud.claim_broadcast_dispatch(db, broadcast_id)
         if not claimed:
@@ -94,6 +107,28 @@ async def dispatch_due_broadcasts() -> None:
                 )
         finally:
             _running_broadcasts.discard(broadcast_id)
+
+    # Dispatch recurring parent broadcasts
+    for parent_id in recurring_ids:
+        # Atomic claim: set status to 'sending' on the parent
+        async with async_session_maker() as db:
+            claimed = await broadcast_crud.claim_broadcast_dispatch(db, parent_id)
+        if not claimed:
+            logger.info("recurring_skipped_already_claimed", parent_id=parent_id)
+            continue
+
+        _running_recurring.add(parent_id)
+        try:
+            logger.info("recurring_dispatched", parent_id=parent_id)
+            await process_recurring_parent(parent_id)
+        except Exception as exc:
+            logger.error(
+                "recurring_failed",
+                parent_id=parent_id,
+                error=str(exc),
+            )
+        finally:
+            _running_recurring.discard(parent_id)
 
 
 async def dispatch_due_reply_macros() -> None:
