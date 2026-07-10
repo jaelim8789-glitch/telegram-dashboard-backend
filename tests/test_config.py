@@ -101,3 +101,150 @@ def test_broadcast_max_retries_rejects_very_negative():
     """Large negative values are also rejected."""
     with pytest.raises(ValueError, match="BROADCAST_MAX_RETRIES must be >= 0"):
         _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=-999)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 27 — Production startup guard (insecure defaults)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_development_allows_insecure_defaults():
+    """Development environment accepts all default credential values."""
+    s = _settings(
+        "postgresql+asyncpg://u:p@h/db",
+        environment="development",
+    )
+    assert s.admin_username == "123123"
+    assert s.admin_password == "123456"
+    assert s.admin_jwt_secret == "change-me-in-production"
+
+
+def test_development_allows_override():
+    """Development accepts overridden values too."""
+    s = _settings(
+        "postgresql+asyncpg://u:p@h/db",
+        environment="development",
+        admin_username="admin",
+        admin_password="s3cret!",
+        admin_jwt_secret="real-secret",
+    )
+    assert s.admin_username == "admin"
+
+
+def test_production_rejects_default_admin_username():
+    """Production with default admin_username is rejected."""
+    with pytest.raises(ValueError, match="admin_username"):
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="production",
+            admin_password="real-pw",
+            admin_jwt_secret="real-secret",
+        )
+
+
+def test_production_rejects_default_admin_password():
+    """Production with default admin_password is rejected."""
+    with pytest.raises(ValueError, match="admin_password"):
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="production",
+            admin_username="custom-user",
+            admin_jwt_secret="real-secret",
+        )
+
+
+def test_production_rejects_default_jwt_secret():
+    """Production with default JWT secret is rejected."""
+    with pytest.raises(ValueError, match="admin_jwt_secret"):
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="production",
+            admin_username="custom-user",
+            admin_password="real-pw",
+        )
+
+
+def test_production_rejects_all_insecure_defaults_together():
+    """Production with all default admin credentials is rejected in one error."""
+    with pytest.raises(ValueError, match="admin_username, admin_password, admin_jwt_secret"):
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="production",
+        )
+
+
+def test_production_accepts_overridden_credentials():
+    """Production with all credentials overridden is accepted."""
+    s = _settings(
+        "postgresql+asyncpg://u:p@h/db",
+        environment="production",
+        admin_username="admin",
+        admin_password="V3ryS3cur3!",
+        admin_jwt_secret="".join("x" for _ in range(48)),
+    )
+    assert s.environment == "production"
+    assert s.admin_username == "admin"
+
+
+def test_production_accepts_overridden_jwt_secret():
+    """Production with a non-default JWT secret + full credentials is accepted."""
+    s = _settings(
+        "postgresql+asyncpg://u:p@h/db",
+        environment="production",
+        admin_username="telemon-admin",
+        admin_password="Str0ng!Pass",
+        admin_jwt_secret="a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+    )
+    assert s.admin_jwt_secret == "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"
+
+
+def test_prod_environment_variant_accepted():
+    """'prod' is treated the same as 'production'."""
+    with pytest.raises(ValueError, match="admin_jwt_secret"):
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="prod",
+            admin_username="custom",
+            admin_password="custom",
+        )
+
+
+def test_prod_variant_with_overrides_accepted():
+    """'prod' environment + overridden credentials is accepted."""
+    s = _settings(
+        "postgresql+asyncpg://u:p@h/db",
+        environment="prod",
+        admin_username="admin",
+        admin_password="S3cur3P@ss",
+        admin_jwt_secret="".join("y" for _ in range(48)),
+    )
+    assert s.admin_username == "admin"
+
+
+def test_error_does_not_expose_secret_values():
+    """Error message must not contain actual credential values."""
+    with pytest.raises(ValueError) as exc_info:
+        _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment="production",
+        )
+    msg = str(exc_info.value)
+    assert "123123" not in msg
+    assert "123456" not in msg
+    assert "change-me-in-production" not in msg
+
+
+def test_non_production_environments_pass_through():
+    """Environments other than production/prod are never blocked."""
+    for env in ("development", "staging", "test", "ci", ""):
+        s = _settings(
+            "postgresql+asyncpg://u:p@h/db",
+            environment=env,
+        )
+        assert s.environment == env
+
+
+def test_existing_tests_still_pass():
+    """The existing test helper still works unchanged."""
+    s = _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=3)
+    assert s.broadcast_max_retries == 3

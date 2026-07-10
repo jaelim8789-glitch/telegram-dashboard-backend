@@ -1,5 +1,11 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Insecure default values that must be overridden before production deployment.
+# These match the shipped class-level defaults above.
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+_ADMIN_DEFAULTS = {"admin_username": "123123", "admin_password": "123456"}
+_JWT_DEFAULT = "change-me-in-production"
 
 
 class Settings(BaseSettings):
@@ -88,6 +94,30 @@ class Settings(BaseSettings):
                 "Set a non-negative integer (default 3) in your .env file."
             )
         return value
+
+    @model_validator(mode="after")
+    def _reject_insecure_production_defaults(self) -> "Settings":
+        env = self.environment.strip().lower()
+        if env not in _PRODUCTION_ENVIRONMENTS:
+            return self
+
+        findings: list[str] = []
+
+        for field, default in _ADMIN_DEFAULTS.items():
+            if getattr(self, field) == default:
+                findings.append(field)
+
+        if self.admin_jwt_secret == _JWT_DEFAULT:
+            findings.append("admin_jwt_secret")
+
+        if not findings:
+            return self
+
+        raise ValueError(
+            f"Production startup blocked: default {', '.join(findings)} "
+            "must be overridden via environment variables or .env. "
+            "Set secure values before deploying."
+        )
 
     @property
     def cors_origin_list(self) -> list[str]:
