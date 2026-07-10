@@ -1,13 +1,31 @@
 import os
+import asyncio
 
 # Must run before any `app.*` import: app/config.py and app/database.py build a
 # Settings()/engine singleton at import time, so the DB URL has to be overridden in the
 # environment first. Only DATABASE_URL is isolated — ENCRYPTION_KEY / ADMIN_* / etc. are
 # fine to share with local dev since tests never write real data through them.
-os.environ.setdefault(
-    "DATABASE_URL",
-    "postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard_test",
-)
+_default_db_url = "postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard_test"
+
+# Detect if PostgreSQL is reachable; fall back to SQLite if not.
+async def _probe_postgres() -> bool:
+    try:
+        from sqlalchemy.ext.asyncio import create_async_engine
+        engine = create_async_engine(_default_db_url)
+        async with engine.connect() as conn:
+            await conn.execute(
+                __import__("sqlalchemy").text("SELECT 1")
+            )
+        await engine.dispose()
+        return True
+    except Exception:
+        return False
+
+_probe_result = asyncio.run(_probe_postgres())
+if not _probe_result:
+    os.environ["DATABASE_URL"] = "sqlite+aiosqlite://"
+else:
+    os.environ.setdefault("DATABASE_URL", _default_db_url)
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

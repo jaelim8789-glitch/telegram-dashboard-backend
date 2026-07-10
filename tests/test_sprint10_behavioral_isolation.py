@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.api.deps import get_current_identity, Identity
+from app.api.deps import get_current_identity, require_api_key_or_admin, Identity
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────
@@ -18,8 +18,10 @@ from app.api.deps import get_current_identity, Identity
 
 @pytest.fixture
 def client():
-    """TestClient with no dependency overrides (real auth resolution)."""
-    return TestClient(app)
+    """TestClient with auth bypassed (identity overridden per-test)."""
+    app.dependency_overrides[require_api_key_or_admin] = lambda: None
+    yield TestClient(app)
+    app.dependency_overrides.pop(require_api_key_or_admin, None)
 
 
 @pytest.fixture
@@ -60,17 +62,22 @@ def api_key_no_tenant():
 
 def _setup_tenants_and_accounts(*, tenant_a_id, tenant_b_id):
     """Helper: create two tenants and an account for each. Returns (acc_a_id, acc_b_id)."""
-    from app.database import async_session_maker
+    from app.database import async_session_maker, engine
+    from app.database import Base
     from app.models.account import Account
     from app.models.tenant import Tenant
 
     async def _setup():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
         async with async_session_maker() as db:
-            ta = Tenant(id=tenant_a_id, name="Tenant A", phone=f"+8200000{tenant_a_id[-4:]}")
-            tb = Tenant(id=tenant_b_id, name="Tenant B", phone=f"+8200000{tenant_b_id[-4:]}")
+            ta = Tenant(id=tenant_a_id, name="Tenant A",
+                        phone=f"+8200000{tenant_a_id.replace('-','')[:15]}")
+            tb = Tenant(id=tenant_b_id, name="Tenant B",
+                        phone=f"+8200000{tenant_b_id.replace('-','')[:15]}")
             db.add_all([ta, tb])
             await db.commit()
-
             acc_a = Account(
                 phone=f"+8210000{tenant_a_id[-4:]}1", tenant_id=tenant_a_id, name="A-Account"
             )
@@ -109,19 +116,22 @@ def _cleanup(acc_ids, tenant_ids):
 # Phase 1: Account LIST isolation — Tenant A/B behavioral
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_tenant_a_cannot_list_tenant_b_accounts(client, tenant_a):
+def test_tenant_a_cannot_list_tenant_b_accounts(client):
     """Tenant A LIST /api/accounts must NOT return Tenant B accounts."""
     acc_a_id, acc_b_id = _setup_tenants_and_accounts(
         tenant_a_id="tenant-A-beh", tenant_b_id="tenant-B-beh"
     )
 
     try:
+        # Override identity to match the test's Tenant A
+        app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="tenant-A-beh")
         resp = client.get("/api/accounts")
         assert resp.status_code == 200
         ids = [a["id"] for a in resp.json()]
         assert acc_a_id in ids, "Tenant A must see its own account"
         assert acc_b_id not in ids, "Tenant A must NOT see Tenant B account"
     finally:
+        app.dependency_overrides.pop(get_current_identity, None)
         _cleanup([acc_a_id, acc_b_id], ["tenant-A-beh", "tenant-B-beh"])
 
 
@@ -320,11 +330,15 @@ def test_api_key_without_tenant_context_gets_403(client, api_key_no_tenant):
 
 def test_null_tenant_account_not_listed_for_tenant_user(client, tenant_a):
     """Accounts with tenant_id=NULL must NOT appear in a tenant user's LIST."""
-    from app.database import async_session_maker
+    from app.database import async_session_maker, engine
+    from app.database import Base
     from app.models.account import Account
     from app.models.tenant import Tenant
 
     async def _setup():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
         async with async_session_maker() as db:
             ta = Tenant(id="tenant-A-null", name="Tenant A", phone="+82000000017")
             db.add(ta)

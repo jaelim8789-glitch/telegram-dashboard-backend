@@ -737,10 +737,12 @@ async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_r
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_response_contract(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult(average_latency_ms=150.0, p95_latency_ms=300.0, total_measured=80, rows_without_timing=20)
@@ -775,10 +777,12 @@ async def test_overview_response_contract(
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_empty_data_returns_none_sections(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult()
@@ -808,10 +812,12 @@ async def test_overview_empty_data_returns_none_sections(
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_tenant_isolation(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult()
@@ -839,10 +845,12 @@ async def test_overview_tenant_isolation(
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_bounded_top_accounts(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult()
@@ -1030,10 +1038,12 @@ async def test_logical_broadcast_tenant_isolation(mock_session_maker, mock_resol
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_includes_logical(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult()
@@ -1103,11 +1113,11 @@ async def test_latency_empty_when_no_accounts(mock_session_maker, mock_resolve, 
 async def test_latency_tenant_isolation(mock_session_maker, mock_resolve, tenant_a_identity):
     """Tenant A should only see Tenant A's latency data."""
     mock_resolve.return_value = ["acc-a-1"]
+    CountRow = type("Row", (), {"total": 0, "timed": 0})
+    count_row = CountRow()
+    count_row.total, count_row.timed = 5, 0
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [
-        _mock_result(scalar_result=0),   # total rows
-        _mock_result(scalar_result=0),   # timed rows
-    ]
+    mock_db.execute.return_value = _mock_result(one_result=count_row)
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_db
     mock_session_maker.return_value = mock_session
@@ -1128,10 +1138,12 @@ async def test_latency_tenant_isolation(mock_session_maker, mock_resolve, tenant
 @patch("app.services.delivery_analytics.get_timeline")
 @patch("app.services.delivery_analytics.get_logical_summary")
 @patch("app.services.delivery_analytics.get_latency_analytics")
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 async def test_overview_includes_latency(
-    mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
+    mock_resolve, mock_latency, mock_logical, mock_timeline, mock_failure, mock_perf, mock_source, mock_summary, mock_latency_by_source, mock_latency_by_account,
     tenant_a_identity,
 ):
+    mock_resolve.return_value = ["acc-1"]
     mock_latency_by_account.return_value = []
     mock_latency_by_source.return_value = []
     mock_latency.return_value = LatencyResult(average_latency_ms=200.0, p95_latency_ms=500.0, total_measured=100, rows_without_timing=0)
