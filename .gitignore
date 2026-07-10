@@ -11,3 +11,5 @@ logs/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+test_telemon.db

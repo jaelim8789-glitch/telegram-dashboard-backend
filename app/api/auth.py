@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity
 from app.core.logging import get_logger
+from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
 from app.crud import user as user_crud
 from app.database import get_db
@@ -55,7 +56,15 @@ async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get
 
 
 @router.post("/login-with-api-key", response_model=LoginWithApiKeyResponse)
-async def login_with_api_key(payload: LoginWithApiKeyRequest, db: AsyncSession = Depends(get_db)):
+async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip, "api_key_login", max_attempts=20, window_seconds=300):
+        retry_after = get_retry_after_seconds(client_ip, "api_key_login")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = await user_crud.get_by_api_key_hash(db, hash_api_key(payload.api_key))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")

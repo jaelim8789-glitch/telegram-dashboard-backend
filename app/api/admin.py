@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
 from app.config import settings
 from app.core.logging import get_logger
+from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
 from app.core.security import create_access_token, generate_user_api_key, hash_api_key, mask_api_key, verify_admin_credentials
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
@@ -17,7 +18,15 @@ logger = get_logger(__name__)
 
 
 @router.post("/login", response_model=AdminTokenResponse)
-async def login(payload: AdminLoginRequest):
+async def login(payload: AdminLoginRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip, "admin_login", max_attempts=10, window_seconds=300):
+        retry_after = get_retry_after_seconds(client_ip, "admin_login")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
     if not verify_admin_credentials(payload.username, payload.password):
         logger.warning("admin_login_failed", username=payload.username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
