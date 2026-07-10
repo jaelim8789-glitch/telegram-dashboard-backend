@@ -223,7 +223,9 @@ async def list_logs(
     status: str | None = None,
     date: str | None = None,
 ) -> list[Broadcast]:
-    query = select(Broadcast).order_by(Broadcast.created_at.desc())
+    query = select(Broadcast).where(
+        Broadcast.recurring_interval_minutes.is_(None)  # exclude recurring parent records
+    ).order_by(Broadcast.created_at.desc())
     if account_id:
         query = query.where(Broadcast.account_id == account_id)
     if status:

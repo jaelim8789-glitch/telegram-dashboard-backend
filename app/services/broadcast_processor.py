@@ -133,16 +133,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
             logger.error("broadcast_failed", broadcast_id=broadcast_id, errors=errors)
             delivery_succeeded = False
 
-        # ── Recurring parent: reschedule on success ──────────────
-        if is_recurring_parent and delivery_succeeded:
-            # Advance the parent's next_scheduled_at
-            parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_id)
-            if parent is not None:
-                logger.info(
-                    "recurring_rescheduled",
-                    parent_id=parent_id,
-                    next_scheduled_at=str(parent.next_scheduled_at),
-                )
 
 
 async def process_recurring_parent(parent_broadcast_id: str) -> None:
@@ -172,6 +162,20 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
         child_id = child.id
         account_id = parent.account_id
 
+    # CRITICAL: Advance next_scheduled_at BEFORE dispatching the child.
+    # If the process crashes after child creation but before rescheduling,
+    # the parent's next_scheduled_at stays in the past and the next tick
+    # would create a SECOND child — duplicate execution.  Advancing here
+    # ensures at-most-one child per tick, even on crash.
+    async with async_session_maker() as db:
+        parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_broadcast_id)
+        if parent is not None:
+            logger.info(
+                "recurring_parent_prescheduled",
+                parent_id=parent_broadcast_id,
+                next_scheduled_at=str(parent.next_scheduled_at),
+            )
+
     logger.info(
         "recurring_child_created",
         parent_id=parent_broadcast_id,
@@ -181,14 +185,3 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
 
     # Process the child broadcast (skip rate limit since it's a scheduler dispatch)
     await process_broadcast(child_id, skip_rate_limit=True)
-
-    # After the child completes, reschedule the parent by advancing next_scheduled_at.
-    # This must happen even if the child failed (so the schedule retries later).
-    async with async_session_maker() as db:
-        parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_broadcast_id)
-        if parent is not None:
-            logger.info(
-                "recurring_parent_rescheduled",
-                parent_id=parent_broadcast_id,
-                next_scheduled_at=str(parent.next_scheduled_at),
-            )
