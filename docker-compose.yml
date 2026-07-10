@@ -1,4 +1,8 @@
 services:
+  # --- Database (PostgreSQL) ---
+  # Production: no host port mapping — only the `backend` container can reach db
+  # via the internal Docker network.  To connect from the host for local
+  # development, uncomment the `ports` block below.
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -6,8 +10,8 @@ services:
       POSTGRES_USER: telegram_dashboard
       POSTGRES_PASSWORD: telegram_dashboard
       POSTGRES_DB: telegram_dashboard
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"          # uncomment for local host-run dev (uvicorn outside Docker)
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,8 +32,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "8000:8000"
+    # No host port mapping — nginx is the single public entrypoint.
+    # Uncomment below for direct-backend access during local debugging:
+    # ports:
+    #   - "8000:8000"
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
