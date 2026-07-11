@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime, timedelta, timezone
+
 from app.api.deps import Identity, get_current_identity
 from app.core.logging import get_logger
+from app.core.plans import get_plan
 from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
 from app.crud import user as user_crud
 from app.database import get_db
+from app.models.tenant import Tenant
 from app.schemas.auth import (
     LoginWithApiKeyRequest,
     LoginWithApiKeyResponse,
@@ -17,6 +21,7 @@ from app.schemas.auth import (
     VerifyCodeResponse,
 )
 from app.services.sms_service import SmsSendError, send_verification_sms
+from app.services.usage_tracker import apply_plan_limits
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = get_logger(__name__)
@@ -51,6 +56,25 @@ async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get
     user = await user_crud.get_or_create_user(db, payload.phone)
     raw_key = generate_user_api_key()
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
+
+    # Create or update free-trial Tenant for new signups
+    from sqlalchemy import select
+    result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        plan_def = get_plan("free")
+        trial_days = plan_def["trial_days"] if plan_def else 14
+        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=trial_days)
+        tenant = Tenant(
+            phone=payload.phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+
     logger.info("user_api_key_issued", user_id=user.id)
     return VerifyCodeResponse(api_key=raw_key)
 

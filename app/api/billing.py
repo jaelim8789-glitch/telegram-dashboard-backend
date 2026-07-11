@@ -1,9 +1,13 @@
-"""Billing / 결제 API — USDT + Telegram Stars only."""
+"""Billing / 결제 API — USDT + Telegram Stars only.
+
+Plan data sourced from canonical app.core.plans.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_identity, Identity, require_admin, require_tenant_access
 from app.core.logging import get_logger
+from app.core.plans import PLAN_CATALOG, is_deprecated_plan
 from app.services.billing import (
     cancel_subscription,
     confirm_usdt_payment,
@@ -24,19 +28,20 @@ logger = get_logger(__name__)
 
 @router.get("/plans")
 async def api_get_plans():
-    """Get all plan info with USDT prices."""
-    from app.services.billing import PLAN_PRICES_USDT, PLAN_PRICES_USDT_ANNUAL
-
+    """Get all plan info with USDT prices from canonical PLAN_CATALOG."""
     plans = []
-    for plan_id, price in PLAN_PRICES_USDT.items():
-        annual = PLAN_PRICES_USDT_ANNUAL.get(plan_id, price * 12)
-        plans.append({
+    for plan_id, pdef in PLAN_CATALOG.items():
+        entry = {
             "id": plan_id,
-            "name": plan_id.capitalize(),
-            "monthly_usdt": price,
-            "annual_usdt": annual,
-            "savings": f"{int((1 - annual / (price * 12)) * 100)}%" if price > 0 else "-",
-        })
+            "name": pdef["name"],
+            "description": pdef["description"],
+            "features": pdef["features"],
+        }
+        for interval, price in pdef["prices_usdt"].items():
+            entry["price_usdt"] = price
+            entry["billing_interval"] = interval
+            entry["billing_label"] = "분기" if interval == "quarterly" else "월"
+        plans.append(entry)
 
     return {
         "plans": plans,
@@ -57,8 +62,10 @@ async def api_create_usdt_invoice(
 ):
     """Create a USDT payment invoice."""
     await require_tenant_access(tenant_id, identity)
-    if billing not in ("monthly", "annual"):
-        raise HTTPException(status_code=400, detail="billing은 monthly 또는 annual이어야 합니다.")
+    if is_deprecated_plan(plan):
+        raise HTTPException(status_code=400, detail="해당 요금제는 더 이상 제공되지 않습니다.")
+    if billing not in ("monthly", "quarterly"):
+        raise HTTPException(status_code=400, detail="billing은 monthly 또는 quarterly이어야 합니다.")
     result = await create_usdt_invoice(tenant_id, plan, billing)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "인보이스 생성 실패"))
@@ -71,14 +78,7 @@ async def api_confirm_usdt_payment(
     tx_hash: str,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Confirm USDT payment (admin only in production).
-
-    tx_hash is caller-supplied and NOT verified against the blockchain here — this
-    endpoint activates the subscription unconditionally, so it must only be reachable
-    by an operator who has independently confirmed the payment (or a future real
-    webhook). It was previously gated by require_tenant_access alone, which let any
-    authenticated member of the tenant self-activate any plan for free.
-    """
+    """Confirm USDT payment (admin only)."""
     await require_tenant_access(tenant_id, identity)
     result = await confirm_usdt_payment(tenant_id, tx_hash)
     if not result.get("success"):
@@ -104,14 +104,7 @@ async def api_add_stars(
     stars_amount: int,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Add Stars to wallet (after TG Stars purchase).
-
-    stars_amount is caller-supplied and NOT verified against a real Telegram Stars
-    payment — there is no webhook wired up yet to confirm one occurred, so this credits
-    the wallet unconditionally. Restricted to admin until real payment verification
-    exists; it was previously reachable by any authenticated member of the tenant, who
-    could credit themselves an arbitrary amount of Stars for free.
-    """
+    """Add Stars to wallet (admin only until real payment verification exists)."""
     await require_tenant_access(tenant_id, identity)
     result = await add_stars_credit(tenant_id, stars_amount)
     if not result.get("success"):

@@ -1,7 +1,21 @@
+"""FastAPI application with production-safe startup, health checks, and shutdown.
+
+Improvements in this hardening batch:
+- ``/health`` now includes a database connectivity probe (critical for Render
+  free-tier cold-start monitoring and load-balancer health checks).
+- Lifespan startup failures (scheduler, auto-reply listeners, Telegram bot) are
+  *isolated* — one component failing does not prevent the app from starting.
+  Errors are logged and the app continues without the failed component.
+- ``ProxyHeadersMiddleware`` ensures ``request.client.host`` / ``X-Forwarded-For``
+  resolve correctly when the app runs behind nginx or Cloudflare.
+"""
+
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import text
 
 from app.api.account_health import router as account_health_router
 from app.api.accounts import router as accounts_router
@@ -22,6 +36,7 @@ from app.api.telegram_auth import router as telegram_auth_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
+from app.database import async_session_maker
 from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
@@ -33,14 +48,53 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    start_scheduler()
-    await attach_all_active_listeners()
-    await start_bot()
+    """Application lifespan: start services on boot, stop them on shutdown.
+
+    Each startup step is wrapped in try/except so a failure in one
+    (e.g. scheduler DB error, unauthenticated account, missing bot token)
+    does not prevent the HTTP server from starting — the app is degraded
+    but still serving health checks and API calls.
+    """
+    # ── Scheduler ──────────────────────────────────────────────────────
+    try:
+        start_scheduler()
+        logger.info("scheduler_started")
+    except Exception as exc:
+        logger.error("scheduler_startup_failed", error=str(exc))
+
+    # ── Auto-reply listeners ───────────────────────────────────────────
+    try:
+        await attach_all_active_listeners()
+        logger.info("auto_reply_listeners_attached")
+    except Exception as exc:
+        logger.error("auto_reply_listeners_startup_failed", error=str(exc))
+
+    # ── Telegram bot (optional) ────────────────────────────────────────
+    try:
+        await start_bot()
+        logger.info("telegram_bot_started")
+    except Exception as exc:
+        logger.error("telegram_bot_startup_failed", error=str(exc))
+
     logger.info("app_started")
     yield
-    await stop_bot()
-    shutdown_scheduler()
-    await pool.disconnect_all()
+
+    # ── Shutdown ───────────────────────────────────────────────────────
+    try:
+        await stop_bot()
+    except Exception as exc:
+        logger.error("telegram_bot_shutdown_failed", error=str(exc))
+
+    try:
+        shutdown_scheduler()
+    except Exception as exc:
+        logger.error("scheduler_shutdown_failed", error=str(exc))
+
+    try:
+        await pool.disconnect_all()
+    except Exception as exc:
+        logger.error("pool_disconnect_failed", error=str(exc))
+
     logger.info("app_stopped")
 
 
@@ -56,6 +110,23 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.debug else None,
 )
 
+# ── Middleware stack ───────────────────────────────────────────────────
+# Order matters: ProxyHeaders runs first so downstream middleware and routes
+# see the correct client IP when behind nginx/Cloudflare.
+# TrustedHost runs last (outermost) to reject requests with unexpected Host headers.
+
+if settings.environment.strip().lower() in ("production", "prod"):
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[
+            "telemon.online",
+            "app.telemon.online",
+            "api.telemon.online",
+            "localhost",
+            "127.0.0.1",
+        ],
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -63,6 +134,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Routers ────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
 # Not gated by _auth_required below -- these are the login endpoints themselves
@@ -91,6 +164,21 @@ app.include_router(delivery_analytics_router, dependencies=_auth_required)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "environment": settings.environment}
+    """Health check endpoint with database connectivity probe.
 
-
+    Returns 200 with ``{"status": "ok"}`` when the app is running and the
+    database is reachable. If the database is down, returns 503 so load
+    balancers / Render can route traffic away from this instance.
+    """
+    try:
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+        return {"status": "ok", "environment": settings.environment}
+    except Exception as exc:
+        logger.warning("health_check_db_failed", error=str(exc))
+        from fastapi.responses import JSONResponse
+        from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
+        return JSONResponse(
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "degraded", "environment": settings.environment, "detail": "database unreachable"},
+        )

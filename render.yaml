@@ -44,6 +44,12 @@ services:
         generateValue: true
       - key: ADMIN_JWT_EXPIRE_MINUTES
         value: "1440"
+      - key: FRONTEND_URL
+        sync: false
+      - key: USDT_WALLET_ADDRESS
+        sync: false
+      - key: USDT_NETWORK
+        value: "TRC20"
 
 databases:
   - name: telegram-dashboard-db

@@ -1,7 +1,9 @@
 """USDT 입금 자동 감지 서비스 (Trongrid API).
-    
+
 주기적으로 내 지갑 주소의 USDT(TRC20) 입금을 확인하고,
 입금이 확인되면 자동으로 요금제를 활성화하고 API 키를 발급합니다.
+
+Plan prices are derived from the canonical PLAN_CATALOG.
 """
 
 import os
@@ -10,7 +12,13 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from app.config import settings
 from app.core.logging import get_logger
+from app.core.plans import (
+    PLAN_CATALOG,
+    get_plan_price_usdt,
+    is_deprecated_plan,
+)
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
@@ -20,24 +28,43 @@ logger = get_logger(__name__)
 
 # ─── Configuration ────────────────────────────────────────────────────
 
-USDT_WALLET_ADDRESS = os.getenv("USDT_WALLET_ADDRESS", "")
-USDT_NETWORK = os.getenv("USDT_NETWORK", "TRC20")
+USDT_WALLET_ADDRESS = settings.usdt_wallet_address
+USDT_NETWORK = settings.usdt_network
 
 # TRC20 USDT contract address on Tron mainnet
 USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 TRONGRID_API = "https://api.trongrid.io"
 
-# Plan prices in USDT cents
-PLAN_PRICES_CENTS = {
-    "free": 0,
-    "basic": 1500,       # $15.00
-    "pro": 3800,         # $38.00
-    "enterprise": 15000, # $150.00
-}
-
 
 def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Plan prices in USDT cents (derived from PLAN_CATALOG)
+_PLAN_PRICES_CENTS: dict[str, dict[str, int]] = {}
+for pid, pdef in PLAN_CATALOG.items():
+    _PLAN_PRICES_CENTS[pid] = {}
+    for interval, price in pdef["prices_usdt"].items():
+        _PLAN_PRICES_CENTS[pid][interval] = int(price * 100)
+
+
+# Legacy plan prices (for backward compatibility with existing pending tenants)
+_LEGACY_PRICES_CENTS = {
+    "basic": 1500,
+    "enterprise": 15000,
+}
+
+
+def _all_price_cents() -> list[tuple[str, str, int]]:
+    """Return all (plan, billing, cents) tuples including legacy."""
+    result = []
+    for pid, intervals in _PLAN_PRICES_CENTS.items():
+        for interval, cents in intervals.items():
+            if cents > 0:
+                result.append((pid, interval, cents))
+    for pid, cents in _LEGACY_PRICES_CENTS.items():
+        result.append((pid, "monthly", cents))
+    return result
 
 
 # ─── Trongrid API ────────────────────────────────────────────────────
@@ -94,16 +121,14 @@ async def get_usdt_transactions(since_timestamp: int | None = None) -> list[dict
 
 def match_plan(amount_cents: int):
     """Match payment amount to a plan. Returns (plan_name, billing) or None."""
+    candidates = _all_price_cents()
     matches = []
-    for plan, price in PLAN_PRICES_CENTS.items():
+    for plan, billing, price in candidates:
         if price == 0:
             continue
         tol = int(price * 0.1)
         if abs(amount_cents - price) <= tol:
-            matches.append((plan, "monthly", price))
-        annual = int(price * 12 * 0.8)
-        if abs(amount_cents - annual) <= tol:
-            matches.append((plan, "annual", annual))
+            matches.append((plan, billing, price))
     if matches:
         matches.sort(key=lambda m: abs(amount_cents - m[2]))
         return (matches[0][0], matches[0][1])
@@ -115,7 +140,7 @@ def match_plan(amount_cents: int):
 
 async def process_incoming_tx(tx: dict) -> dict:
     """Process an incoming USDT transaction.
-    
+
     1. Check if already processed
     2. Find pending tenant by memo or amount
     3. Activate plan + issue API key
@@ -130,18 +155,15 @@ async def process_incoming_tx(tx: dict) -> dict:
     async with async_session_maker() as db:
         from sqlalchemy import select
 
-        # Already processed?
         existing = await db.execute(select(PaymentRecord).where(PaymentRecord.tx_id == tx_id))
         if existing.scalar_one_or_none():
             return {"status": "already_processed"}
 
-        # Find tenant by memo
         tenant = None
         if memo:
             result = await db.execute(select(Tenant).where(Tenant.payment_ref == memo))
             tenant = result.scalar_one_or_none()
 
-        # Find tenant by amount match
         if not tenant:
             pm = match_plan(amount_cents)
             if pm:
@@ -165,19 +187,24 @@ async def process_incoming_tx(tx: dict) -> dict:
             return {"status": "amount_mismatch"}
         plan_name, billing = pm
 
-        # Activate
+        if is_deprecated_plan(plan_name):
+            logger.warning("usdt_tx_deprecated_plan", tx_id=tx_id, plan=plan_name)
+            db.add(PaymentRecord(tx_id=tx_id, tenant_id=tenant.id, from_address=from_addr, amount_usdt=amount_cents, plan=plan_name, status="failed", block_timestamp=tx.get("block_timestamp", 0)))
+            await db.commit()
+            return {"status": "deprecated_plan", "plan": plan_name}
+
         tenant.subscription_status = "active"
+        tenant.trial_expires_at = None
         tenant.billing_period_start = utcnow_naive()
-        tenant.billing_period_end = utcnow_naive() + timedelta(days=365 if billing == "annual" else 30)
+        days = 90 if billing == "quarterly" else 30
+        tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, plan_name)
 
-        # Generate API key
         raw_key = f"sk-{secrets.token_urlsafe(32)}"
         api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True)
         db.add(api_key)
         await db.flush()
 
-        # Record payment
         db.add(PaymentRecord(
             tx_id=tx_id, tenant_id=tenant.id, from_address=from_addr,
             amount_usdt=amount_cents, plan=plan_name, billing=billing,

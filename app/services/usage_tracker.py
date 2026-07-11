@@ -1,8 +1,10 @@
 """Usage tracking for per-tenant billing and rate limiting.
-    
+
 This module provides middleware and utilities to track usage across
 all paid actions (broadcast, auto_reply, reply_macro, api_call).
 It enables both subscription-based and usage-based (credit) billing models.
+
+Plan limits are sourced from app.core.plans (PLAN_CATALOG).
 """
 
 from datetime import datetime, timezone
@@ -11,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.core.plans import get_plan_limits, is_deprecated_plan
 from app.database import async_session_maker
 from app.models.tenant import Tenant, UsageRecord
 
@@ -54,7 +57,7 @@ async def get_monthly_usage(db: AsyncSession, tenant_id: str, action: str | None
 
 async def check_usage_limit(db: AsyncSession, tenant: Tenant, action: str, increment: int = 1) -> bool:
     """Check if tenant has remaining usage for the given action.
-    
+
     Returns True if allowed, False if limit exceeded.
     """
     monthly = await get_monthly_usage(db, tenant.id, action)
@@ -63,7 +66,7 @@ async def check_usage_limit(db: AsyncSession, tenant: Tenant, action: str, incre
         "broadcast": tenant.monthly_message_limit,
         "auto_reply": tenant.monthly_auto_reply_limit,
         "reply_macro": tenant.monthly_message_limit,
-        "api_call": tenant.monthly_message_limit * 10,  # API calls have higher limit
+        "api_call": tenant.monthly_message_limit * 10,
     }
 
     limit = limits.get(action, 100)
@@ -72,20 +75,11 @@ async def check_usage_limit(db: AsyncSession, tenant: Tenant, action: str, incre
 
 # ─── Tenant Plan Limits ───────────────────────────────────────────────
 
-
 PLAN_LIMITS = {
-    "free": {
-        "max_accounts": 1,
-        "max_auto_reply_rules": 3,
-        "max_reply_macros": 1,
-        "monthly_message_limit": 100,
-        "monthly_auto_reply_limit": 100,
-        "cooldown_minimum_minutes": 60,
-        "can_broadcast": False,
-        "can_schedule": False,
-        "can_attach_images": False,
-        "can_export_data": False,
-    },
+    "free": get_plan_limits("free"),
+    "pro": get_plan_limits("pro"),
+    "team": get_plan_limits("team"),
+    # Legacy/deprecated plan compatibility
     "basic": {
         "max_accounts": 2,
         "max_auto_reply_rules": 10,
@@ -97,18 +91,6 @@ PLAN_LIMITS = {
         "can_schedule": True,
         "can_attach_images": False,
         "can_export_data": False,
-    },
-    "pro": {
-        "max_accounts": 5,
-        "max_auto_reply_rules": 50,
-        "max_reply_macros": 20,
-        "monthly_message_limit": 10000,
-        "monthly_auto_reply_limit": 10000,
-        "cooldown_minimum_minutes": 1,
-        "can_broadcast": True,
-        "can_schedule": True,
-        "can_attach_images": True,
-        "can_export_data": True,
     },
     "enterprise": {
         "max_accounts": 999,

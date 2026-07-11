@@ -22,8 +22,9 @@ class Tenant(Base):
     phone: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     
     # Plan
-    plan: Mapped[str] = mapped_column(String(20), default="free")  # free, basic, pro, enterprise
+    plan: Mapped[str] = mapped_column(String(20), default="free")  # free, pro, team
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    trial_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     
     # Plan limits (denormalized for fast checks)
     max_accounts: Mapped[int] = mapped_column(Integer, default=1)

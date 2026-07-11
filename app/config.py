@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # Set to 0 to disable retries entirely.
     broadcast_max_retries: int = 3
 
+    # USDT payment wallet address (TRC20 recommended).
+    # Used by the USDT watcher scheduler task.
+    usdt_wallet_address: str = ""
+    usdt_network: str = "TRC20"
+
+    # Frontend URL for cross-domain redirects and payment success links.
+    frontend_url: str = "http://localhost:3000"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")

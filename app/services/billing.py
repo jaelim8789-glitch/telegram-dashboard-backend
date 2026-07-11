@@ -1,7 +1,9 @@
 """Billing / 결제 서비스.
-    
+
 Simplified for USDT (crypto) + Telegram Stars only.
 No Stripe, no PortOne — just crypto and native TG payments.
+
+Plan pricing and limits are sourced from app.core.plans (PLAN_CATALOG).
 """
 
 import os
@@ -9,6 +11,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from app.core.logging import get_logger
+from app.core.plans import (
+    PLAN_CATALOG,
+    get_plan,
+    get_plan_price_usdt,
+    get_plan_limits,
+    is_deprecated_plan,
+)
 from app.database import async_session_maker
 from app.models.tenant import Tenant
 from app.services.usage_tracker import apply_plan_limits
@@ -22,24 +31,19 @@ def utcnow_naive() -> datetime:
 
 # ─── USDT Wallet ──────────────────────────────────────────────────────
 
-# 내 USDT 지갑 주소 (여기로 입금되면 수동/자동 확인)
 USDT_WALLET_ADDRESS = os.getenv("USDT_WALLET_ADDRESS", "0x0000000000000000000000000000000000000000")
-USDT_NETWORK = os.getenv("USDT_NETWORK", "TRC20")  # TRC20, ERC20, BEP20
+USDT_NETWORK = os.getenv("USDT_NETWORK", "TRC20")
 
-# ─── Plan Prices in USDT ──────────────────────────────────────────────
 
-PLAN_PRICES_USDT = {
-    "free": 0,
-    "basic": 15,        # $15/월 (~₩19,900)
-    "pro": 38,          # $38/월 (~₩49,900)
-    "enterprise": 150,  # $150/월 (~₩199,000)
-}
+# ─── Plan Prices (derived from canonical PLAN_CATALOG) ──────────────
 
-PLAN_PRICES_USDT_ANNUAL = {
-    "basic": 144,       # $144/년 (20% 할인)
-    "pro": 365,         # $365/년 (20% 할인)
-    "enterprise": 1440, # $1,440/년 (20% 할인)
-}
+
+def get_plan_prices_usdt() -> dict:
+    prices = {}
+    for pid, pdef in PLAN_CATALOG.items():
+        prices[pid] = pdef["prices_usdt"]
+    return prices
+
 
 # ─── Stars Add-on Prices ──────────────────────────────────────────────
 
@@ -63,25 +67,20 @@ STARS_DESCRIPTIONS = {
 # ─── USDT Payment ─────────────────────────────────────────────────────
 
 
-async def create_usdt_invoice(tenant_id: str, plan: str, billing: Literal["monthly", "annual"] = "monthly") -> dict:
+async def create_usdt_invoice(tenant_id: str, plan: str, billing: Literal["monthly", "quarterly"] = "monthly") -> dict:
     """Create a USDT payment invoice: shows wallet address and amount."""
-    plan_info = PLAN_PRICES_USDT.get(plan)
-    if plan_info is None:
+    if is_deprecated_plan(plan):
+        return {"success": False, "error": "해당 요금제는 더 이상 제공되지 않습니다. Pro 또는 Team을 선택해주세요."}
+    amount = get_plan_price_usdt(plan, billing)
+    if amount is None:
         return {"success": False, "error": "유효하지 않은 요금제입니다."}
 
-    amount = plan_info
-    if billing == "annual" and plan in PLAN_PRICES_USDT_ANNUAL:
-        amount = PLAN_PRICES_USDT_ANNUAL[plan]
-
-    label = f"TeleMon {plan.capitalize()} {'Annual' if billing == 'annual' else 'Monthly'}"
-
-    # Generate a unique payment reference (for manual verification)
+    label = f"TeleMon {plan.capitalize()} {'Quarterly' if billing == 'quarterly' else 'Monthly'}"
     payment_ref = f"USDT-{tenant_id[:8]}-{utcnow_naive().strftime('%Y%m%d%H%M%S')}"
 
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if tenant:
-            # Save pending payment reference
             tenant.subscription_status = "pending"
             await db.commit()
 
@@ -112,10 +111,12 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
             return {"success": False, "error": "사용자를 찾을 수 없습니다."}
 
         tenant.subscription_status = "active"
+        tenant.trial_expires_at = None  # trial ends when paid plan starts
         tenant.billing_period_start = utcnow_naive()
-        tenant.billing_period_end = utcnow_naive() + timedelta(days=30)
+        days = 90 if tenant.plan == "team" else 30
+        tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, tenant.plan)
-        
+
         logger.info("usdt_payment_confirmed", tenant_id=tenant_id, plan=tenant.plan, tx_hash=tx_hash)
         return {
             "success": True,
@@ -140,7 +141,7 @@ async def create_stars_invoice(tenant_id: str, item: str) -> dict:
         "item": item,
         "stars_amount": stars_amount,
         "description": description,
-        "currency": "XTR",  # Telegram Stars
+        "currency": "XTR",
         "instructions": f"Telegram Stars {stars_amount}개로 {description}을(를) 구매합니다.",
     }
 
@@ -155,15 +156,12 @@ async def process_stars_payment(tenant_id: str, item: str, stars_amount: int) ->
             return {"success": False, "error": "사용자를 찾을 수 없습니다."}
 
         if (tenant.stars_balance or 0) >= stars_amount:
-            # Deduct from balance
             tenant.stars_balance -= stars_amount
         else:
-            # Stars already paid via TG invoice — just credit the item
             pass
 
         await db.commit()
 
-        # Grant the item benefit
         benefit = _get_item_benefit(item)
         logger.info("stars_payment_processed", tenant_id=tenant_id, item=item, stars=stars_amount)
 
@@ -191,13 +189,8 @@ def _get_item_benefit(item: str) -> str:
 
 
 def get_all_addons() -> list[dict]:
-    """Get all available add-ons with prices."""
     return [
-        {
-            "id": item_id,
-            "name": STARS_DESCRIPTIONS[item_id],
-            "stars_price": stars,
-        }
+        {"id": item_id, "name": STARS_DESCRIPTIONS[item_id], "stars_price": stars}
         for item_id, stars in STARS_PRICES.items()
     ]
 
@@ -216,6 +209,7 @@ async def get_subscription_status(tenant_id: str) -> dict:
             "success": True,
             "plan": tenant.plan,
             "status": tenant.subscription_status,
+            "trial_expires_at": tenant.trial_expires_at.isoformat() if tenant.trial_expires_at else None,
             "billing_period_start": tenant.billing_period_start.isoformat() if tenant.billing_period_start else None,
             "billing_period_end": tenant.billing_period_end.isoformat() if tenant.billing_period_end else None,
             "stars_balance": tenant.stars_balance or 0,
