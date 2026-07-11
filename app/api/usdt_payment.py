@@ -138,51 +138,43 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
 
 @router.get("/status/{payment_ref}")
 async def check_payment_status(payment_ref: str):
-    """결제 상태 확인 (public) — API 키는 마스킹해서 반환"""
+    """결제 상태 확인 (public) — API 키는 마스킹해서 반환
+
+    Looks up the tenant by payment_ref (the memo the customer was told to send), then
+    — for an active tenant — its own PaymentRecord/APIKey via tenant_id. Previously this
+    first tried matching PaymentRecord.tx_id (the blockchain transaction hash, an
+    unrelated value) against payment_ref, which never matches anything; it then fell
+    through to looking up an APIKey by `name ILIKE '%{plan}%'` with no tenant scoping at
+    all, which could return a completely different tenant's masked API key (or raise
+    MultipleResultsFound once two tenants ever shared a plan).
+    """
     async with async_session_maker() as db:
         from sqlalchemy import select
 
-        # Check payment record first
-        result = await db.execute(
-            select(PaymentRecord).where(PaymentRecord.tx_id.ilike(f"%{payment_ref}%"))
-        )
-        payment = result.scalar_one_or_none()
+        result = await db.execute(select(Tenant).where(Tenant.payment_ref == payment_ref))
+        tenant = result.scalar_one_or_none()
 
-        if not payment:
-            # Check tenant status
-            result = await db.execute(
-                select(Tenant).where(Tenant.payment_ref == payment_ref)
-            )
-            tenant = result.scalar_one_or_none()
-            if tenant and tenant.subscription_status == "active":
-                key_result = await db.execute(
-                    select(APIKey).where(APIKey.name.ilike(f"%{tenant.plan}%"))
-                )
-                api_key = key_result.scalar_one_or_none()
-                masked_key = (
-                    api_key.key[:8] + "..." + api_key.key[-4:]
-                    if api_key and len(api_key.key) > 12
-                    else "발급 완료"
-                )
-                return {
-                    "status": "completed",
-                    "api_key_masked": masked_key,
-                    "plan": tenant.plan,
-                }
+        if tenant is None or tenant.subscription_status != "active":
             return {"status": "pending", "message": "입금을 기다리는 중입니다..."}
 
-        if payment.status == "completed":
-            api_key = await db.get(APIKey, payment.api_key_id)
-            masked_key = (
-                api_key.key[:8] + "..." + api_key.key[-4:]
-                if api_key and len(api_key.key) > 12
-                else "발급 완료"
-            )
-            return {
-                "status": "completed",
-                "api_key_masked": masked_key,
-                "plan": payment.plan,
-                "tx_id": payment.tx_id,
-            }
+        payment_result = await db.execute(
+            select(PaymentRecord)
+            .where(PaymentRecord.tenant_id == tenant.id)
+            .order_by(PaymentRecord.created_at.desc())
+        )
+        payment = payment_result.scalars().first()
 
-        return {"status": payment.status, "message": "처리 중입니다..."}
+        api_key = None
+        if payment is not None and payment.api_key_id is not None:
+            api_key = await db.get(APIKey, payment.api_key_id)
+        masked_key = (
+            api_key.key[:8] + "..." + api_key.key[-4:]
+            if api_key and len(api_key.key) > 12
+            else "발급 완료"
+        )
+        return {
+            "status": "completed",
+            "api_key_masked": masked_key,
+            "plan": tenant.plan,
+            "tx_id": payment.tx_id if payment is not None else None,
+        }

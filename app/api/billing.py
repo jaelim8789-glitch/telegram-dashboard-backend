@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_current_identity, Identity, require_tenant_access
+from app.api.deps import get_current_identity, Identity, require_admin, require_tenant_access
 from app.core.logging import get_logger
 from app.services.billing import (
     cancel_subscription,
@@ -65,13 +65,20 @@ async def api_create_usdt_invoice(
     return result
 
 
-@router.post("/usdt/confirm")
+@router.post("/usdt/confirm", dependencies=[Depends(require_admin)])
 async def api_confirm_usdt_payment(
     tenant_id: str,
     tx_hash: str,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Confirm USDT payment (admin only in production)."""
+    """Confirm USDT payment (admin only in production).
+
+    tx_hash is caller-supplied and NOT verified against the blockchain here — this
+    endpoint activates the subscription unconditionally, so it must only be reachable
+    by an operator who has independently confirmed the payment (or a future real
+    webhook). It was previously gated by require_tenant_access alone, which let any
+    authenticated member of the tenant self-activate any plan for free.
+    """
     await require_tenant_access(tenant_id, identity)
     result = await confirm_usdt_payment(tenant_id, tx_hash)
     if not result.get("success"):
@@ -91,13 +98,20 @@ async def api_get_stars_invoice(item: str):
     return result
 
 
-@router.post("/stars/add")
+@router.post("/stars/add", dependencies=[Depends(require_admin)])
 async def api_add_stars(
     tenant_id: str,
     stars_amount: int,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Add Stars to wallet (after TG Stars purchase)."""
+    """Add Stars to wallet (after TG Stars purchase).
+
+    stars_amount is caller-supplied and NOT verified against a real Telegram Stars
+    payment — there is no webhook wired up yet to confirm one occurred, so this credits
+    the wallet unconditionally. Restricted to admin until real payment verification
+    exists; it was previously reachable by any authenticated member of the tenant, who
+    could credit themselves an arbitrary amount of Stars for free.
+    """
     await require_tenant_access(tenant_id, identity)
     result = await add_stars_credit(tenant_id, stars_amount)
     if not result.get("success"):

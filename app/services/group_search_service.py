@@ -111,6 +111,11 @@ async def join_selected_groups(account: Account, result_ids: list[str]) -> list[
 
     async with async_session_maker() as db:
         rows = await group_search_crud.get_results_by_ids(db, result_ids)
+        # get_results_by_ids matches purely on id, with no account filter — the caller
+        # (API router) only verifies tenant ownership of the *first* row's account, so
+        # without this filter a result_ids list mixing in another account's rows would
+        # have this account's Telegram session join groups it never searched for.
+        rows = [row for row in rows if row.account_id == account.id]
         joined_today = await group_search_crud.count_today_joins(db, account.id)
         remaining = MAX_DAILY_JOINS - joined_today
 
