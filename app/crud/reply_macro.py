@@ -105,25 +105,34 @@ async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> None:
     await db.commit()
 
 
-async def claim_macro_dispatch(db: AsyncSession, macro_id: str) -> bool:
+async def claim_macro_dispatch(db: AsyncSession, macro_id: str, expected_last_sent_at: datetime | None) -> bool:
     """
     Atomically claim a macro for this dispatch tick using a WHERE-conditioned UPDATE.
-    Only succeeds if the macro is active and last_sent_at hasn't been updated
-    by another concurrent caller. This is truly atomic at the database level
-    and works correctly in both SQLite and PostgreSQL.
+    Only succeeds if the macro is active AND its last_sent_at still matches
+    ``expected_last_sent_at`` (the value observed when list_active_macros_due
+    decided this macro was due). This is truly atomic at the database level and
+    works correctly in both SQLite and PostgreSQL.
+
+    The WHERE clause must pin the previous last_sent_at value, not just
+    is_active: a bare `is_active == True` condition matches on every call
+    regardless of prior claims, so two concurrent ticks/workers (or the same
+    macro appearing twice within one tick) would both "win" and dispatch the
+    macro twice.
     """
     now = utcnow_naive()
-    
-    # Atomic UPDATE: only claim if macro is active
-    # The WHERE clause ensures only one concurrent caller wins
-    result = await db.execute(
-        update(ReplyMacro)
-        .where(ReplyMacro.id == macro_id)
-        .where(ReplyMacro.is_active.is_(True))
-        .values(last_sent_at=now)
+
+    query = update(ReplyMacro).where(
+        ReplyMacro.id == macro_id,
+        ReplyMacro.is_active.is_(True),
     )
+    if expected_last_sent_at is None:
+        query = query.where(ReplyMacro.last_sent_at.is_(None))
+    else:
+        query = query.where(ReplyMacro.last_sent_at == expected_last_sent_at)
+
+    result = await db.execute(query.values(last_sent_at=now))
     await db.commit()
-    
+
     # Check if any row was actually updated
     return result.rowcount > 0
 

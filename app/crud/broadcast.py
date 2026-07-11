@@ -135,6 +135,10 @@ async def claim_broadcast_dispatch(db: AsyncSession, broadcast_id: str) -> bool:
     if broadcast is None:
         return False
     broadcast.status = "sending"
+    # Stamp sent_at at claim time so recover_stale_recurring_parents has a
+    # timestamp to measure staleness against. For recurring parents this is
+    # otherwise never set (process_broadcast only touches the child record).
+    broadcast.sent_at = utcnow_naive()
     await db.commit()
     return True
 
@@ -364,6 +368,12 @@ async def reschedule_recurring_broadcast(db: AsyncSession, broadcast_id: str) ->
 
     now = utcnow_naive()
     broadcast.next_scheduled_at = now + timedelta(minutes=broadcast.recurring_interval_minutes)
+    # Release the dispatch claim (status set to "sending" by claim_broadcast_dispatch)
+    # now that the child has been created and the next occurrence is scheduled.
+    # Without this, the parent stays "sending" forever and claim_broadcast_dispatch's
+    # `WHERE status == "pending"` check permanently blocks all future occurrences —
+    # the recurrence fires exactly once and then silently stops.
+    broadcast.status = "pending"
     await db.commit()
     await db.refresh(broadcast)
     return broadcast

@@ -161,9 +161,12 @@ async def dispatch_due_reply_macros() -> None:
             logger.info("reply_macro_skipped_already_running", macro_id=macro.id)
             continue
 
-        # Atomically claim this dispatch — skip if another tick/worker won
+        # Atomically claim this dispatch — skip if another tick/worker won.
+        # Pass the last_sent_at observed by list_active_macros_due so the
+        # claim is conditioned on it (true optimistic-concurrency check),
+        # not just is_active — otherwise two concurrent claims both succeed.
         async with async_session_maker() as db:
-            claimed = await macro_crud.claim_macro_dispatch(db, macro.id)
+            claimed = await macro_crud.claim_macro_dispatch(db, macro.id, macro.last_sent_at)
         if not claimed:
             logger.info("reply_macro_skipped_already_claimed", macro_id=macro.id)
             continue

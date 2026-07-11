@@ -30,6 +30,21 @@ async def _make_scheduled_broadcast(db_session, account_id, *, seconds_ago=5, me
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=scheduled_at)
 
 
+async def _make_macro(db_session, account_id, **kwargs):
+    from app.crud import reply_macro as macro_crud
+    from app.schemas.reply_macro import ReplyMacroCreate
+
+    defaults = dict(
+        name="macro",
+        target_chats=["-100999"],
+        message_content="hello",
+        schedule_type="interval",
+        interval_hours=1,
+    )
+    defaults.update(kwargs)
+    return await macro_crud.create_macro(db_session, account_id, ReplyMacroCreate(**defaults))
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Sprint 14 tests (preserved)
 # ═══════════════════════════════════════════════════════════════════════
@@ -202,3 +217,58 @@ async def test_dispatch_reply_macros_skips_already_running(db_session, monkeypat
     await dispatch_due_reply_macros()
     # No crash = success
     scheduler_module._running_macros.discard("macro-1")
+
+
+@pytest.mark.asyncio
+async def test_claim_macro_dispatch_rejects_stale_duplicate_claim(db_session):
+    """Regression: claim_macro_dispatch previously only checked is_active, so
+    any repeated claim call succeeded regardless of a prior claim — two
+    overlapping scheduler ticks (or two workers) that both read the macro as
+    due before either claimed it would BOTH win and dispatch it twice. The
+    claim must be conditioned on the last_sent_at value observed when the
+    macro was read as due (optimistic concurrency), not just is_active.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.crud import reply_macro as macro_crud
+
+    account = await _make_account(db_session)
+    macro = await _make_macro(db_session, account.id)
+    assert macro.last_sent_at is None
+    macro_id = macro.id
+
+    # Each claim uses its own session, same as the real scheduler (a fresh
+    # session per dispatch iteration) — the guarantee being tested is a
+    # DB-level one, not something that depends on sharing a session.
+    session_maker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async with session_maker() as db1:
+        first = await macro_crud.claim_macro_dispatch(db1, macro_id, None)
+    # Second caller has a stale view (still thinks last_sent_at is None) —
+    # simulates a duplicate/overlapping tick that read the due list before
+    # the first claim landed.
+    async with session_maker() as db2:
+        second = await macro_crud.claim_macro_dispatch(db2, macro_id, None)
+
+    assert first is True
+    assert second is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_macros_not_duplicated_when_seen_due_twice(db_session, monkeypatch):
+    """End-to-end scheduler-level regression for the same bug: if the due-macro
+    list contains the same macro twice (overlapping ticks sharing a stale
+    read), execute_reply_macro must only run once."""
+    account = await _make_account(db_session)
+    macro = await _make_macro(db_session, account.id)
+
+    execute_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("app.scheduler.scheduler.execute_reply_macro", execute_mock)
+    monkeypatch.setattr(
+        "app.scheduler.scheduler.macro_crud.list_active_macros_due",
+        AsyncMock(return_value=[macro, macro]),
+    )
+
+    await dispatch_due_reply_macros()
+
+    execute_mock.assert_awaited_once_with(macro.id)

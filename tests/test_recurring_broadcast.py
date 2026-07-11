@@ -162,7 +162,11 @@ async def test_recurring_parent_creates_child_on_dispatch(db_session, monkeypatc
     await dispatch_due_broadcasts()
 
     await db_session.refresh(parent)
-    assert parent.status == "sending"
+    # The dispatch claim (status="sending") must be released back to "pending"
+    # once the child is created and the next occurrence is scheduled — the
+    # parent has to remain claimable for the *next* due cycle, or the
+    # recurrence stops after this one execution.
+    assert parent.status == "pending"
 
     from app.models.broadcast import Broadcast
     from sqlalchemy import select
@@ -407,6 +411,43 @@ async def test_recurring_not_duplicated_by_atomic_claim(db_session, monkeypatch)
     await dispatch_due_broadcasts()
 
     process_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_recurring_parent_fires_again_on_next_due_cycle(db_session, monkeypatch):
+    """Regression: previously claim_broadcast_dispatch set status='sending' and
+    nothing ever reset it back to 'pending' after a successful dispatch, so the
+    parent's own dispatch claim permanently blocked claim_broadcast_dispatch's
+    `WHERE status == 'pending'` check on every later tick — the recurrence
+    fired exactly once and then silently stopped forever, even though
+    next_scheduled_at kept advancing correctly."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30)
+    parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_success_result()]),
+    )
+
+    await dispatch_due_broadcasts()
+    await db_session.refresh(parent)
+    assert parent.status == "pending", "parent must release its claim so the next cycle can dispatch"
+
+    # Simulate the next interval becoming due.
+    parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=1)
+    await db_session.commit()
+
+    await dispatch_due_broadcasts()
+
+    from app.models.broadcast import Broadcast
+    from sqlalchemy import select
+    result = await db_session.execute(
+        select(Broadcast).where(Broadcast.parent_broadcast_id == parent.id)
+    )
+    children = list(result.scalars().all())
+    assert len(children) == 2, "recurring parent must fire again on the next due cycle, not just once"
 
 
 @pytest.mark.asyncio

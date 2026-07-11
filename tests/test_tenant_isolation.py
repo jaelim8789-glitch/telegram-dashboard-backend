@@ -248,7 +248,7 @@ async def test_atomic_claim_only_one_succeeds():
     # Two concurrent claims
     async def try_claim() -> bool:
         async with async_session_maker() as db:
-            return await macro_crud.claim_macro_dispatch(db, macro_id)
+            return await macro_crud.claim_macro_dispatch(db, macro_id, None)
 
     results = await asyncio.gather(try_claim(), try_claim())
     true_count = sum(1 for r in results if r)
@@ -287,11 +287,11 @@ async def test_atomic_claim_blocks_duplicate_ticks():
         macro_id = macro.id
 
     async with async_session_maker() as db:
-        first = await macro_crud.claim_macro_dispatch(db, macro_id)
+        first = await macro_crud.claim_macro_dispatch(db, macro_id, None)
         assert first, "First claim must succeed"
 
     async with async_session_maker() as db:
-        second = await macro_crud.claim_macro_dispatch(db, macro_id)
+        second = await macro_crud.claim_macro_dispatch(db, macro_id, None)
         assert not second, "Second claim must fail (already claimed)"
 
     async with async_session_maker() as db:
@@ -329,7 +329,7 @@ async def test_atomic_claim_restart_safety():
 
     # Claim (succeeds because never sent)
     async with async_session_maker() as db:
-        claimed = await macro_crud.claim_macro_dispatch(db, macro_id)
+        claimed = await macro_crud.claim_macro_dispatch(db, macro_id, None)
         assert claimed, "First claim must succeed for never-sent macro"
 
     # Mark as sent (as if execution completed)
