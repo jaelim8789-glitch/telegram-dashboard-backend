@@ -45,6 +45,7 @@ class BroadcastRead(BaseModel):
     next_scheduled_at: datetime | None = None
     parent_broadcast_id: str | None = None
     is_recurring_paused: bool = False
+    failure_info: dict | None = None
 
 
 class BroadcastChildrenRead(BaseModel):
@@ -58,6 +59,7 @@ class BroadcastChildrenRead(BaseModel):
     sent_at: datetime | None
     created_at: datetime
     error_message: str | None
+    failure_info: dict | None = None
 
 
 class BroadcastWithChildCount(BroadcastRead):

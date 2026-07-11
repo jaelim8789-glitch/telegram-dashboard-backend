@@ -10,6 +10,7 @@ from app.core.logging import get_logger
 from app.models.broadcast import Broadcast
 from app.models.account import Account
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
+from app.services.failure_intel import classify_failure
 
 
 logger = get_logger(__name__)
