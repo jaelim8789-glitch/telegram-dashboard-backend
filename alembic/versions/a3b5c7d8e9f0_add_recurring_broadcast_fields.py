@@ -37,7 +37,7 @@ def upgrade() -> None:
     )
     op.add_column(
         'broadcasts',
-        sa.Column('is_recurring_paused', sa.Boolean(), nullable=False, server_default=sa.text('0')),
+        sa.Column('is_recurring_paused', sa.Boolean(), nullable=False, server_default=sa.text('false')),
     )
     op.create_index(
         op.f('ix_broadcasts_parent_broadcast_id'),

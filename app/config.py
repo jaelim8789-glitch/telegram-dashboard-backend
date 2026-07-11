@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
 
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _coerce_debug(cls, value: str | bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        return value.strip().lower() in ("true", "1", "yes", "on")
+
     # Single fixed admin account — intentionally not hardcoded in source so it can be
     # changed per-deployment without a code change. The shipped defaults match what was
     # asked for, but "123456" is a very weak password: change it before any deployment
