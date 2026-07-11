@@ -66,11 +66,14 @@ def _setup_tenants_and_accounts(*, tenant_a_id, tenant_b_id):
     from app.database import Base
     from app.models.account import Account
     from app.models.tenant import Tenant
+    from sqlalchemy import text
 
     async def _setup():
         async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA foreign_keys = OFF"))
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("PRAGMA foreign_keys = ON"))
         async with async_session_maker() as db:
             ta = Tenant(id=tenant_a_id, name="Tenant A",
                         phone=f"+8200000{tenant_a_id.replace('-','')[:15]}")
@@ -127,7 +130,7 @@ def test_tenant_a_cannot_list_tenant_b_accounts(client):
         app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="tenant-A-beh")
         resp = client.get("/api/accounts")
         assert resp.status_code == 200
-        ids = [a["id"] for a in resp.json()]
+        ids = [a["id"] for a in resp.json()["items"]]
         assert acc_a_id in ids, "Tenant A must see its own account"
         assert acc_b_id not in ids, "Tenant A must NOT see Tenant B account"
     finally:
@@ -334,11 +337,14 @@ def test_null_tenant_account_not_listed_for_tenant_user(client, tenant_a):
     from app.database import Base
     from app.models.account import Account
     from app.models.tenant import Tenant
+    from sqlalchemy import text
 
     async def _setup():
         async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA foreign_keys = OFF"))
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("PRAGMA foreign_keys = ON"))
         async with async_session_maker() as db:
             ta = Tenant(id="tenant-A-null", name="Tenant A", phone="+82000000017")
             db.add(ta)
@@ -358,7 +364,7 @@ def test_null_tenant_account_not_listed_for_tenant_user(client, tenant_a):
 
         resp = client.get("/api/accounts")
         assert resp.status_code == 200
-        ids = [a["id"] for a in resp.json()]
+        ids = [a["id"] for a in resp.json()["items"]]
         assert acc_a_id in ids, "Tenant A must see its own account"
         assert acc_null_id not in ids, "NULL-tenant account must NOT appear in tenant A's list"
     finally:

@@ -132,4 +132,5 @@ async def test_logs_filter_by_account_and_status(client):
     assert all(item["status"] == "pending" for item in by_status.json())
 
     by_missing_account = await client.get("/api/logs?account_id=does-not-exist")
-    assert by_missing_account.json() == []
+    assert by_missing_account.status_code == 404
+    assert "찾을 수" in by_missing_account.json()["detail"]

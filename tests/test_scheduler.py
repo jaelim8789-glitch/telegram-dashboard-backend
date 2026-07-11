@@ -95,9 +95,10 @@ async def test_dispatch_defers_rate_limited_broadcast_leaving_it_pending(db_sess
 @pytest.mark.asyncio
 async def test_dispatch_one_failure_does_not_block_others(db_session, monkeypatch):
     """If one broadcast fails, others still get processed."""
-    account = await _make_account(db_session)
-    b1 = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=10, message="b1")
-    b2 = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=5, message="b2")
+    account1 = await _make_account(db_session, phone="+821022229991")
+    account2 = await _make_account(db_session, phone="+821022229992")
+    b1 = await _make_scheduled_broadcast(db_session, account1.id, seconds_ago=10, message="b1")
+    b2 = await _make_scheduled_broadcast(db_session, account2.id, seconds_ago=5, message="b2")
 
     # Make b1 fail, b2 succeed
     async def process_side_effect(broadcast_id):

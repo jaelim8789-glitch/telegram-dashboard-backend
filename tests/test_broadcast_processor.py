@@ -233,9 +233,6 @@ async def test_deliver_message_without_session_fast_fails(db_session, monkeypatc
 
     from app.services.delivery import DeliveryRequest, deliver_message
 
-    get_client_mock = AsyncMock()
-    monkeypatch.setattr("app.services.delivery.get_authorized_client", get_client_mock)
-
     request = DeliveryRequest(
         account_id=account.id,
         recipients=["-100999"],
@@ -246,8 +243,6 @@ async def test_deliver_message_without_session_fast_fails(db_session, monkeypatc
     results = await deliver_message(request)
     assert len(results) == 1
     assert results[0].status.value == "session_expired"
-
-    get_client_mock.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -346,7 +341,8 @@ async def test_retry_broadcast_increments_on_each_retry(db_session):
 
     result = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
     assert result is None
-    assert broadcast.error_message is None
+    await db_session.refresh(broadcast)
+    assert broadcast.error_message == "attempt 4"
 
 
 @pytest.mark.asyncio

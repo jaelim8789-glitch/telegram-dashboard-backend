@@ -4,6 +4,8 @@ from app.config import settings
 
 
 async def _admin_headers(client) -> dict[str, str]:
+    from app.core.rate_limiter import reset_rate_limits
+    reset_rate_limits()
     login = await client.post(
         "/api/admin/login", json={"username": settings.admin_username, "password": settings.admin_password}
     )

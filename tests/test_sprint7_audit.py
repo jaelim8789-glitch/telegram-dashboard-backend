@@ -135,9 +135,9 @@ def test_usdt_confirm_no_auth_mocked():
 
 def test_payment_amount_not_trusted():
     """Verify that frontend cannot set the payment amount."""
-    from app.api.usdt_payment import PLANS
-    assert "basic" in PLANS
-    assert PLANS["basic"]["usdt"] == 15
+    from app.core.plans import PLAN_CATALOG
+    assert "pro" in PLAN_CATALOG
+    assert PLAN_CATALOG["pro"]["prices_usdt"]["monthly"] == 100
 
 
 def test_tx_id_uniqueness():
