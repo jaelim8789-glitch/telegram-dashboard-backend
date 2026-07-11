@@ -125,11 +125,34 @@ class Settings(BaseSettings):
         if self.admin_jwt_secret == _JWT_DEFAULT:
             findings.append("admin_jwt_secret")
 
+        # In production, debug must be explicitly set to false.
+        # The class default is True, which would expose /docs, /redoc, and
+        # detailed error traces to the public internet.
+        if self.debug:
+            findings.append("debug (must be false in production)")
+
+        # In production, sms_provider must not be "console" — that would log
+        # verification codes to the server log instead of sending them via SMS,
+        # making phone-verification login non-functional for real users.
+        if self.sms_provider.strip().lower() == "console":
+            findings.append("sms_provider (must be 'twilio' or 'coolsms' in production)")
+
+        # In production, frontend_url must point to the real production domain,
+        # not localhost.  Payment success redirects and cross-domain links
+        # would break if this still points to localhost.
+        if "localhost" in self.frontend_url:
+            findings.append("frontend_url (must be production URL, not localhost)")
+
+        # In production, cors_origins must not contain localhost — browser
+        # CORS checks would fail for real production origins.
+        if "localhost" in self.cors_origins:
+            findings.append("cors_origins (must be production origins, not localhost)")
+
         if not findings:
             return self
 
         raise ValueError(
-            f"Production startup blocked: default {', '.join(findings)} "
+            f"Production startup blocked: {', '.join(findings)} "
             "must be overridden via environment variables or .env. "
             "Set secure values before deploying."
         )
