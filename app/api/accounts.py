@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_capacity, require_account_tenant_access
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
@@ -190,6 +190,7 @@ async def create_account(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
+    await require_account_capacity(db, identity)
     try:
         account_data = payload.model_dump()
         if identity.tenant_id:

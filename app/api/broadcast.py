@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_broadcast_capacity
 from app.config import settings
 from app.core.logging import get_logger
 from app.crud import account as account_crud
@@ -58,6 +58,7 @@ async def create_broadcast(
     identity: Identity = Depends(get_current_identity),
 ):
     await require_account_tenant_access(account_id, db, identity)
+    await require_broadcast_capacity(db, identity)
 
     try:
         recipients_list = json.loads(recipients)

@@ -19,7 +19,7 @@ from app.core.plans import (
     is_deprecated_plan,
 )
 from app.database import async_session_maker
-from app.models.tenant import Tenant
+from app.models.tenant import PaymentRecord, Tenant
 from app.services.usage_tracker import apply_plan_limits
 
 logger = get_logger(__name__)
@@ -104,11 +104,33 @@ async def create_usdt_invoice(tenant_id: str, plan: str, billing: Literal["month
 
 
 async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
-    """Confirm USDT payment received (called by admin or webhook)."""
+    """Confirm USDT payment received (admin-only manual override for payments the
+    automated watcher couldn't auto-match, e.g. a missing/garbled memo).
+
+    Verifies tx_hash against our wallet's actual Trongrid transaction history before
+    activating anything — an admin can no longer activate a tenant with a fabricated
+    tx_hash. Records a PaymentRecord keyed on tx_id so the same transaction can't be
+    reused for a second tenant, and so the automated watcher won't double-process it.
+    """
+    from sqlalchemy import select
+
+    from app.services.usdt_watcher import get_usdt_transactions
+
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if not tenant:
             return {"success": False, "error": "사용자를 찾을 수 없습니다."}
+
+        existing = await db.execute(select(PaymentRecord).where(PaymentRecord.tx_id == tx_hash))
+        if existing.scalar_one_or_none():
+            return {"success": False, "error": "이미 처리된 거래입니다."}
+
+        matched_tx = next(
+            (tx for tx in await get_usdt_transactions() if tx["tx_id"] == tx_hash),
+            None,
+        )
+        if matched_tx is None:
+            return {"success": False, "error": "해당 tx_hash를 지갑 입금 내역에서 확인할 수 없습니다."}
 
         tenant.subscription_status = "active"
         tenant.trial_expires_at = None  # trial ends when paid plan starts
@@ -116,6 +138,17 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
         days = 90 if tenant.plan == "team" else 30
         tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, tenant.plan)
+
+        db.add(PaymentRecord(
+            tx_id=tx_hash,
+            tenant_id=tenant.id,
+            from_address=matched_tx["from_address"],
+            amount_usdt=matched_tx["amount_cents"],
+            plan=tenant.plan,
+            status="completed",
+            block_timestamp=matched_tx["block_timestamp"],
+        ))
+        await db.commit()
 
         logger.info("usdt_payment_confirmed", tenant_id=tenant_id, plan=tenant.plan, tx_hash=tx_hash)
         return {
@@ -148,18 +181,15 @@ async def create_stars_invoice(tenant_id: str, item: str) -> dict:
 
 async def process_stars_payment(tenant_id: str, item: str, stars_amount: int) -> dict:
     """Process a Stars payment (called after successful TG Stars payment callback)."""
-    from app.services.usage_tracker import record_usage
-
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if not tenant:
             return {"success": False, "error": "사용자를 찾을 수 없습니다."}
 
-        if (tenant.stars_balance or 0) >= stars_amount:
-            tenant.stars_balance -= stars_amount
-        else:
-            pass
+        if (tenant.stars_balance or 0) < stars_amount:
+            return {"success": False, "error": "Stars 잔액이 부족합니다."}
 
+        tenant.stars_balance -= stars_amount
         await db.commit()
 
         benefit = _get_item_benefit(item)
@@ -239,3 +269,37 @@ async def cancel_subscription(tenant_id: str) -> dict:
             "success": True,
             "message": "구독이 취소되었습니다. 현재 요금제 기간까지 사용 가능합니다.",
         }
+
+
+async def downgrade_expired_tenants() -> dict:
+    """Scheduled job: revert any paid-plan tenant whose billing period has ended back
+    to free-tier limits — whether they explicitly canceled or simply never renewed
+    (USDT payments are manual, not auto-recurring, so nothing else ever revokes access
+    once billing_period_end passes). This is the only place that removes elevated
+    access, so a canceled or lapsed subscription can no longer keep paid-tier limits
+    indefinitely.
+    """
+    from sqlalchemy import select
+
+    now = utcnow_naive()
+    downgraded: list[str] = []
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(Tenant).where(
+                Tenant.plan != "free",
+                Tenant.billing_period_end.is_not(None),
+                Tenant.billing_period_end < now,
+            )
+        )
+        tenants = result.scalars().all()
+
+        for tenant in tenants:
+            previous_plan = tenant.plan
+            if tenant.subscription_status != "canceled":
+                tenant.subscription_status = "expired"
+            await apply_plan_limits(db, tenant, "free")
+            downgraded.append(tenant.id)
+            logger.info("tenant_plan_expired_downgraded", tenant_id=tenant.id, previous_plan=previous_plan)
+
+    return {"downgraded": len(downgraded), "tenant_ids": downgraded}

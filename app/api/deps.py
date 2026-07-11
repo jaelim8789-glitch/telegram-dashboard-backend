@@ -145,5 +145,67 @@ async def require_account_tenant_access(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="해당 계정에 접근할 수 없습니다.",
         )
-    
+
     return identity.tenant_id
+
+
+async def require_account_capacity(
+    db: AsyncSession,
+    identity: Identity,
+) -> None:
+    """Enforce the tenant's max_accounts plan limit before a new Account is created.
+
+    Admin and identities with no resolved tenant (legacy/ungated accounts, same
+    carve-out as require_tenant_access) are not capacity-checked.
+    """
+    if identity.kind == "admin" or identity.tenant_id is None:
+        return
+
+    from sqlalchemy import func, select
+
+    from app.models.account import Account
+    from app.models.tenant import Tenant
+
+    tenant = await db.get(Tenant, identity.tenant_id)
+    if tenant is None:
+        return
+
+    result = await db.execute(
+        select(func.count()).select_from(Account).where(Account.tenant_id == identity.tenant_id)
+    )
+    current_count = result.scalar_one()
+    if current_count >= tenant.max_accounts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"현재 요금제의 계정 한도({tenant.max_accounts}개)에 도달했습니다. 요금제를 업그레이드해주세요.",
+        )
+
+
+async def require_broadcast_capacity(
+    db: AsyncSession,
+    identity: Identity,
+) -> None:
+    """Enforce the tenant's can_broadcast flag and monthly message limit before a
+    Broadcast is created. Same admin/no-tenant carve-out as require_account_capacity.
+    """
+    if identity.kind == "admin" or identity.tenant_id is None:
+        return
+
+    from app.models.tenant import Tenant
+    from app.services.usage_tracker import check_usage_limit
+
+    tenant = await db.get(Tenant, identity.tenant_id)
+    if tenant is None:
+        return
+
+    if not tenant.can_broadcast:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="현재 요금제에서는 발송 기능을 사용할 수 없습니다. 요금제를 업그레이드해주세요.",
+        )
+
+    if not await check_usage_limit(db, tenant, "broadcast"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이번 달 발송 한도에 도달했습니다. 요금제를 업그레이드해주세요.",
+        )

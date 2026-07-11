@@ -59,11 +59,32 @@ async def test_usdt_confirm_rejected_without_admin_auth(unauthenticated_client, 
 
 
 @pytest.mark.asyncio
-async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_client, db_session):
+async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_client, db_session, monkeypatch):
+    """Admin gating itself must let a correctly-authenticated request through.
+
+    tx_hash must still be a real, Trongrid-verified transaction (see the H4 fix in
+    tests/test_billing_entitlements.py) — mock the chain lookup here so this test
+    stays about auth gating, not blockchain verification, and doesn't hit the real
+    network.
+    """
+    import app.services.usdt_watcher as watcher_module
+
+    async def fake_transactions():
+        return [{
+            "tx_id": "confirmed-tx-hash",
+            "from_address": "Txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "amount_usdt": 15.0,
+            "amount_cents": 1500,
+            "block_timestamp": 1234567890,
+            "memo": "",
+        }]
+
+    monkeypatch.setattr(watcher_module, "get_usdt_transactions", fake_transactions)
+
     tenant = await _make_tenant(db_session, phone="+821000010002", plan="basic", status="pending")
 
     res = await unauthenticated_client.post(
-        f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=whatever",
+        f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=confirmed-tx-hash",
         headers=_admin_headers(),
     )
     assert res.status_code == 200
