@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class APIKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    tenant_id: str | None = None
 
 
 class APIKeyCreated(BaseModel):
@@ -21,5 +22,6 @@ class APIKeyRead(BaseModel):
     masked_key: str
     name: str
     is_active: bool
+    tenant_id: str | None = None
     created_at: datetime
     last_used: datetime | None

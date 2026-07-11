@@ -46,8 +46,8 @@ async def me():
     dependencies=[Depends(require_admin)],
 )
 async def create_api_key(payload: APIKeyCreateRequest, db: AsyncSession = Depends(get_db)):
-    api_key = await api_key_crud.create_api_key(db, payload.name)
-    logger.info("api_key_created", api_key_id=api_key.id, name=api_key.name)
+    api_key = await api_key_crud.create_api_key(db, payload.name, tenant_id=payload.tenant_id)
+    logger.info("api_key_created", api_key_id=api_key.id, name=api_key.name, tenant_id=payload.tenant_id)
     return APIKeyCreated(id=api_key.id, key=api_key.key, name=api_key.name, created_at=api_key.created_at)
 
 
@@ -60,6 +60,7 @@ async def list_api_keys(db: AsyncSession = Depends(get_db)):
             masked_key=mask_api_key(k.key),
             name=k.name,
             is_active=k.is_active,
+            tenant_id=k.tenant_id,
             created_at=k.created_at,
             last_used=k.last_used,
         )
@@ -72,8 +73,8 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
     api_key = await api_key_crud.get_api_key(db, api_key_id)
     if api_key is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API 키를 찾을 수 없습니다.")
-    await api_key_crud.delete_api_key(db, api_key)
-    logger.info("api_key_deleted", api_key_id=api_key_id)
+    await api_key_crud.revoke_api_key(db, api_key)
+    logger.info("api_key_revoked", api_key_id=api_key_id)
 
 
 # === 일반 사용자 관리 (Sprint 6 phone-verified login) ===

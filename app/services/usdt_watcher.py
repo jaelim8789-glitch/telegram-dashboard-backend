@@ -201,7 +201,7 @@ async def process_incoming_tx(tx: dict) -> dict:
         await apply_plan_limits(db, tenant, plan_name)
 
         raw_key = f"sk-{secrets.token_urlsafe(32)}"
-        api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True)
+        api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True, tenant_id=tenant.id)
         db.add(api_key)
         await db.flush()
 

@@ -56,7 +56,7 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, db
         key_row = await api_key_crud.get_by_key(db, x_api_key)
         if key_row is not None and key_row.is_active:
             await api_key_crud.touch_last_used(db, key_row)
-            tenant_id = key_row.tenant_id if hasattr(key_row, "tenant_id") else None
+            tenant_id = key_row.tenant_id
             return Identity(kind="api_key", tenant_id=tenant_id)
 
     return None

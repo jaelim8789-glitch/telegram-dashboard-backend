@@ -14,5 +14,5 @@ async def read_upcoming(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    # Scheduler shows global upcoming broadcasts; identity check ensures auth
-    return await broadcast_crud.list_upcoming_scheduled_broadcasts(db)
+    # Scheduler shows upcoming broadcasts; tenant-isolated
+    return await broadcast_crud.list_upcoming_scheduled_broadcasts(db, identity=identity)
