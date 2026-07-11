@@ -14,11 +14,25 @@ from app.crud import broadcast as broadcast_crud
 from app.database import get_db
 from app.schemas.broadcast import BroadcastChildrenRead, BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES
 from app.services.broadcast_processor import process_broadcast
+from app.services.failure_intel import classify_failure
 from app.services.media import save_broadcast_media
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/broadcast", tags=["broadcast"])
+
+
+def _enrich_broadcast(broadcast):
+    """Add failure_info to a Broadcast ORM object for API response."""
+    if broadcast is not None and broadcast.status == "failed" and broadcast.error_message:
+        broadcast.failure_info = classify_failure(broadcast.status, broadcast.error_message)
+    return broadcast
+
+
+def _enrich_broadcast_list(broadcasts: list) -> list:
+    for b in broadcasts:
+        _enrich_broadcast(b)
+    return broadcasts
 
 
 def _to_naive_utc(dt: datetime) -> datetime:
@@ -165,7 +179,7 @@ async def retry_broadcast(
         )
 
     logger.info("broadcast_retried", broadcast_id=broadcast_id, account_id=broadcast.account_id)
-    return updated
+    return _enrich_broadcast(updated)
 
 
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
@@ -182,7 +196,7 @@ async def read_broadcast(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
     await require_account_tenant_access(broadcast.account_id, db, identity)
-    return broadcast
+    return _enrich_broadcast(broadcast)
 
 
 # ── Recurring broadcast endpoints ──────────────────────────────────
@@ -194,7 +208,7 @@ async def read_recurring_broadcasts(
     identity: Identity = Depends(get_current_identity),
 ):
     """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
-    return await broadcast_crud.list_recurring_broadcasts(db, identity=identity)
+    return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
 
 
 @router.post("/{broadcast_id}/cancel", response_model=BroadcastRead)
@@ -240,7 +254,7 @@ async def cancel_broadcast(
         broadcast_id=broadcast_id,
         account_id=broadcast.account_id,
     )
-    return updated
+    return _enrich_broadcast(updated)
 
 
 @router.post("/{broadcast_id}/pause", response_model=BroadcastRead)
@@ -283,7 +297,7 @@ async def pause_broadcast(
         )
 
     logger.info("recurring_broadcast_paused", broadcast_id=broadcast_id, account_id=broadcast.account_id)
-    return updated
+    return _enrich_broadcast(updated)
 
 
 @router.post("/{broadcast_id}/unpause", response_model=BroadcastRead)
@@ -326,7 +340,7 @@ async def unpause_broadcast(
         )
 
     logger.info("recurring_broadcast_unpaused", broadcast_id=broadcast_id, account_id=broadcast.account_id)
-    return updated
+    return _enrich_broadcast(updated)
 
 
 @router.get("/{broadcast_id}/children", response_model=list[BroadcastChildrenRead])
@@ -350,4 +364,4 @@ async def read_recurring_children(
             detail="반복 발송이 아닌 작업입니다.",
         )
 
-    return await broadcast_crud.list_child_broadcasts(db, broadcast_id, limit=limit, offset=offset)
+    return _enrich_broadcast_list(await broadcast_crud.list_child_broadcasts(db, broadcast_id, limit=limit, offset=offset))
