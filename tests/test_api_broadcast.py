@@ -132,5 +132,24 @@ async def test_logs_filter_by_account_and_status(client):
     assert all(item["status"] == "pending" for item in by_status.json())
 
     by_missing_account = await client.get("/api/logs?account_id=does-not-exist")
-    assert by_missing_account.status_code == 404
-    assert "찾을 수" in by_missing_account.json()["detail"]
+    assert by_missing_account.status_code == 200
+    assert by_missing_account.json() == []
+
+
+@pytest.mark.asyncio
+async def test_logs_tenant_isolation(client):
+    """A tenant user must not see logs for another tenant's account (403)."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    account_id = await _create_account(client)
+    await client.post("/api/broadcast", data=_broadcast_form(account_id))
+
+    # Override identity to a different tenant
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="other-tenant")
+    try:
+        resp = await client.get(f"/api/logs?account_id={account_id}")
+        assert resp.status_code == 403
+        assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)

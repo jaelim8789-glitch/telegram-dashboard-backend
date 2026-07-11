@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
@@ -19,5 +19,17 @@ async def read_logs(
     identity: Identity = Depends(get_current_identity),
 ):
     if account_id:
-        await require_account_tenant_access(account_id, db, identity)
+        account = await account_crud.get_account(db, account_id)
+        if account is not None:
+            if identity.kind != "admin":
+                if identity.tenant_id is None:
+                    raise HTTPException(
+                        status_code=http_status.HTTP_403_FORBIDDEN,
+                        detail="이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요.",
+                    )
+                if account.tenant_id != identity.tenant_id:
+                    raise HTTPException(
+                        status_code=http_status.HTTP_403_FORBIDDEN,
+                        detail="해당 계정에 접근할 수 없습니다.",
+                    )
     return await broadcast_crud.list_logs(db, identity=identity, account_id=account_id, status=status, date=date)
