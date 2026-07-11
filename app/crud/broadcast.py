@@ -169,17 +169,23 @@ async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | No
     return broadcast
 
 
-async def list_upcoming_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
+async def list_upcoming_scheduled_broadcasts(db: AsyncSession, identity: Identity | None = None) -> list[Broadcast]:
     now = utcnow_naive()
-    result = await db.execute(
-        select(Broadcast)
-        .where(
-            Broadcast.status == "pending",
-            Broadcast.scheduled_at.is_not(None),
-            Broadcast.scheduled_at > now,
-        )
-        .order_by(Broadcast.scheduled_at.asc())
+    query = select(Broadcast).where(
+        Broadcast.status == "pending",
+        Broadcast.scheduled_at.is_not(None),
+        Broadcast.scheduled_at > now,
     )
+
+    if identity is not None and identity.kind != "admin":
+        if identity.tenant_id:
+            account_ids = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+            query = query.where(Broadcast.account_id.in_(account_ids))
+        else:
+            return []
+
+    query = query.order_by(Broadcast.scheduled_at.asc())
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
@@ -484,10 +490,37 @@ async def list_recurring_with_child_counts(
     result = await db.execute(query)
     parents = list(result.scalars().all())
 
+    if not parents:
+        return []
+
+    parent_ids = [p.id for p in parents]
+
+    from sqlalchemy import func as sa_func
+
+    count_rows = await db.execute(
+        select(
+            Broadcast.parent_broadcast_id,
+            sa_func.count(Broadcast.id).label("cnt"),
+        ).where(
+            Broadcast.parent_broadcast_id.in_(parent_ids),
+        ).group_by(Broadcast.parent_broadcast_id)
+    )
+    count_map = {row.parent_broadcast_id: row.cnt for row in count_rows.all()}
+
+    all_children = await db.execute(
+        select(Broadcast).where(
+            Broadcast.parent_broadcast_id.in_(parent_ids),
+        ).order_by(Broadcast.parent_broadcast_id, Broadcast.created_at.desc())
+    )
+    last_map: dict[str, Broadcast] = {}
+    for child in all_children.scalars().all():
+        if child.parent_broadcast_id not in last_map:
+            last_map[child.parent_broadcast_id] = child
+
     enriched = []
     for parent in parents:
-        child_count = await count_child_broadcasts(db, parent.id)
-        last_child = await get_last_child_broadcast(db, parent.id)
+        child_count = count_map.get(parent.id, 0)
+        last_child = last_map.get(parent.id)
         enriched.append((parent, child_count, last_child))
 
     return enriched

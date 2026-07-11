@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
@@ -142,8 +142,8 @@ async def query_accounts(
             count_query = count_query.where(Account.phone.ilike(f"%{filters.phone}%"))
 
     # Count total before pagination
-    count_result = await db.execute(count_query)
-    total = len(list(count_result.scalars().all()))
+    count_result = await db.execute(select(func.count()).select_from(count_query.subquery()))
+    total = count_result.scalar() or 0
 
     # Sort
     sort_field_map = {
@@ -249,31 +249,30 @@ async def bulk_delete_accounts(db: AsyncSession, account_ids: list[str]) -> int:
 
 
 async def get_account_summary(db: AsyncSession, tenant_id: str | None = None) -> dict:
-    from sqlalchemy import func
+    from sqlalchemy import case
 
-    base_query = select(Account)
+    base_query = select(
+        func.count(Account.id).label("total"),
+        func.sum(case((Account.status == "active", 1), else_=0)).label("active"),
+        func.sum(case((Account.status == "inactive", 1), else_=0)).label("inactive"),
+        func.sum(case((Account.status == "banned", 1), else_=0)).label("banned"),
+        func.sum(case((Account.session_data.isnot(None), 1), else_=0)).label("has_session"),
+        func.sum(case((Account.last_error.isnot(None), 1), else_=0)).label("has_errors"),
+        func.coalesce(func.sum(Account.today_sent), 0).label("total_sent"),
+        func.coalesce(func.sum(Account.group_count), 0).label("total_groups"),
+    )
     if tenant_id:
         base_query = base_query.where(Account.tenant_id == tenant_id)
 
-    all_accounts = await db.execute(base_query)
-    accounts = list(all_accounts.scalars().all())
-
-    total = len(accounts)
-    active = sum(1 for a in accounts if a.status == "active")
-    inactive = sum(1 for a in accounts if a.status == "inactive")
-    banned = sum(1 for a in accounts if a.status == "banned")
-    has_session = sum(1 for a in accounts if a.session_data)
-    has_errors = sum(1 for a in accounts if a.last_error)
-    total_sent = sum(a.today_sent for a in accounts)
-    total_groups = sum(a.group_count for a in accounts)
+    row = (await db.execute(base_query)).one()
 
     return {
-        "total": total,
-        "active_accounts": active,
-        "inactive_accounts": inactive,
-        "banned": banned,
-        "has_session": has_session,
-        "has_errors": has_errors,
-        "total_today_sent": total_sent,
-        "total_groups": total_groups,
+        "total": row.total or 0,
+        "active_accounts": row.active or 0,
+        "inactive_accounts": row.inactive or 0,
+        "banned": row.banned or 0,
+        "has_session": row.has_session or 0,
+        "has_errors": row.has_errors or 0,
+        "total_today_sent": row.total_sent or 0,
+        "total_groups": row.total_groups or 0,
     }
