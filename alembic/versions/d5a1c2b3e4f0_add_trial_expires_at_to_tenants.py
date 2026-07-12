@@ -1,7 +1,7 @@
 """add trial_expires_at to tenants
 
 Revision ID: d5a1c2b3e4f0
-Revises: f8a5d3b2c1e0
+Revises: c7f5e9d1b2a3
 Create Date: 2026-07-11 14:00:00.000000
 """
 from typing import Sequence, Union
