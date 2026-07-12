@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # "@channelusername" — whatever the Bot API's getChatMember chat_id accepts.
     # Required for the channel-verification-gated signup flow; the bot must be an
     # admin of this channel to call getChatMember on non-admin members.
-    telegram_official_channel_id: str = ""
+    telegram_official_channel_id: str = "@TeleMon_2"
 
     environment: str = "development"
     debug: bool = True
