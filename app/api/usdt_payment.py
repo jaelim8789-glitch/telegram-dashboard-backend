@@ -20,8 +20,7 @@ from app.core.logging import get_logger
 from app.core.plans import (
     PLAN_CATALOG,
     get_plan,
-    get_plan_price_usdt,
-    is_deprecated_plan,
+    validate_plan_id,
 )
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
@@ -83,12 +82,17 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
     """API 키 발급 요청 → USDT 송금 정보 + payment_ref 반환 (public, rate-limited).
 
     Validates plan against canonical PLAN_CATALOG.
-    Rejects deprecated plans (basic, enterprise).
+    Rejects deprecated plans and the free trial plan (trial-only, not purchasable).
     """
-    if is_deprecated_plan(plan):
+    try:
+        validate_plan_id(plan)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if plan == "free":
         raise HTTPException(
             status_code=400,
-            detail="해당 요금제는 더 이상 제공되지 않습니다. Pro ($100/월) 또는 Team ($199/분기)을 선택해주세요.",
+            detail="무료 체험 요금제는 USDT 결제가 필요하지 않습니다. 회원가입 페이지에서 시작해주세요.",
         )
 
     plan_def = get_plan(plan)
@@ -102,7 +106,10 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
             detail="너무 많은 요청입니다. 10초 후 다시 시도해주세요.",
         )
 
-    price = get_plan_price_usdt(plan, "monthly") or get_plan_price_usdt(plan, "quarterly") or 0
+    # Derive billing interval from plan definition
+    prices = plan_def["prices_usdt"]
+    billing = "monthly" if "monthly" in prices else "quarterly"
+    price = prices[billing]
     payment_ref = f"TM-{secrets.token_hex(4).upper()}"
 
     async with async_session_maker() as db:
@@ -137,6 +144,7 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
         "wallet_address": USDT_WALLET,
         "network": "TRC20",
         "amount_usdt": price,
+        "billing": billing,
         "plan": plan,
         "plan_name": plan_def["name"],
         "instructions": (

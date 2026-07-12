@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_identity, Identity, require_admin, require_tenant_access
 from app.core.logging import get_logger
-from app.core.plans import PLAN_CATALOG, is_deprecated_plan
+from app.core.plans import PLAN_CATALOG, validate_plan_id
 from app.services.billing import (
     cancel_subscription,
     confirm_usdt_payment,
@@ -62,10 +62,19 @@ async def api_create_usdt_invoice(
 ):
     """Create a USDT payment invoice."""
     await require_tenant_access(tenant_id, identity)
-    if is_deprecated_plan(plan):
-        raise HTTPException(status_code=400, detail="해당 요금제는 더 이상 제공되지 않습니다.")
+    try:
+        validate_plan_id(plan)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if billing not in ("monthly", "quarterly"):
         raise HTTPException(status_code=400, detail="billing은 monthly 또는 quarterly이어야 합니다.")
+    plan_def = PLAN_CATALOG.get(plan)
+    if plan_def and billing not in plan_def["prices_usdt"]:
+        available = ", ".join(plan_def["prices_usdt"].keys())
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{plan}' 요금제는 {available} 결제 주기를 지원합니다. '{billing}'은(는) 지원되지 않습니다.",
+        )
     result = await create_usdt_invoice(tenant_id, plan, billing)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "인보이스 생성 실패"))

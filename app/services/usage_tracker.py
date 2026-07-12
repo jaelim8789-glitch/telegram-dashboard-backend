@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.core.plans import get_plan_limits, is_deprecated_plan
+from app.core.plans import get_plan_limits, validate_plan_id
 from app.database import async_session_maker
 from app.models.tenant import Tenant, UsageRecord
 
@@ -79,36 +79,16 @@ PLAN_LIMITS = {
     "free": get_plan_limits("free"),
     "pro": get_plan_limits("pro"),
     "team": get_plan_limits("team"),
-    # Legacy/deprecated plan compatibility
-    "basic": {
-        "max_accounts": 2,
-        "max_auto_reply_rules": 10,
-        "max_reply_macros": 5,
-        "monthly_message_limit": 1000,
-        "monthly_auto_reply_limit": 1000,
-        "cooldown_minimum_minutes": 30,
-        "can_broadcast": True,
-        "can_schedule": True,
-        "can_attach_images": False,
-        "can_export_data": False,
-    },
-    "enterprise": {
-        "max_accounts": 999,
-        "max_auto_reply_rules": 999,
-        "max_reply_macros": 999,
-        "monthly_message_limit": 999999,
-        "monthly_auto_reply_limit": 999999,
-        "cooldown_minimum_minutes": 0,
-        "can_broadcast": True,
-        "can_schedule": True,
-        "can_attach_images": True,
-        "can_export_data": True,
-    },
 }
 
 
 async def apply_plan_limits(db: AsyncSession, tenant: Tenant, plan: str) -> Tenant:
-    """Apply plan limits to a tenant (called on plan change or creation)."""
+    """Apply plan limits to a tenant (called on plan change or creation).
+
+    Validates the plan ID against the canonical PLAN_CATALOG.
+    Rejects deprecated and unknown plan IDs with ValueError.
+    """
+    validate_plan_id(plan)
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
 
     tenant.plan = plan
