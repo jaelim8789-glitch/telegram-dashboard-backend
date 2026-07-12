@@ -1,0 +1,19 @@
+{
+  "python.analysis.extraPaths": [],
+  "python.analysis.autoImportCompletions": false,
+  "python.analysis.indexing": true,
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/__pycache__/**": true,
+    "**/.venv/**": true,
+    "**/.pytest_cache/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  }
+}

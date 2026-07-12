@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -34,3 +35,6 @@ class LoginWithApiKeyResponse(BaseModel):
 class MeResponse(BaseModel):
     role: Literal["admin", "user", "api_key"]
     phone: str | None = None
+    subscription_status: str | None = None
+    plan: str | None = None
+    trial_expires_at: datetime | None = None
