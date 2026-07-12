@@ -22,9 +22,11 @@ from app.core.plans import (
     get_plan,
     validate_plan_id,
 )
+from app.crud import user as user_crud
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
+from app.models.user import User
 from app.services.usage_tracker import apply_plan_limits
 
 router = APIRouter(prefix="/api/payment", tags=["payment"])
@@ -136,7 +138,20 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
             tenant.subscription_status = "pending"
             tenant.payment_ref = payment_ref
 
+        # When phone is provided, ensure a User record exists so the paid user
+        # has a verified/recoverable identity (can log in via phone later).
+        if phone:
+            user = await user_crud.get_user_by_phone(db, phone)
+            if user is None:
+                user = User(phone=phone)
+                db.add(user)
+                await db.flush()
+                logger.info("user_created_for_paid_signup", phone=phone, tenant_plan=plan)
+
         await db.commit()
+
+    if not phone:
+        logger.warning("paid_signup_without_phone", payment_ref=payment_ref, plan=plan)
 
     return {
         "success": True,
