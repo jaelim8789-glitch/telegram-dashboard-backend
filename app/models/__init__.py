@@ -3,6 +3,7 @@ from app.models.api_key import APIKey
 from app.models.auto_reply import AutoReplyLog, AutoReplyRule
 from app.models.broadcast import Broadcast
 from app.models.group_search import GroupJoinLog, GroupSearchResult
+from app.models.join_queue import JoinQueueConfig, JoinQueueItem
 from app.models.message_log import MessageLog
 from app.models.message_template import FollowUpRule, MessageTemplate, TeamMember
 from app.models.reply_macro import ReplyMacro, ReplyMacroLog
@@ -19,6 +20,8 @@ __all__ = [
     "FollowUpRule",
     "GroupJoinLog",
     "GroupSearchResult",
+    "JoinQueueConfig",
+    "JoinQueueItem",
     "Lead",
     "MessageLog",
     "MessageTemplate",
