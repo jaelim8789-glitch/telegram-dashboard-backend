@@ -4,10 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 
 from app.api.deps import Identity, get_current_identity
+from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import get_plan
 from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
+from app.crud import telegram_verification as verification_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.tenant import Tenant
@@ -53,15 +55,33 @@ async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get
     if not await user_crud.verify_code(db, payload.phone, payload.code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
 
+    from sqlalchemy import select
+    result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
+    tenant = result.scalar_one_or_none()
+
+    if tenant is None and settings.telegram_official_channel_id:
+        # Brand-new signup, and this deployment has official-channel verification
+        # configured (TELEGRAM_OFFICIAL_CHANNEL_ID set) — membership must already be
+        # verified server-side (see app/api/telegram_verify.py; never trust the
+        # frontend for this). Checked before touching the User/API-key rows below so a
+        # rejected signup leaves no half-created state. Returning users (tenant
+        # already exists) skip this — they already passed the gate once. Deployments
+        # that haven't configured the official channel are unaffected, same as before
+        # this feature existed — matches telegram_bot_service.start_bot()'s own
+        # no-op-when-unconfigured pattern.
+        if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
+            db, payload.telegram_verification_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="공식 텔레그램 채널 가입 인증이 필요합니다. 채널 가입 후 다시 시도해주세요.",
+            )
+
     user = await user_crud.get_or_create_user(db, payload.phone)
     raw_key = generate_user_api_key()
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
 
-    # Create or update free-trial Tenant for new signups
-    from sqlalchemy import select
-    result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
+    if tenant is None:
         trial_hours = get_plan("free")["trial_hours"] if get_plan("free") else 24
         trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
         tenant = Tenant(

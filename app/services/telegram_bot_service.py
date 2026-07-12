@@ -4,6 +4,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from app.config import settings
 from app.core.logging import get_logger
 from app.crud import account as account_crud
+from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 
@@ -62,6 +63,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.edit_message_text(text, reply_markup=markup)
 
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /start (bare) and the deep-link form /start <token> used by the
+    free-trial official-channel verification flow (see app/api/telegram_verify.py).
+
+    This is the one place in the whole flow where a Telegram user id is obtained —
+    it comes straight from Telegram's own Update object for this bot's polling
+    connection, so it cannot be forged by anything the frontend sends us.
+    """
+    if not context.args:
+        await update.message.reply_text("안녕하세요! TeleMon 봇입니다.")
+        return
+
+    token = context.args[0]
+    telegram_user_id = update.effective_user.id if update.effective_user else None
+    if telegram_user_id is None:
+        return
+
+    async with async_session_maker() as db:
+        linked = await verification_crud.link_telegram_user(db, token, telegram_user_id)
+
+    if linked:
+        await update.message.reply_text(
+            "✅ 확인되었습니다! 이제 브라우저로 돌아가 채널 가입 여부 확인을 계속 진행해주세요."
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ 인증 링크가 만료되었거나 유효하지 않습니다. 웹사이트에서 다시 시도해주세요."
+        )
+
+
 async def start_bot() -> None:
     """No-op if TELEGRAM_BOT_TOKEN isn't set — the bot is an optional remote-control
     convenience on top of the dashboard's own toggle, not a hard dependency."""
@@ -73,6 +104,7 @@ async def start_bot() -> None:
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.add_handler(CommandHandler("autoreply", autoreply_command))
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^autoreply:"))
+    application.add_handler(CommandHandler("start", start_command))
 
     # Non-blocking startup (vs. the usual Application.run_polling(), which blocks forever)
     # so this can live inside the FastAPI lifespan alongside uvicorn's own event loop.

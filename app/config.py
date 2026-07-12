@@ -18,8 +18,18 @@ class Settings(BaseSettings):
     telegram_api_id: str = ""
     telegram_api_hash: str = ""
     # Optional — only needed for the /autoreply remote-control bot (BotFather token).
-    # The dashboard's own on/off toggle works without it.
+    # The dashboard's own on/off toggle works without it. This same bot also handles
+    # official-channel membership verification for the free-trial signup gate below.
     telegram_bot_token: str = ""
+    # Public @username of that bot (no leading @), used only to build the
+    # t.me/<username>?start=<token> deep link shown to users — not a secret.
+    telegram_bot_username: str = ""
+    # The official TeleMon channel to require membership in before a free trial can be
+    # created. Accepts either a numeric chat id (e.g. "-1001234567890") or an
+    # "@channelusername" — whatever the Bot API's getChatMember chat_id accepts.
+    # Required for the channel-verification-gated signup flow; the bot must be an
+    # admin of this channel to call getChatMember on non-admin members.
+    telegram_official_channel_id: str = ""
 
     environment: str = "development"
     debug: bool = True

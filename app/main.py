@@ -33,6 +33,7 @@ from app.api.logs import router as logs_router
 from app.api.reply_macro import router as reply_macro_router
 from app.api.scheduler import router as scheduler_router
 from app.api.telegram_auth import router as telegram_auth_router
+from app.api.telegram_verify import router as telegram_verify_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -143,6 +144,9 @@ app.include_router(admin_router)
 # (send-code/verify-code/login-with-api-key must be reachable without a session yet).
 # /me carries its own per-route Depends(get_current_identity).
 app.include_router(auth_router)
+# Also unauthenticated -- used before signup completes to gate free-trial creation on
+# official-channel membership. Rate-limited per-route instead.
+app.include_router(telegram_verify_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
 app.include_router(accounts_router, dependencies=_auth_required)
