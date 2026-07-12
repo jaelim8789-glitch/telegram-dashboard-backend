@@ -99,28 +99,35 @@ async def issue(
     if not consumed:
         raise HTTPException(status_code=409, detail="이 인증 토큰은 이미 사용되었습니다.")
 
-    if not payload.phone:
+    # When phone is not provided, use the verified Telegram user ID as a unique
+    # identifier (telegram_user_id is guaranteed non-null when status == "verified").
+    identifier: str
+    if payload.phone:
+        identifier = payload.phone
+    elif row.telegram_user_id is not None:
+        identifier = f"tg_{row.telegram_user_id}"
+    else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="전화번호는 필수 항목입니다.",
+            detail="전화번호 또는 텔레그램 인증이 필요합니다.",
         )
 
     raw_key = generate_user_api_key()
 
-    user = await user_crud.get_user_by_phone(db, payload.phone)
+    user = await user_crud.get_user_by_phone(db, identifier)
     if user is None:
-        user = User(phone=payload.phone)
+        user = User(phone=identifier)
         db.add(user)
         await db.flush()
 
     if user.api_key_hash:
-        logger.info("free_api_key_already_issued", phone=payload.phone)
+        logger.info("free_api_key_already_issued", identifier=identifier)
         return {"api_key": None, "detail": "이미 무료 API 키가 발급되었습니다.", "already_issued": True}
 
     user.api_key_hash = hash_api_key(raw_key)
     await db.flush()
 
-    await _get_or_create_free_tenant(db, payload.phone)
+    await _get_or_create_free_tenant(db, identifier)
 
     await db.commit()
     await db.refresh(user)
