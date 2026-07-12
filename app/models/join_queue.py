@@ -12,7 +12,6 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, Boolean
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -22,7 +21,7 @@ from app.database import Base
 class JoinQueueItem(Base):
     __tablename__ = "join_queue_items"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     account_id = Column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     raw_link = Column(String, nullable=False)
     title = Column(String, nullable=True)
