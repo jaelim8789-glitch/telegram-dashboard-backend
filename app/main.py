@@ -25,6 +25,7 @@ from app.api.auto_reply import router as auto_reply_router
 from app.api.billing import router as billing_router
 from app.api.delivery_analytics import router as delivery_analytics_router
 from app.api.features import router as features_router
+from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
 from app.api.deps import require_api_key_or_admin
 from app.api.group_search import router as group_search_router
@@ -163,6 +164,8 @@ app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
 # features router needs auth — tenant_id path param is not authentication
 app.include_router(features_router, dependencies=_auth_required)
+# Free API key (unauthenticated — channel verification replaces auth)
+app.include_router(free_api_key_router)
 app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
 

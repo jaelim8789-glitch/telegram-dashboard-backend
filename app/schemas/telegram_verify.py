@@ -16,3 +16,8 @@ class TelegramVerifyCheckRequest(BaseModel):
 class TelegramVerifyCheckResponse(BaseModel):
     status: Literal["pending_bot_start", "verified", "unverified"]
     reason: str | None = None
+
+
+class FreeApiKeyIssueRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=36)
+    phone: str = Field(min_length=1, max_length=50)

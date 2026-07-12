@@ -25,6 +25,15 @@ if "DATABASE_URL" not in os.environ:
     else:
         os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test_telemon.db"
 
+# Test suite runs in "development" env to bypass production guards in .env
+if "ENVIRONMENT" not in os.environ:
+    os.environ["ENVIRONMENT"] = "development"
+os.environ["DEBUG"] = "true"
+os.environ["SMS_PROVIDER"] = "console"
+# Ensure channel-verification gate is disabled by default for unrelated tests
+os.environ["TELEGRAM_BOT_TOKEN"] = ""
+os.environ["TELEGRAM_OFFICIAL_CHANNEL_ID"] = ""
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
