@@ -437,6 +437,22 @@ async def get_account_performance(
         return items
 
 
+def _timeline_date_expr(dialect_name: str, interval: str):
+    """Dialect-aware date-bucketing expression for the timeline query.
+
+    Postgres has no strftime() (production 500ed on every /timeline and /overview
+    call before this fix); SQLite has no to_char(). Both branches produce the same
+    output format: "YYYY-MM-DDTHH:00" for hour, "YYYY-MM-DD" for day.
+    """
+    if dialect_name == "postgresql":
+        if interval == "hour":
+            return func.to_char(MessageLog.created_at, 'YYYY-MM-DD"T"HH24:00')
+        return func.to_char(MessageLog.created_at, "YYYY-MM-DD")
+    if interval == "hour":
+        return func.strftime("%Y-%m-%dT%H:00", MessageLog.created_at)
+    return func.strftime("%Y-%m-%d", MessageLog.created_at)
+
+
 async def get_timeline(
     identity: Identity,
     account_id: str | None = None,
@@ -458,10 +474,7 @@ async def get_timeline(
     start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
-        if interval == "hour":
-            date_expr = func.strftime("%Y-%m-%dT%H:00", MessageLog.created_at)
-        else:
-            date_expr = func.strftime("%Y-%m-%d", MessageLog.created_at)
+        date_expr = _timeline_date_expr(db.bind.dialect.name, interval)
 
         query = select(
             date_expr.label("period"),

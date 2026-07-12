@@ -183,6 +183,25 @@ async def retry_broadcast(
     return _enrich_broadcast(updated)
 
 
+# ── Recurring broadcast endpoints ──────────────────────────────────
+#
+# NOTE: this literal-path route MUST be registered before the parameterized
+# GET /{broadcast_id} route below. FastAPI/Starlette matches routes in
+# registration order, so if /{broadcast_id} came first it would greedily match
+# GET /api/broadcast/recurring (with broadcast_id="recurring"), shadowing this
+# route entirely and returning a 404 "broadcast not found" instead of the
+# recurring list. See tests/test_broadcast_recurring_route_order.py.
+
+
+@router.get("/recurring", response_model=list[BroadcastRead])
+async def read_recurring_broadcasts(
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
+    return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
+
+
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
 async def read_broadcast(
     broadcast_id: str,
@@ -198,18 +217,6 @@ async def read_broadcast(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
     await require_account_tenant_access(broadcast.account_id, db, identity)
     return _enrich_broadcast(broadcast)
-
-
-# ── Recurring broadcast endpoints ──────────────────────────────────
-
-
-@router.get("/recurring", response_model=list[BroadcastRead])
-async def read_recurring_broadcasts(
-    db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(get_current_identity),
-):
-    """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
-    return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
 
 
 @router.post("/{broadcast_id}/cancel", response_model=BroadcastRead)
