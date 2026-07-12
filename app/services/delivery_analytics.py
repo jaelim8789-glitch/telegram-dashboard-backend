@@ -45,8 +45,39 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Integer, case, func, select, literal_column, text
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 
 from app.api.deps import Identity
+
+
+# ─── DB compatibility ─────────────────────────────────────────────────
+# PostgreSQL uses date_trunc for date grouping; SQLite uses strftime.
+# This custom FunctionElement + @compiles handler makes date_trunc work
+# on both databases transparently.
+
+
+class date_trunc(FunctionElement):
+    name = "date_trunc"
+    type = None
+
+
+@compiles(date_trunc, "sqlite")
+def _compile_date_trunc_sqlite(element, compiler, **kw):
+    args = [compiler.process(arg, **kw) for arg in element.clauses]
+    if len(args) >= 2:
+        precision = args[0].strip("'").strip('"')
+        col = args[1]
+        if precision == "hour":
+            return f"strftime('%Y-%m-%dT%H:00', {col})"
+        return f"strftime('%Y-%m-%d', {col})"
+    return "NULL"
+
+
+@compiles(date_trunc, "default")
+@compiles(date_trunc, "postgresql")
+def _compile_date_trunc_default(element, compiler, **kw):
+    return compiler.visit_function(element)
 from app.database import async_session_maker
 from app.models.account import Account
 from app.models.message_log import MessageLog
@@ -459,12 +490,12 @@ async def get_timeline(
 
     async with async_session_maker() as db:
         if interval == "hour":
-            date_expr = func.strftime("%Y-%m-%dT%H:00", MessageLog.created_at)
+            date_expr = date_trunc("hour", MessageLog.created_at).label("period")
         else:
-            date_expr = func.strftime("%Y-%m-%d", MessageLog.created_at)
+            date_expr = date_trunc("day", MessageLog.created_at).label("period")
 
         query = select(
-            date_expr.label("period"),
+            date_expr,
             func.count(MessageLog.id).label("total"),
             func.sum(case((MessageLog.success.is_(True), 1), else_=0)).label("successful"),
         )
