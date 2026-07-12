@@ -104,3 +104,21 @@ async def unauthenticated_client(db_session):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+
+
+import pytest
+
+import app.core.rate_limiter as _rate_limiter_module
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset in-memory rate-limiter state after each test.
+
+    The ASGI test client always reports 127.0.0.1 as the client IP, so all
+    send-code/verify-code calls across the full suite accumulate in the same
+    rate-limit bucket and trigger 429s unrelated to the test under test.
+    Production always sees real client IPs so this isolation is safe.
+    """
+    yield
+    _rate_limiter_module.reset_rate_limit_for_ip("127.0.0.1")
