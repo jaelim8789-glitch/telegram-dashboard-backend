@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 
 from app.api.deps import Identity, get_current_identity
+from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import get_plan
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
@@ -14,6 +15,7 @@ from app.core.limits import (
     VERIFY_CODE_PER_IP_WINDOW,
 )
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
+from app.crud import telegram_verification as verification_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.tenant import Tenant
@@ -93,17 +95,27 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     if not await user_crud.verify_code(db, payload.phone, payload.code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
 
+    from sqlalchemy import select
+    result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
+    tenant = result.scalar_one_or_none()
+
+    if tenant is None and settings.telegram_official_channel_id:
+        if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
+            db, payload.telegram_verification_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="공식 텔레그램 채널 가입 인증이 필요합니다. 채널 가입 후 다시 시도해주세요.",
+            )
+
     user = await user_crud.get_or_create_user(db, payload.phone)
     raw_key = generate_user_api_key()
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
 
-    from sqlalchemy import select
-    result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
-    tenant = result.scalar_one_or_none()
     if not tenant:
         plan_def = get_plan("free")
-        trial_days = plan_def["trial_days"] if plan_def else 14
-        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=trial_days)
+        trial_hours = plan_def["trial_hours"] if plan_def else 24
+        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
         tenant = Tenant(
             phone=payload.phone,
             plan="free",
@@ -137,7 +149,20 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(identity: Identity = Depends(get_current_identity)):
+async def me(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
     if identity.kind == "user" and identity.user is not None:
-        return MeResponse(role="user", phone=identity.user.phone)
+        from sqlalchemy import select
+        from app.models.tenant import Tenant
+        result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
+        tenant = result.scalar_one_or_none()
+        return MeResponse(
+            role="user",
+            phone=identity.user.phone,
+            subscription_status=tenant.subscription_status if tenant else None,
+            plan=tenant.plan if tenant else None,
+            trial_expires_at=tenant.trial_expires_at if tenant else None,
+        )
     return MeResponse(role=identity.kind)
