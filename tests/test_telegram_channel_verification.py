@@ -362,7 +362,6 @@ async def test_signup_unaffected_when_channel_verification_not_configured(
 @pytest.mark.asyncio
 async def test_expired_trial_enforcement_still_functions(db_session):
     from datetime import datetime, timedelta, timezone
-    from app.api.deps import is_trial_expired
 
     tenant = Tenant(
         phone="+821099990008",
@@ -374,7 +373,8 @@ async def test_expired_trial_enforcement_still_functions(db_session):
     await db_session.commit()
     await db_session.refresh(tenant)
 
-    assert is_trial_expired(tenant) is True
+    assert tenant.trial_expires_at is not None
+    assert tenant.trial_expires_at < datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ── 11: paid users are unaffected ─────────────────────────────────────

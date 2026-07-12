@@ -114,7 +114,7 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
 
     if not tenant:
         plan_def = get_plan("free")
-        trial_hours = plan_def["trial_hours"] if plan_def else 24
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 24
         trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
         tenant = Tenant(
             phone=payload.phone,
