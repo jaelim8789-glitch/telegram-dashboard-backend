@@ -27,6 +27,7 @@ from app.api.delivery_analytics import router as delivery_analytics_router
 from app.api.features import router as features_router
 from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
+from app.api.join_queue import router as join_queue_router
 from app.api.deps import require_api_key_or_admin
 from app.api.group_search import router as group_search_router
 from app.api.groups import router as groups_router
@@ -170,6 +171,7 @@ app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)
 app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
+app.include_router(join_queue_router, dependencies=_auth_required)
 
 
 @app.get("/health")
