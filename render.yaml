@@ -50,6 +50,12 @@ services:
         sync: false
       - key: USDT_NETWORK
         value: "TRC20"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: "telemon_verify_bot"
+      - key: TELEGRAM_OFFICIAL_CHANNEL_ID
+        value: "@TeleMon_2"
 
 databases:
   - name: telegram-dashboard-db
