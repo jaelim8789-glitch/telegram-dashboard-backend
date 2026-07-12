@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_active_subscription
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import reply_macro as macro_crud
@@ -9,7 +9,7 @@ from app.database import get_db
 from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroLogRead, ReplyMacroRead, ReplyMacroUpdate
 from app.services.reply_macro_service import execute_reply_macro
 
-router = APIRouter(prefix="/api/accounts/{account_id}/reply-macros", tags=["reply-macros"])
+router = APIRouter(prefix="/api/accounts/{account_id}/reply-macros", tags=["reply-macros"], dependencies=[Depends(require_active_subscription)])
 logger = get_logger(__name__)
 
 

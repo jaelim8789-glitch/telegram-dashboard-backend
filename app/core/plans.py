@@ -14,8 +14,8 @@ PlanDef = dict
 PLAN_CATALOG: dict[PlanId, PlanDef] = {
     "free": {
         "name": "Free",
-        "description": "Starter plan with a free trial period",
-        "trial_days": 14,
+        "description": "Starter plan with a 24-hour free trial",
+        "trial_hours": 24,
         "prices_usdt": {
             "monthly": 0,
         },

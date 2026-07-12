@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
 
 import jwt
@@ -90,6 +91,46 @@ async def get_current_identity(
     if identity is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
     return identity
+
+
+def is_trial_expired(tenant) -> bool:
+    """Check whether a free-plan tenant's trial period has ended."""
+    from datetime import timezone
+    if tenant.plan != "free":
+        return False
+    if tenant.trial_expires_at is None:
+        return False
+    return tenant.trial_expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc)
+
+
+async def require_active_subscription(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Enforce that the authenticated tenant has an active trial or paid subscription.
+    
+    Free-plan tenants with an expired trial are blocked from protected functionality.
+    Admin and API-key identities are exempt.
+    """
+    if identity.kind in ("admin", "api_key"):
+        return
+    if identity.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요.",
+        )
+    from app.models.tenant import Tenant
+    tenant = await db.get(Tenant, identity.tenant_id)
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="테넌트를 찾을 수 없습니다.",
+        )
+    if is_trial_expired(tenant):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="무료 체험 기간이 만료되었습니다. 계속 사용하려면 요금제를 업그레이드해주세요.",
+        )
 
 
 async def require_tenant_access(

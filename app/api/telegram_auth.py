@@ -11,7 +11,7 @@ from telethon.errors import (
     UserDeactivatedError,
 )
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_active_subscription
 from app.core.crypto import decrypt_session, encrypt_session
 from app.core.logging import get_logger
 from app.crud import account as account_crud
@@ -20,7 +20,7 @@ from app.models.account import Account
 from app.schemas.telegram_auth import AuthStepResult, SendCodeResponse, Verify2FARequest, VerifyCodeRequest
 from app.services.telethon_pool import pool
 
-router = APIRouter(prefix="/api/accounts", tags=["telegram-auth"])
+router = APIRouter(prefix="/api/accounts", tags=["telegram-auth"], dependencies=[Depends(require_active_subscription)])
 logger = get_logger(__name__)
 
 

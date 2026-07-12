@@ -27,7 +27,7 @@ class TestPlanCatalogContract:
         plan = get_plan("free")
         assert plan is not None
         assert plan["name"] == "Free"
-        assert plan["trial_days"] == 14
+        assert plan["trial_hours"] == 24
         assert get_plan_price_usdt("free", "monthly") == 0
 
     def test_pro_plan_100_monthly(self):
@@ -79,11 +79,11 @@ class TestPlanCatalogContract:
         assert get_plan_price_usdt("nonexistent") is None
         assert get_plan_limits("nonexistent") is None
 
-    def test_free_trial_14_days(self):
+    def test_free_trial_24_hours(self):
         from app.core.plans import get_plan
         free = get_plan("free")
         assert free is not None
-        assert free["trial_days"] == 14
+        assert free["trial_hours"] == 24
 
 
 class TestCrossContractIntegrity:

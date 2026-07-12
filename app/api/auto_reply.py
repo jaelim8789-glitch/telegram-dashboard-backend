@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_active_subscription
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import auto_reply as auto_reply_crud
@@ -17,7 +17,7 @@ from app.schemas.auto_reply import (
 )
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 
-router = APIRouter(prefix="/api/accounts/{account_id}/auto-reply", tags=["auto-reply"])
+router = APIRouter(prefix="/api/accounts/{account_id}/auto-reply", tags=["auto-reply"], dependencies=[Depends(require_active_subscription)])
 logger = get_logger(__name__)
 
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_active_subscription
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import group_search as group_search_crud
@@ -19,7 +19,7 @@ from app.schemas.group_search import (
 from app.services.group_search_service import DailyJoinLimitExceededError, search_public_groups, join_selected_groups
 from app.core.limits import MAX_DAILY_JOINS
 
-router = APIRouter(prefix="/api/group-search", tags=["group-search"])
+router = APIRouter(prefix="/api/group-search", tags=["group-search"], dependencies=[Depends(require_active_subscription)])
 logger = get_logger(__name__)
 
 

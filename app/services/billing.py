@@ -275,6 +275,40 @@ async def cancel_subscription(tenant_id: str) -> dict:
         }
 
 
+async def expire_ended_free_trials() -> dict:
+    """Scheduled job: mark free-plan tenants whose trial has ended as expired.
+    
+    Preserves all tenant data and plan limits. Only sets subscription_status
+    to "expired" so the frontend and enforcement layer can distinguish
+    active trials from expired ones. Idempotent: re-running is safe.
+    """
+    from datetime import timezone
+    from sqlalchemy import select
+
+    now = utcnow_naive()
+    expired: list[str] = []
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(Tenant).where(
+                Tenant.plan == "free",
+                Tenant.subscription_status != "expired",
+                Tenant.trial_expires_at.is_not(None),
+                Tenant.trial_expires_at < now,
+            )
+        )
+        tenants = result.scalars().all()
+
+        for tenant in tenants:
+            tenant.subscription_status = "expired"
+            expired.append(tenant.id)
+            logger.info("free_trial_expired", tenant_id=tenant.id, phone=tenant.phone)
+
+        await db.flush()
+
+    return {"expired": len(expired), "tenant_ids": expired}
+
+
 async def downgrade_expired_tenants() -> dict:
     """Scheduled job: revert any paid-plan tenant whose billing period has ended back
     to free-tier limits — whether they explicitly canceled or simply never renewed

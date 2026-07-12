@@ -19,7 +19,7 @@ from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
-from app.services.billing import downgrade_expired_tenants
+from app.services.billing import downgrade_expired_tenants, expire_ended_free_trials
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.reply_macro_service import execute_reply_macro
 from app.services.usdt_watcher import check_usdt_payments
@@ -209,6 +209,12 @@ def start_scheduler() -> None:
         downgrade_expired_tenants,
         IntervalTrigger(minutes=30),
         id="downgrade_expired_tenants",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        expire_ended_free_trials,
+        IntervalTrigger(minutes=15),
+        id="expire_ended_free_trials",
         replace_existing=True,
     )
     scheduler.start()

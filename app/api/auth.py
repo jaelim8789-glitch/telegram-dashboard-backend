@@ -101,9 +101,8 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
     tenant = result.scalar_one_or_none()
     if not tenant:
-        plan_def = get_plan("free")
-        trial_days = plan_def["trial_days"] if plan_def else 14
-        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=trial_days)
+        trial_hours = get_plan("free")["trial_hours"] if get_plan("free") else 24
+        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
         tenant = Tenant(
             phone=payload.phone,
             plan="free",
@@ -137,7 +136,20 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(identity: Identity = Depends(get_current_identity)):
+async def me(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
     if identity.kind == "user" and identity.user is not None:
-        return MeResponse(role="user", phone=identity.user.phone)
+        from sqlalchemy import select
+        from app.models.tenant import Tenant
+        result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
+        tenant = result.scalar_one_or_none()
+        return MeResponse(
+            role="user",
+            phone=identity.user.phone,
+            subscription_status=tenant.subscription_status if tenant else None,
+            plan=tenant.plan if tenant else None,
+            trial_expires_at=tenant.trial_expires_at if tenant else None,
+        )
     return MeResponse(role=identity.kind)

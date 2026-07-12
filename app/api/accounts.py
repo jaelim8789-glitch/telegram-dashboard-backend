@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.api.deps import get_current_identity, Identity, require_account_capacity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_capacity, require_account_tenant_access, require_active_subscription
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
@@ -23,7 +23,7 @@ from app.schemas.account import (
 )
 from app.services.account_health import get_account_health, get_health_summary
 
-router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+router = APIRouter(prefix="/api/accounts", tags=["accounts"], dependencies=[Depends(require_active_subscription)])
 logger = get_logger(__name__)
 
 
