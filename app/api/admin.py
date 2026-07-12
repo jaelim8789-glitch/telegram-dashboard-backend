@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_admin
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
+from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.core.security import create_access_token, generate_user_api_key, hash_api_key, mask_api_key, verify_admin_credentials
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 @router.post("/login", response_model=AdminTokenResponse)
 async def login(payload: AdminLoginRequest, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "admin_login", max_attempts=10, window_seconds=300):
         retry_after = get_retry_after_seconds(client_ip, "admin_login")
         raise HTTPException(
@@ -75,9 +75,6 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API 키를 찾을 수 없습니다.")
     await api_key_crud.revoke_api_key(db, api_key)
     logger.info("api_key_revoked", api_key_id=api_key_id)
-
-
-# === 일반 사용자 관리 (Sprint 6 phone-verified login) ===
 
 
 @router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])

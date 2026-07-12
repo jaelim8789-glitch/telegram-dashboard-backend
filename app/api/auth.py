@@ -6,7 +6,13 @@ from datetime import datetime, timedelta, timezone
 from app.api.deps import Identity, get_current_identity
 from app.core.logging import get_logger
 from app.core.plans import get_plan
-from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
+from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
+from app.core.limits import (
+    SEND_CODE_MAX_PER_IP,
+    SEND_CODE_PER_IP_WINDOW,
+    VERIFY_CODE_MAX_PER_IP,
+    VERIFY_CODE_PER_IP_WINDOW,
+)
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
 from app.crud import user as user_crud
 from app.database import get_db
@@ -28,7 +34,24 @@ logger = get_logger(__name__)
 
 
 @router.post("/send-code", response_model=SendCodeResponse)
-async def send_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Layer 1: per-IP rate limit
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(
+        client_ip, "send_code",
+        max_attempts=SEND_CODE_MAX_PER_IP,
+        window_seconds=SEND_CODE_PER_IP_WINDOW,
+    ):
+        retry_after = get_retry_after_seconds(
+            client_ip, "send_code", window_seconds=SEND_CODE_PER_IP_WINDOW,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    # Layer 2: per-phone cooldown
     wait_seconds = await user_crud.seconds_until_next_code_allowed(db, payload.phone)
     if wait_seconds > 0:
         raise HTTPException(
@@ -49,7 +72,24 @@ async def send_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/verify-code", response_model=VerifyCodeResponse)
-async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Layer 1: per-IP rate limit
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(
+        client_ip, "verify_code",
+        max_attempts=VERIFY_CODE_MAX_PER_IP,
+        window_seconds=VERIFY_CODE_PER_IP_WINDOW,
+    ):
+        retry_after = get_retry_after_seconds(
+            client_ip, "verify_code", window_seconds=VERIFY_CODE_PER_IP_WINDOW,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    # Layer 2: per-phone attempt limit
     if not await user_crud.verify_code(db, payload.phone, payload.code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
 
@@ -57,7 +97,6 @@ async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get
     raw_key = generate_user_api_key()
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
 
-    # Create or update free-trial Tenant for new signups
     from sqlalchemy import select
     result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
     tenant = result.scalar_one_or_none()
@@ -81,7 +120,7 @@ async def verify_code(payload: VerifyCodeRequest, db: AsyncSession = Depends(get
 
 @router.post("/login-with-api-key", response_model=LoginWithApiKeyResponse)
 async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "api_key_login", max_attempts=20, window_seconds=300):
         retry_after = get_retry_after_seconds(client_ip, "api_key_login")
         raise HTTPException(
