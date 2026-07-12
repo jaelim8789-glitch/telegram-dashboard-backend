@@ -100,27 +100,31 @@ async def issue(
     if not consumed:
         raise HTTPException(status_code=409, detail="이 인증 토큰은 이미 사용되었습니다.")
 
+    if not payload.phone:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="전화번호는 필수 항목입니다.",
+        )
+
     raw_key = generate_user_api_key()
 
-    user = await user_crud.get_user_by_phone(db, payload.phone) if payload.phone else None
-    if user is None and payload.phone:
+    user = await user_crud.get_user_by_phone(db, payload.phone)
+    if user is None:
         user = User(phone=payload.phone)
         db.add(user)
         await db.flush()
 
-    if user:
-        if user.api_key_hash:
-            logger.info("free_api_key_already_issued", phone=payload.phone)
-            return {"api_key": None, "detail": "이미 무료 API 키가 발급되었습니다.", "already_issued": True}
+    if user.api_key_hash:
+        logger.info("free_api_key_already_issued", phone=payload.phone)
+        return {"api_key": None, "detail": "이미 무료 API 키가 발급되었습니다.", "already_issued": True}
 
-        user.api_key_hash = hash_api_key(raw_key)
-        await db.flush()
+    user.api_key_hash = hash_api_key(raw_key)
+    await db.flush()
 
-        tenant = await _get_or_create_free_tenant(db, payload.phone)
+    await _get_or_create_free_tenant(db, payload.phone)
 
     await db.commit()
-    if user:
-        await db.refresh(user)
+    await db.refresh(user)
 
     logger.info("free_api_key_issued", token_used=payload.token)
     return {"api_key": raw_key, "detail": "무료 API 키가 발급되었습니다.", "already_issued": False}

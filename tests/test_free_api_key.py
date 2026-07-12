@@ -134,3 +134,57 @@ async def test_issue_rejects_expired_token(client, db_session, monkeypatch):
 
     res = await client.post("/api/free-api-key/issue", json={"token": row.id, "phone": "+821099990007"})
     assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_missing_phone(client, db_session, monkeypatch):
+    """Regression: missing/empty phone must be rejected before any key is generated."""
+    _patch_channel(monkeypatch)
+    token = await _create_verified_token(db_session)
+
+    res = await client.post("/api/free-api-key/issue", json={"token": token})
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_empty_phone(client, db_session, monkeypatch):
+    """Regression: empty phone string must be rejected."""
+    _patch_channel(monkeypatch)
+    token = await _create_verified_token(db_session)
+
+    res = await client.post("/api/free-api-key/issue", json={"token": token, "phone": ""})
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_issued_free_key_can_login(client, db_session, monkeypatch):
+    """Regression: a free-issued API key must be persisted to users.api_key_hash
+    and usable with POST /api/auth/login-with-api-key."""
+    _patch_channel(monkeypatch)
+    token = await _create_verified_token(db_session)
+
+    issue_res = await client.post(
+        "/api/free-api-key/issue",
+        json={"token": token, "phone": "+821099990008"},
+    )
+    assert issue_res.status_code == 200
+    raw_key = issue_res.json()["api_key"]
+    assert raw_key.startswith("sk-")
+
+    login_res = await client.post(
+        "/api/auth/login-with-api-key",
+        json={"api_key": raw_key},
+    )
+    assert login_res.status_code == 200
+    body = login_res.json()
+    assert body["token_type"] == "bearer"
+    assert body["access_token"]
+
+    # Verify the token works for authenticated requests
+    me_res = await client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    )
+    assert me_res.status_code == 200
+    assert me_res.json()["role"] == "user"
+    assert me_res.json()["phone"] == "+821099990008"
