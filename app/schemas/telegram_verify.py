@@ -20,4 +20,4 @@ class TelegramVerifyCheckResponse(BaseModel):
 
 class FreeApiKeyIssueRequest(BaseModel):
     token: str = Field(min_length=1, max_length=36)
-    phone: str = Field(min_length=1, max_length=50)
+    phone: str | None = None
