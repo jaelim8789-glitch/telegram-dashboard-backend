@@ -183,6 +183,20 @@ async def retry_broadcast(
     return _enrich_broadcast(updated)
 
 
+# ── Recurring broadcast endpoints ──────────────────────────────────
+# Static routes must be declared before parameterised routes so that
+# e.g. "/recurring" is not captured by "/{broadcast_id}".
+
+
+@router.get("/recurring", response_model=list[BroadcastRead])
+async def read_recurring_broadcasts(
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
+    return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
+
+
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
 async def read_broadcast(
     broadcast_id: str,
@@ -200,16 +214,7 @@ async def read_broadcast(
     return _enrich_broadcast(broadcast)
 
 
-# ── Recurring broadcast endpoints ──────────────────────────────────
-
-
-@router.get("/recurring", response_model=list[BroadcastRead])
-async def read_recurring_broadcasts(
-    db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(get_current_identity),
-):
-    """Return all active (non-cancelled) recurring broadcasts, tenant-isolated."""
-    return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
+# ── Cancel broadcast ──────────────────────────────────────────────
 
 
 @router.post("/{broadcast_id}/cancel", response_model=BroadcastRead)

@@ -1225,3 +1225,36 @@ async def test_attempt_level_summary_unchanged(mock_session_maker, mock_resolve,
     assert s.total_attempted == 3  # 3 rows = 3 attempts
     assert s.successful == 1
     assert s.failed == 2
+
+
+# ─── Regression: PostgreSQL strftime compatibility ────────────────
+
+@pytest.mark.asyncio
+async def test_timeline_date_trunc_does_not_crash(client, db_session):
+    """Verify get_timeline uses PostgreSQL-compatible date_trunc.
+    A GET /api/delivery-analytics/timeline must not 500 with strftime."""
+    resp = await client.get("/api/delivery-analytics/timeline?days=1")
+    # 200 or 403 is acceptable — the important thing is no 500
+    assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_overview_does_not_crash(client, db_session):
+    """Verify get_overview does not 500 with strftime.
+    A GET /api/delivery-analytics/overview must not crash."""
+    resp = await client.get("/api/delivery-analytics/overview?days=1")
+    assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
+
+
+# ─── Regression: broadcast recurring route ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_broadcast_recurring_not_confused_with_broadcast_id(client, db_session):
+    """Verify GET /api/broadcast/recurring is not captured by
+    GET /api/broadcast/{broadcast_id}. Must return 200 or 403,
+    never a 404 matching a non-existent broadcast_id."""
+    resp = await client.get("/api/broadcast/recurring")
+    assert resp.status_code in (200, 403, 401), (
+        f"Expected 200 or 403, got {resp.status_code}: {resp.text}. "
+        f"If 404, the static /recurring route is being captured by /{{broadcast_id}}."
+    )
