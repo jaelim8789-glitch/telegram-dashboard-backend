@@ -120,6 +120,7 @@ if settings.environment.strip().lower() in ("production", "prod"):
         TrustedHostMiddleware,
         allowed_hosts=[
             "telemon.online",
+            "www.telemon.online",
             "app.telemon.online",
             "api.telemon.online",
             "localhost",

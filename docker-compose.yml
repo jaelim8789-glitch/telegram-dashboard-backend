@@ -47,10 +47,9 @@ services:
     build:
       context: ../telegram-dashboard
       args:
-        # Empty/relative — the browser calls same-origin paths (e.g. /api/accounts) and
-        # nginx proxies them to `backend`. Only override if serving frontend and API from
-        # genuinely different public origins.
         NEXT_PUBLIC_API_BASE_URL: ""
+        NEXT_PUBLIC_SITE_URL: "https://telemon.online"
+        NEXT_PUBLIC_APP_URL: "https://app.telemon.online"
     restart: unless-stopped
     depends_on:
       - backend
