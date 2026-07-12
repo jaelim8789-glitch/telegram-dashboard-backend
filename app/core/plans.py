@@ -121,3 +121,15 @@ def get_plan_limits(plan_id: str) -> dict | None:
 
 def is_deprecated_plan(plan_id: str) -> bool:
     return plan_id in ("basic", "enterprise")
+
+
+def validate_plan_id(plan_id: str) -> str:
+    """Validate and return the plan ID, raising ValueError if it's invalid or deprecated.
+
+    Returns the validated plan_id. Raises ValueError with a user-facing message.
+    """
+    if is_deprecated_plan(plan_id):
+        raise ValueError("해당 요금제는 더 이상 제공되지 않습니다. Pro ($100/월) 또는 Team ($199/분기)을 선택해주세요.")
+    if plan_id not in PLAN_CATALOG:
+        raise ValueError("유효하지 않은 요금제입니다.")
+    return plan_id

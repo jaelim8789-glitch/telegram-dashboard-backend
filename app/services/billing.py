@@ -135,7 +135,11 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
         tenant.subscription_status = "active"
         tenant.trial_expires_at = None  # trial ends when paid plan starts
         tenant.billing_period_start = utcnow_naive()
-        days = 90 if tenant.plan == "team" else 30
+        plan_def = get_plan(tenant.plan)
+        if plan_def and "quarterly" in plan_def.get("prices_usdt", {}):
+            days = 90
+        else:
+            days = 30
         tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, tenant.plan)
 

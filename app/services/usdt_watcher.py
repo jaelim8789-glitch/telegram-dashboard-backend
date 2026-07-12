@@ -16,7 +16,6 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import (
     PLAN_CATALOG,
-    get_plan_price_usdt,
     is_deprecated_plan,
 )
 from app.database import async_session_maker
@@ -45,25 +44,17 @@ _PLAN_PRICES_CENTS: dict[str, dict[str, int]] = {}
 for pid, pdef in PLAN_CATALOG.items():
     _PLAN_PRICES_CENTS[pid] = {}
     for interval, price in pdef["prices_usdt"].items():
-        _PLAN_PRICES_CENTS[pid][interval] = int(price * 100)
-
-
-# Legacy plan prices (for backward compatibility with existing pending tenants)
-_LEGACY_PRICES_CENTS = {
-    "basic": 1500,
-    "enterprise": 15000,
-}
+        if price > 0:
+            _PLAN_PRICES_CENTS[pid][interval] = int(price * 100)
 
 
 def _all_price_cents() -> list[tuple[str, str, int]]:
-    """Return all (plan, billing, cents) tuples including legacy."""
+    """Return all (plan, billing, cents) tuples for active canonical plans."""
     result = []
     for pid, intervals in _PLAN_PRICES_CENTS.items():
         for interval, cents in intervals.items():
             if cents > 0:
                 result.append((pid, interval, cents))
-    for pid, cents in _LEGACY_PRICES_CENTS.items():
-        result.append((pid, "monthly", cents))
     return result
 
 

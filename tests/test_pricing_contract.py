@@ -216,3 +216,81 @@ class TestUSDTMatchingBehavior:
 
     def test_out_of_tolerance_pro(self, match_plan_fn):
         assert match_plan_fn(5000) is None  # $50 — doesn't match anything
+
+    def test_legacy_deprecated_amounts_no_match(self, match_plan_fn):
+        """Verify deprecated plan prices no longer match."""
+        legacy_amounts = [1500, 15000]
+        for cents in legacy_amounts:
+            result = match_plan_fn(cents)
+            assert result is None or result[0] not in ("basic", "enterprise"), \
+                f"match_plan({cents}) matched deprecated plan: {result}"
+
+
+class TestValidatePlanId:
+    """Verify the validate_plan_id helper."""
+
+    def test_validates_canonical_plans(self):
+        from app.core.plans import validate_plan_id
+        assert validate_plan_id("free") == "free"
+        assert validate_plan_id("pro") == "pro"
+        assert validate_plan_id("team") == "team"
+
+    def test_rejects_deprecated_basic(self):
+        from app.core.plans import validate_plan_id
+        with pytest.raises(ValueError, match="제공"):
+            validate_plan_id("basic")
+
+    def test_rejects_deprecated_enterprise(self):
+        from app.core.plans import validate_plan_id
+        with pytest.raises(ValueError, match="제공"):
+            validate_plan_id("enterprise")
+
+    def test_rejects_unknown_plan(self):
+        from app.core.plans import validate_plan_id
+        with pytest.raises(ValueError):
+            validate_plan_id("nonexistent")
+
+
+class TestPlanLimitsNoDeprecated:
+    """Verify deprecated plans removed from PLAN_LIMITS."""
+
+    def test_no_basic_in_limits(self):
+        from app.services.usage_tracker import PLAN_LIMITS
+        assert "basic" not in PLAN_LIMITS
+
+    def test_no_enterprise_in_limits(self):
+        from app.services.usage_tracker import PLAN_LIMITS
+        assert "enterprise" not in PLAN_LIMITS
+
+    def test_limits_has_only_canonical(self):
+        from app.services.usage_tracker import PLAN_LIMITS
+        assert set(PLAN_LIMITS.keys()) == {"free", "pro", "team"}
+
+
+class TestUSDTWatcherNoLegacy:
+    """Verify deprecated legacy prices removed from USDT watcher."""
+
+    def test_no_legacy_price_cents(self):
+        from app.services.usdt_watcher import _PLAN_PRICES_CENTS
+        assert "basic" not in _PLAN_PRICES_CENTS
+        assert "enterprise" not in _PLAN_PRICES_CENTS
+
+    def test_legacy_constant_removed(self):
+        import app.services.usdt_watcher as watcher
+        assert not hasattr(watcher, "_LEGACY_PRICES_CENTS")
+
+
+class TestBillingPeriodConsistency:
+    """Verify billing periods match canonical plan definitions."""
+
+    def test_pro_only_monthly(self):
+        from app.core.plans import get_plan
+        pro = get_plan("pro")
+        assert "monthly" in pro["prices_usdt"]
+        assert "quarterly" not in pro["prices_usdt"]
+
+    def test_team_only_quarterly(self):
+        from app.core.plans import get_plan
+        team = get_plan("team")
+        assert "quarterly" in team["prices_usdt"]
+        assert "monthly" not in team["prices_usdt"]
