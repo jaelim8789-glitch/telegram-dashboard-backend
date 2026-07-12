@@ -139,17 +139,19 @@ async def test_logs_filter_by_account_and_status(client):
 @pytest.mark.asyncio
 async def test_logs_tenant_isolation(client):
     """A tenant user must not see logs for another tenant's account (403)."""
-    from app.api.deps import get_current_identity, Identity
+    from app.api.deps import get_current_identity, Identity, require_active_subscription
     from app.main import app
 
     account_id = await _create_account(client)
     await client.post("/api/broadcast", data=_broadcast_form(account_id))
 
-    # Override identity to a different tenant
+    # Override identity to a different tenant and bypass trial check
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="other-tenant")
+    app.dependency_overrides[require_active_subscription] = lambda: None
     try:
         resp = await client.get(f"/api/logs?account_id={account_id}")
         assert resp.status_code == 403
         assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_current_identity, None)
+        app.dependency_overrides.pop(require_active_subscription, None)

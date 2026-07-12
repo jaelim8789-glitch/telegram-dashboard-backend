@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.api.deps import is_trial_expired
+from app.api.deps import is_trial_expired, require_active_subscription
 from app.models.tenant import Tenant
 
 
@@ -270,3 +270,175 @@ async def test_paid_subscription_unaffected(unauthenticated_client, db_session, 
     await db_session.flush()
 
     assert is_trial_expired(tenant) is False, "Pro tenants should not be trial-expired"
+
+
+# ── 9. Expired trial enforcement on protected routers ────────────────
+
+PROTECTED_ROUTES = [
+    ("GET", "/api/accounts"),
+    ("GET", "/api/accounts/summary"),
+    ("GET", "/api/account-health"),
+    ("GET", "/api/delivery-analytics/summary"),
+    ("GET", "/api/logs"),
+    ("GET", "/api/scheduler/upcoming"),
+    ("GET", "/api/broadcast/recurring"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path", PROTECTED_ROUTES)
+async def test_expired_trial_blocked_on_protected_routes(method, path, client, db_session, monkeypatch):
+    """Expired trial users receive 403 on all protected functional routes."""
+    from app.api.deps import get_current_identity, Identity
+
+    tenant = Tenant(
+        phone="+821000000701",
+        plan="free",
+        subscription_status="expired",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    from app.main import app
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id=tenant.id)
+
+    try:
+        resp = await client.request(method, path)
+        assert resp.status_code == 403, f"{method} {path} should be blocked for expired trial, got {resp.status_code}"
+        assert "만료" in resp.json()["detail"], f"Expected expiry message, got: {resp.json()['detail']}"
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_active_trial_allows_protected_routes(client, db_session):
+    """Active trial users can access all protected routes."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    tenant = Tenant(
+        phone="+821000000702",
+        plan="free",
+        subscription_status="active",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id=tenant.id)
+    try:
+        resp = await client.get("/api/accounts")
+        assert resp.status_code == 200
+        resp = await client.get("/api/account-health")
+        assert resp.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_expired_user_can_still_login(unauthenticated_client, db_session, monkeypatch):
+    """Expired trial users can still log in and access authentication."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    tenant = Tenant(
+        phone="+821000000703",
+        plan="free",
+        subscription_status="expired",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
+    )
+    db_session.add(tenant)
+
+    from app.crud import user as user_crud
+    from app.core.security import generate_user_api_key, hash_api_key
+    user = await user_crud.get_or_create_user(db_session, "+821000000703")
+    raw_key = generate_user_api_key()
+    await user_crud.set_api_key_hash(db_session, user, hash_api_key(raw_key))
+    await db_session.flush()
+
+    login_res = await unauthenticated_client.post("/api/auth/login-with-api-key", json={"api_key": raw_key})
+    assert login_res.status_code == 200, "Expired users must be able to log in"
+
+    token = login_res.json()["access_token"]
+    me_res = await unauthenticated_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_res.status_code == 200
+    assert me_res.json()["subscription_status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_expired_user_can_access_billing(client, db_session):
+    """Expired trial users can access billing/subscription status and payment routes."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    tenant = Tenant(
+        phone="+821000000704",
+        plan="free",
+        subscription_status="expired",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id=tenant.id)
+    try:
+        resp = await client.get("/api/billing/plans")
+        assert resp.status_code == 200, "Pricing plans must be public"
+        resp = await client.get(f"/api/billing/subscription/{tenant.id}")
+        assert resp.status_code == 200, "Expired user must see subscription status for upgrade"
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_paid_user_bypasses_enforcement(client, db_session):
+    """Paid-plan users are never blocked by trial enforcement."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    tenant = Tenant(
+        phone="+821000000705",
+        plan="pro",
+        subscription_status="active",
+        trial_expires_at=None,
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id=tenant.id)
+    try:
+        resp = await client.get("/api/accounts")
+        assert resp.status_code == 200, "Paid user must have full access"
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_admin_bypasses_enforcement(client, db_session):
+    """Admin identities are never blocked by trial enforcement."""
+    resp = await client.get("/api/accounts")
+    assert resp.status_code == 200, "Admin must have full access"
+
+
+@pytest.mark.asyncio
+async def test_api_key_identity_bypasses_enforcement(client, db_session):
+    """API-key identities bypass trial enforcement (payment access is admin-managed)."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    tenant = Tenant(
+        phone="+821000000706",
+        plan="free",
+        subscription_status="expired",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="api_key", tenant_id=tenant.id)
+    try:
+        resp = await client.get("/api/accounts")
+        assert resp.status_code == 200, "API key must have access regardless of trial"
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)

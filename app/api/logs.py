@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity
+from app.api.deps import get_current_identity, Identity, require_active_subscription
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
 from app.schemas.broadcast import BroadcastRead
 
-router = APIRouter(prefix="/api/logs", tags=["logs"])
+router = APIRouter(prefix="/api/logs", tags=["logs"], dependencies=[Depends(require_active_subscription)])
 
 
 @router.get("", response_model=list[BroadcastRead])

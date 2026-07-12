@@ -10,7 +10,7 @@ Sprint 16 extensions:
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.deps import get_current_identity, Identity
+from app.api.deps import get_current_identity, Identity, require_active_subscription
 from app.services.delivery_analytics import (
     get_summary,
     get_failure_breakdown,
@@ -28,7 +28,7 @@ from app.services.delivery_analytics import (
     get_overview,
 )
 
-router = APIRouter(prefix="/api/delivery-analytics", tags=["delivery-analytics"])
+router = APIRouter(prefix="/api/delivery-analytics", tags=["delivery-analytics"], dependencies=[Depends(require_active_subscription)])
 
 
 @router.get("/summary")

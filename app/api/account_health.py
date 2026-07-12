@@ -2,10 +2,10 @@
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_current_identity, Identity
+from app.api.deps import get_current_identity, Identity, require_active_subscription
 from app.services.account_health import get_account_health, HealthSummary, AccountHealthItem
 
-router = APIRouter(prefix="/api/account-health", tags=["account-health"])
+router = APIRouter(prefix="/api/account-health", tags=["account-health"], dependencies=[Depends(require_active_subscription)])
 
 
 @router.get("")
