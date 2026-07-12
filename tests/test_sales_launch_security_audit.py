@@ -32,7 +32,7 @@ def _admin_headers() -> dict:
     return {"Authorization": f"Bearer {create_access_token()}"}
 
 
-async def _make_tenant(db_session, *, phone, plan="basic", status="pending", payment_ref=None):
+async def _make_tenant(db_session, *, phone, plan="pro", status="pending", payment_ref=None):
     tenant = Tenant(phone=phone, plan=plan, subscription_status=status, payment_ref=payment_ref)
     db_session.add(tenant)
     await db_session.commit()
@@ -47,7 +47,7 @@ async def _make_tenant(db_session, *, phone, plan="basic", status="pending", pay
 
 @pytest.mark.asyncio
 async def test_usdt_confirm_rejected_without_admin_auth(unauthenticated_client, db_session):
-    tenant = await _make_tenant(db_session, phone="+821000010001", plan="enterprise", status="pending")
+    tenant = await _make_tenant(db_session, phone="+821000010001", plan="pro", status="pending")
 
     res = await unauthenticated_client.post(
         f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=not-a-real-tx"
@@ -73,15 +73,15 @@ async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_clien
         return [{
             "tx_id": "confirmed-tx-hash",
             "from_address": "Txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            "amount_usdt": 15.0,
-            "amount_cents": 1500,
+            "amount_usdt": 100.0,
+            "amount_cents": 10000,
             "block_timestamp": 1234567890,
             "memo": "",
         }]
 
     monkeypatch.setattr(watcher_module, "get_usdt_transactions", fake_transactions)
 
-    tenant = await _make_tenant(db_session, phone="+821000010002", plan="basic", status="pending")
+    tenant = await _make_tenant(db_session, phone="+821000010002", plan="pro", status="pending")
 
     res = await unauthenticated_client.post(
         f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=confirmed-tx-hash",
@@ -94,7 +94,7 @@ async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_clien
 
 @pytest.mark.asyncio
 async def test_stars_add_rejected_without_admin_auth(unauthenticated_client, db_session):
-    tenant = await _make_tenant(db_session, phone="+821000010003", plan="basic", status="active")
+    tenant = await _make_tenant(db_session, phone="+821000010003", plan="pro", status="active")
 
     res = await unauthenticated_client.post(
         f"/api/billing/stars/add?tenant_id={tenant.id}&stars_amount=999999"
@@ -107,7 +107,7 @@ async def test_stars_add_rejected_without_admin_auth(unauthenticated_client, db_
 
 @pytest.mark.asyncio
 async def test_stars_add_succeeds_with_real_admin_token(unauthenticated_client, db_session):
-    tenant = await _make_tenant(db_session, phone="+821000010004", plan="basic", status="active")
+    tenant = await _make_tenant(db_session, phone="+821000010004", plan="pro", status="active")
 
     res = await unauthenticated_client.post(
         f"/api/billing/stars/add?tenant_id={tenant.id}&stars_amount=100",
@@ -129,21 +129,21 @@ async def test_payment_status_returns_own_tenant_key_not_a_stranger(unauthentica
     """Two tenants share the same plan name — checking one's status must never surface
     the other's key (the old APIKey.name ILIKE '%{plan}%' lookup ignored tenant_id
     entirely and could return either one, or crash outright)."""
-    victim = await _make_tenant(db_session, phone="+821000020001", plan="basic", status="active", payment_ref="TM-VICTIM1")
-    caller = await _make_tenant(db_session, phone="+821000020002", plan="basic", status="active", payment_ref="TM-CALLER1")
+    victim = await _make_tenant(db_session, phone="+821000020001", plan="pro", status="active", payment_ref="TM-VICTIM1")
+    caller = await _make_tenant(db_session, phone="+821000020002", plan="pro", status="active", payment_ref="TM-CALLER1")
 
-    victim_key = APIKey(key="sk-" + "v" * 40, name="USDT-basic-auto", is_active=True)
-    caller_key = APIKey(key="sk-" + "c" * 40, name="USDT-basic-auto", is_active=True)
+    victim_key = APIKey(key="sk-" + "v" * 40, name="USDT-pro-auto", is_active=True)
+    caller_key = APIKey(key="sk-" + "c" * 40, name="USDT-pro-auto", is_active=True)
     db_session.add_all([victim_key, caller_key])
     await db_session.commit()
     await db_session.refresh(victim_key)
     await db_session.refresh(caller_key)
 
     db_session.add_all([
-        PaymentRecord(tx_id="chain-tx-victim", tenant_id=victim.id, from_address="a", amount_usdt=1500,
-                       plan="basic", status="completed", api_key_id=victim_key.id, block_timestamp=1),
-        PaymentRecord(tx_id="chain-tx-caller", tenant_id=caller.id, from_address="b", amount_usdt=1500,
-                      plan="basic", status="completed", api_key_id=caller_key.id, block_timestamp=2),
+        PaymentRecord(tx_id="chain-tx-victim", tenant_id=victim.id, from_address="a", amount_usdt=10000,
+                       plan="pro", status="completed", api_key_id=victim_key.id, block_timestamp=1),
+        PaymentRecord(tx_id="chain-tx-caller", tenant_id=caller.id, from_address="b", amount_usdt=10000,
+                      plan="pro", status="completed", api_key_id=caller_key.id, block_timestamp=2),
     ])
     await db_session.commit()
 
@@ -157,7 +157,7 @@ async def test_payment_status_returns_own_tenant_key_not_a_stranger(unauthentica
 
 @pytest.mark.asyncio
 async def test_payment_status_pending_tenant_not_yet_active(unauthenticated_client, db_session):
-    tenant = await _make_tenant(db_session, phone="+821000020003", plan="basic", status="pending", payment_ref="TM-PEND0001")
+    tenant = await _make_tenant(db_session, phone="+821000020003", plan="pro", status="pending", payment_ref="TM-PEND0001")
 
     res = await unauthenticated_client.get(f"/api/payment/status/{tenant.payment_ref}")
     assert res.status_code == 200
