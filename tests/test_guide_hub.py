@@ -36,7 +36,13 @@ class _FakeMessage:
 
 
 class _FakeBot:
-    """Records calls instead of hitting the real Telegram API."""
+    """Records calls instead of hitting the real Telegram API.
+
+    Mirrors the real Bot API's behavior of rejecting a no-op edit (identical
+    text + keyboard) with a "message is not modified" BadRequest — this is
+    what actually happens on every repeat publish call with unchanged content,
+    so the fake must reproduce it rather than always succeeding silently.
+    """
 
     def __init__(self, token: str):
         self.token = token
@@ -45,16 +51,24 @@ class _FakeBot:
         self.pinned: list[dict] = []
         self.next_message_id = 555
         self.edit_should_fail = False
+        self._last_content: tuple | None = None
 
     async def send_message(self, chat_id, text, reply_markup=None):
         self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+        self._last_content = (text, str(reply_markup))
         return _FakeMessage(self.next_message_id)
 
     async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
-        if self.edit_should_fail:
-            from telegram.error import TelegramError
+        from telegram.error import TelegramError
 
+        if self.edit_should_fail:
             raise TelegramError("message to edit not found")
+        if self._last_content == (text, str(reply_markup)):
+            raise TelegramError(
+                "Message is not modified: specified new message content and reply "
+                "markup are exactly the same as a current content and reply markup of the message"
+            )
+        self._last_content = (text, str(reply_markup))
         self.edited.append({"chat_id": chat_id, "message_id": message_id, "text": text})
 
     async def pin_chat_message(self, chat_id, message_id, disable_notification=False):
@@ -117,7 +131,32 @@ async def test_first_publish_sends_and_pins(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_second_publish_edits_existing_message(db_session, monkeypatch):
+async def test_second_publish_edits_existing_message_when_content_changed(db_session, monkeypatch):
+    _patch_bot_config(monkeypatch)
+    _patch_links(monkeypatch, {"free_trial": "https://t.me/TeleMon_2/10"})
+    fake_bot = _FakeBot("fake-token")
+    monkeypatch.setattr("app.services.guide_hub_service.Bot", lambda token: fake_bot)
+
+    await publish_or_update_guide_hub(db_session)
+    _patch_links(monkeypatch, {"free_trial": "https://t.me/TeleMon_2/10", "auto_reply": "https://t.me/TeleMon_2/20"})
+    chat_id, message_id, created = await publish_or_update_guide_hub(db_session)
+
+    assert created is False
+    assert len(fake_bot.sent) == 1  # no second send
+    assert len(fake_bot.edited) == 1  # edited instead
+    assert len(fake_bot.pinned) == 1  # not re-pinned
+
+    row = await guide_hub_crud.get_latest(db_session)
+    assert row is not None
+    assert row.message_id == fake_bot.next_message_id
+
+
+@pytest.mark.asyncio
+async def test_second_publish_with_unchanged_content_is_a_noop_not_a_duplicate(db_session, monkeypatch):
+    """Regression test: Telegram rejects an edit with identical content as
+    "message is not modified" — a real production call hit exactly this and,
+    before this fix, was mistaken for "message deleted" and posted (and
+    pinned) a duplicate message instead of leaving the original alone."""
     _patch_bot_config(monkeypatch)
     _patch_links(monkeypatch, {"free_trial": "https://t.me/TeleMon_2/10"})
     fake_bot = _FakeBot("fake-token")
@@ -127,8 +166,8 @@ async def test_second_publish_edits_existing_message(db_session, monkeypatch):
     chat_id, message_id, created = await publish_or_update_guide_hub(db_session)
 
     assert created is False
-    assert len(fake_bot.sent) == 1  # no second send
-    assert len(fake_bot.edited) == 1  # edited instead
+    assert message_id == fake_bot.next_message_id
+    assert len(fake_bot.sent) == 1  # still just the one message — no duplicate
     assert len(fake_bot.pinned) == 1  # not re-pinned
 
     row = await guide_hub_crud.get_latest(db_session)
