@@ -7,10 +7,21 @@ from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
+from app.services.bot_api_key_service import handle_self_service_api_key
 
 logger = get_logger(__name__)
 
 _application: Application | None = None
+
+
+def _main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Top-level bot menu — includes the self-service API key button."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔑 API 키 받기", callback_data="apikey:get")],
+            [InlineKeyboardButton("🤖 자동 응답 관리", callback_data="autoreply_menu")],
+        ]
+    )
 
 
 def _keyboard(accounts) -> InlineKeyboardMarkup:
@@ -47,6 +58,14 @@ async def autoreply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+
+    # Route to the autoreply submenu
+    if query.data == "autoreply_menu":
+        await query.answer()
+        text, markup = await _status_message()
+        await query.edit_message_text(text, reply_markup=markup)
+        return
+
     _, account_id, action = query.data.split(":", 2)
 
     try:
@@ -63,6 +82,57 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.edit_message_text(text, reply_markup=markup)
 
 
+async def apikey_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the "🔑 API 키 받기" button — self-service issuance / retrieval.
+
+    The telegram_user_id comes from the Telegram Update (trusted), not from any
+    HTTP request.  All eligibility, duplicate-prevention, and key-generation
+    logic lives in app.services.bot_api_key_service.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = update.effective_user.id if update.effective_user else None
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    try:
+        async with async_session_maker() as db:
+            result = await handle_self_service_api_key(db, telegram_user_id)
+    except Exception as exc:
+        logger.error("bot_api_key_callback_failed", error=str(exc), telegram_user_id=telegram_user_id)
+        await query.edit_message_text(
+            "⚠️ 일시적인 서버 오류입니다. 잠시 후 다시 시도해주세요."
+        )
+        return
+
+    # Build the reply based on the result status
+    if result.status == "issued" and result.api_key:
+        # Show the raw key once — this is the only time it will ever be visible.
+        # Use a monospace block and a warning to save it.
+        message = (
+            f"✅ {result.detail}\n\n"
+            f"```\n{result.api_key}\n```\n\n"
+            f"⚠️ 이 키는 다시 표시되지 않습니다. 지금 안전한 곳에 저장해주세요."
+        )
+        await query.edit_message_text(message, parse_mode="Markdown", reply_markup=_main_menu_keyboard())
+    else:
+        # All non-issued outcomes: already_issued, not_linked, not_eligible,
+        # payment_pending, server_error — just show the detail text.
+        prefix = {
+            "already_issued": "ℹ️",
+            "not_linked": "🔗",
+            "not_eligible": "🚫",
+            "payment_pending": "⏳",
+            "server_error": "⚠️",
+        }.get(result.status, "⚠️")
+        await query.edit_message_text(
+            f"{prefix} {result.detail}",
+            reply_markup=_main_menu_keyboard(),
+        )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /start (bare) and the deep-link form /start <token> used by the
     free-trial official-channel verification flow (see app/api/telegram_verify.py).
@@ -72,7 +142,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     connection, so it cannot be forged by anything the frontend sends us.
     """
     if not context.args:
-        await update.message.reply_text("안녕하세요! TeleMon 봇입니다.")
+        await update.message.reply_text(
+            "안녕하세요! TeleMon 봇입니다.\n아래 메뉴에서 원하는 기능을 선택해주세요.",
+            reply_markup=_main_menu_keyboard(),
+        )
         return
 
     token = context.args[0]
@@ -103,7 +176,8 @@ async def start_bot() -> None:
 
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.add_handler(CommandHandler("autoreply", autoreply_command))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^autoreply:"))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^autoreply"))
+    application.add_handler(CallbackQueryHandler(apikey_callback, pattern=r"^apikey:"))
     application.add_handler(CommandHandler("start", start_command))
 
     # Non-blocking startup (vs. the usual Application.run_polling(), which blocks forever)
