@@ -95,8 +95,15 @@ async def publish_or_update_guide_hub(db: AsyncSession) -> tuple[str, int, bool]
             await guide_hub_crud.upsert(db, existing.chat_id, existing.message_id)
             return existing.chat_id, existing.message_id, False
         except TelegramError as exc:
-            # Message may have been deleted/unpinned out-of-band — fall back to
-            # posting a fresh one rather than failing the whole publish call.
+            # Telegram rejects a no-op edit (identical text + keyboard) with this
+            # exact "Bad Request" message — that's a successful idempotent update,
+            # not a failure, so it must not fall through to posting a duplicate.
+            if "message is not modified" in str(exc).lower():
+                logger.info("guide_hub_update_noop", chat_id=existing.chat_id, message_id=existing.message_id)
+                await guide_hub_crud.upsert(db, existing.chat_id, existing.message_id)
+                return existing.chat_id, existing.message_id, False
+            # Otherwise the message may have been deleted/unpinned out-of-band —
+            # fall back to posting a fresh one rather than failing the whole call.
             logger.warning("guide_hub_edit_failed_posting_new", error=str(exc))
 
     try:
