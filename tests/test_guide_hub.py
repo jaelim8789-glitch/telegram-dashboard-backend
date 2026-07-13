@@ -86,12 +86,17 @@ def test_keyboard_omits_unconfigured_buttons(monkeypatch):
     assert all_buttons[0].url == "https://t.me/TeleMon_2/10"
 
 
-def test_keyboard_pairs_two_per_row(monkeypatch):
+def test_keyboard_pairs_two_per_row_with_a_trailing_odd_row(monkeypatch):
     links = {key: f"https://t.me/TeleMon_2/{i}" for i, (key, _label) in enumerate(GUIDE_HUB_BUTTONS)}
     _patch_links(monkeypatch, links)
     markup = _build_keyboard()
-    assert len(markup.inline_keyboard) == len(GUIDE_HUB_BUTTONS) // 2
-    assert all(len(row) == 2 for row in markup.inline_keyboard)
+    total_buttons = sum(len(row) for row in markup.inline_keyboard)
+    assert total_buttons == len(GUIDE_HUB_BUTTONS)
+    full_rows, remainder = divmod(len(GUIDE_HUB_BUTTONS), 2)
+    assert len(markup.inline_keyboard) == full_rows + (1 if remainder else 0)
+    assert all(len(row) == 2 for row in markup.inline_keyboard[:full_rows])
+    if remainder:
+        assert len(markup.inline_keyboard[-1]) == 1
 
 
 def test_keyboard_empty_when_no_links_configured(monkeypatch):
