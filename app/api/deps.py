@@ -51,6 +51,11 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, db
                 # Resolve tenant_id from the user's phone to Tenant.phone
                 tenant_id = await _resolve_tenant_by_phone(db, user.phone)
                 return Identity(kind="user", user=user, tenant_id=tenant_id)
+            # Bearer token might be an API key JWT (sub="user:{api_key_id}")
+            key_row = await api_key_crud.get_api_key(db, user_id)
+            if key_row is not None and key_row.is_active:
+                await api_key_crud.touch_last_used(db, key_row)
+                return Identity(kind="api_key", tenant_id=key_row.tenant_id)
 
     if x_api_key:
         key_row = await api_key_crud.get_by_key(db, x_api_key)
