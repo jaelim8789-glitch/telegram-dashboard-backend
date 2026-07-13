@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
@@ -9,9 +10,21 @@ from app.core.security import create_access_token, generate_user_api_key, hash_a
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
 from app.database import get_db
-from app.schemas.admin import AdminLoginRequest, AdminMeResponse, AdminTokenResponse
+from app.models.audit_log import AdminAuditLog
+from app.models.tenant import Tenant
+from app.models.telegram_verification import TelegramChannelVerification
+from app.schemas.admin import (
+    AdminLoginRequest,
+    AdminMeResponse,
+    AdminTokenResponse,
+    ManualIssueRequest,
+    ManualIssueResponse,
+    UserLookupResponse,
+)
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
+
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
@@ -105,3 +118,144 @@ async def reissue_user_key(user_id: str, db: AsyncSession = Depends(get_db)):
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
     logger.info("user_api_key_reissued", user_id=user_id)
     return UserApiKeyReissued(id=user.id, api_key=raw_key)
+
+
+def utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@router.get("/user-lookup", response_model=UserLookupResponse | None, dependencies=[Depends(require_admin)])
+async def user_lookup(q: str = Query(min_length=1, max_length=50), db: AsyncSession = Depends(get_db)):
+    """Look up a user by phone or tg_<telegram_user_id> identifier.
+    Returns the user's current state including verification and tenant info."""
+    user = await user_crud.get_user_by_phone(db, q)
+    if user is None:
+        return None
+
+    result = UserLookupResponse(
+        user_id=user.id,
+        phone=user.phone,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        last_login=user.last_login,
+        has_api_key=user.api_key_hash is not None,
+    )
+
+    # Try telegram_user_id derived from tg_ prefix
+    tg_user_id: int | None = None
+    if q.startswith("tg_"):
+        try:
+            tg_user_id = int(q[3:])
+        except ValueError:
+            pass
+    elif q.startswith("+") or q.isdigit():
+        try:
+            tg_user_id = int(q)
+        except ValueError:
+            pass
+
+    if tg_user_id is not None:
+        tresult = await db.execute(
+            select(TelegramChannelVerification)
+            .where(TelegramChannelVerification.telegram_user_id == tg_user_id)
+            .order_by(TelegramChannelVerification.created_at.desc())
+            .limit(1)
+        )
+        tcv = tresult.scalar_one_or_none()
+        if tcv is not None:
+            result.telegram_verification_status = tcv.status
+            result.telegram_user_id = tcv.telegram_user_id
+            result.telegram_verified_at = tcv.verified_at
+    else:
+        # Also try to find a telegram_user_id from phone pattern (tg_<id>)
+        if user.phone.startswith("tg_"):
+            try:
+                tid = int(user.phone[3:])
+                tresult = await db.execute(
+                    select(TelegramChannelVerification)
+                    .where(TelegramChannelVerification.telegram_user_id == tid)
+                    .order_by(TelegramChannelVerification.created_at.desc())
+                    .limit(1)
+                )
+                tcv = tresult.scalar_one_or_none()
+                if tcv is not None:
+                    result.telegram_verification_status = tcv.status
+                    result.telegram_user_id = tcv.telegram_user_id
+                    result.telegram_verified_at = tcv.verified_at
+            except ValueError:
+                pass
+
+    # Look up tenant by phone
+    tresult = await db.execute(select(Tenant).where(Tenant.phone == user.phone).limit(1))
+    tenant = tresult.scalar_one_or_none()
+    if tenant is not None:
+        result.tenant_id = tenant.id
+        result.tenant_plan = tenant.plan
+        result.trial_expires_at = tenant.trial_expires_at
+        result.subscription_status = tenant.subscription_status
+
+    return result
+
+
+@router.post("/manual-issue-key", response_model=ManualIssueResponse, dependencies=[Depends(require_admin)])
+async def manual_issue_key(
+    payload: ManualIssueRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    identifier = payload.user_identifier.strip()
+    admin_username = settings.admin_username
+
+    user = await user_crud.get_user_by_phone(db, identifier)
+    if user is None and identifier.startswith("tg_"):
+        user = await user_crud.get_user_by_phone(db, identifier)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 사용자를 찾을 수 없습니다. 먼저 회원가입을 진행해주세요.",
+        )
+
+    if user.api_key_hash is not None:
+        logger.info("manual_issue_duplicate_prevented", user_id=user.id, identifier=identifier)
+        return ManualIssueResponse(
+            user_id=user.id,
+            phone=user.phone,
+            api_key="",
+            already_issued=True,
+        )
+
+    # 3. Ensure tenant exists
+    tresult = await db.execute(select(Tenant).where(Tenant.phone == user.phone).limit(1))
+    tenant = tresult.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 사용자의 테넌트(구독)를 찾을 수 없습니다. 먼저 회원가입을 완료해주세요.",
+        )
+
+    # 4. Issue the API key
+    raw_key = generate_user_api_key()
+    user.api_key_hash = hash_api_key(raw_key)
+    await db.flush()
+
+    await db.commit()
+    await db.refresh(user)
+
+    # 5. Audit log (never store the raw key)
+    await db.execute(
+        AdminAuditLog.__table__.insert().values(
+            admin_username=admin_username,
+            action="manual_api_key_issue",
+            target_type="user",
+            target_id=user.id,
+            target_phone=user.phone,
+            detail=f"Issued new API key for user {user.phone} via manual admin action",
+            memo=payload.memo,
+            result="success",
+        )
+    )
+    await db.commit()
+
+    logger.info("manual_api_key_issued", user_id=user.id, identifier=identifier, memo=payload.memo)
+    return ManualIssueResponse(user_id=user.id, phone=user.phone, api_key=raw_key)

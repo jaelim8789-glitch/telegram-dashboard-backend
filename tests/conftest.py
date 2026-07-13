@@ -104,7 +104,8 @@ async def client(db_session):
 @pytest_asyncio.fixture
 async def unauthenticated_client(db_session):
     """The real require_api_key_or_admin dependency is left in place — use this for
-    testing the auth mechanism itself."""
+    testing the auth mechanism itself. Also overrides get_db to use the test session
+    so data committed in the test is visible to the endpoint."""
     async def _override_get_db():
         yield db_session
 
