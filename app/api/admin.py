@@ -59,7 +59,29 @@ async def me():
     dependencies=[Depends(require_admin)],
 )
 async def create_api_key(payload: APIKeyCreateRequest, db: AsyncSession = Depends(get_db)):
+    # Resolve user from tenant_id before key creation so we can check for conflicts
+    user = None
+    if payload.tenant_id:
+        result = await db.execute(select(Tenant).where(Tenant.id == payload.tenant_id))
+        tenant = result.scalar_one_or_none()
+        if tenant is not None:
+            user = await user_crud.get_user_by_phone(db, tenant.phone)
+            if user is not None and user.api_key_hash is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="이 사용자에게 이미 발급된 API 키가 있습니다. 먼저 기존 키를 해지하거나 재발급해주세요.",
+                )
+
     api_key = await api_key_crud.create_api_key(db, payload.name, tenant_id=payload.tenant_id)
+
+    # Bridge: store the same key's hash in User.api_key_hash so that
+    # /auth/login-with-api-key (which only checks User.api_key_hash) can
+    # authenticate this key.  Without this, admin-issued API keys are
+    # usable via X-API-Key header but unusable for login-with-api-key.
+    if user is not None:
+        user.api_key_hash = hash_api_key(api_key.key)
+        await db.flush()
+
     logger.info("api_key_created", api_key_id=api_key.id, name=api_key.name, tenant_id=payload.tenant_id)
     return APIKeyCreated(id=api_key.id, key=api_key.key, name=api_key.name, created_at=api_key.created_at)
 
@@ -86,6 +108,15 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
     api_key = await api_key_crud.get_api_key(db, api_key_id)
     if api_key is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API 키를 찾을 수 없습니다.")
+    # Also clear the User.api_key_hash bridge so the key can't login-with-api-key
+    if api_key.tenant_id:
+        result = await db.execute(select(Tenant).where(Tenant.id == api_key.tenant_id))
+        tenant = result.scalar_one_or_none()
+        if tenant is not None:
+            user = await user_crud.get_user_by_phone(db, tenant.phone)
+            if user is not None and user.api_key_hash is not None:
+                user.api_key_hash = None
+                await db.flush()
     await api_key_crud.revoke_api_key(db, api_key)
     logger.info("api_key_revoked", api_key_id=api_key_id)
 

@@ -214,3 +214,50 @@ async def test_issued_free_key_allows_dashboard_access(unauthenticated_client, d
     assert me_res.status_code == 200
     assert me_res.json()["role"] == "user"
     assert me_res.json()["phone"] == "+821099990009"
+
+
+@pytest.mark.asyncio
+async def test_free_trial_key_never_resolves_to_admin_role(unauthenticated_client, db_session, monkeypatch):
+    """SECURITY REGRESSION: a freshly-issued Free Trial API key must never
+    resolve to role="admin" anywhere in the login -> /me chain.
+
+    Investigated 2026-07-13: `test_issued_free_key_can_login` was reported as
+    possibly returning role="admin". Root cause was NOT a production
+    authorization bug — `_resolve_identity` in app/api/deps.py strictly
+    requires an exact `sub == "admin"` JWT claim (see decode_access_token),
+    which a user token (`sub="user:<id>"` from create_user_access_token) can
+    never satisfy. The symptom came from that test using the `client` fixture,
+    which conftest.py documents as unconditionally overriding
+    get_current_identity to Identity(kind="admin") for convenience on tests
+    that don't exercise auth — /me short-circuited to the fixture's hardcoded
+    admin identity regardless of the real Bearer token supplied. This test
+    uses `unauthenticated_client` (the real, non-bypassed auth dependency) so
+    it actually exercises production role resolution end to end, and pins the
+    "never admin" invariant explicitly rather than relying on equality to
+    "user" alone.
+    """
+    _patch_channel(monkeypatch)
+    token = await _create_verified_token(db_session, telegram_user_id=999010)
+
+    issue_res = await unauthenticated_client.post(
+        "/api/free-api-key/issue",
+        json={"token": token, "phone": "+821099990010"},
+    )
+    assert issue_res.status_code == 200
+    raw_key = issue_res.json()["api_key"]
+
+    login_res = await unauthenticated_client.post(
+        "/api/auth/login-with-api-key",
+        json={"api_key": raw_key},
+    )
+    assert login_res.status_code == 200
+    access_token = login_res.json()["access_token"]
+
+    me_res = await unauthenticated_client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert me_res.status_code == 200
+    role = me_res.json()["role"]
+    assert role != "admin", "free-trial-issued key must never resolve to admin"
+    assert role == "user"
