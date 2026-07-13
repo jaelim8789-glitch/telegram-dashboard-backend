@@ -38,3 +38,7 @@ class Broadcast(Base):
     )
     # Whether this recurring parent is paused (keeps schedule but doesn't execute).
     is_recurring_paused: Mapped[bool] = mapped_column(SA_Boolean, default=False, server_default="0")
+    # Delivery mode: "normal" (1분 간격), "cycle" (N분마다 라운드로빈), "bulk" (즉시 전체전송), "reply" (답장형 발송)
+    delivery_mode: Mapped[str] = mapped_column(String(20), default="normal", server_default="normal")
+    # When delivery_mode is "reply", the specific message ID to reply to (null = auto-fetch latest)
+    reply_to_msg_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

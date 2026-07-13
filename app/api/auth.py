@@ -16,6 +16,7 @@ from app.core.limits import (
 )
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
 from app.crud import telegram_verification as verification_crud
+from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.tenant import Tenant
@@ -140,12 +141,21 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
             detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(retry_after)},
         )
+    # Check User.api_key_hash first (for free-trial / self-service keys)
     user = await user_crud.get_by_api_key_hash(db, hash_api_key(payload.api_key))
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")
-    await user_crud.touch_last_login(db, user)
-    logger.info("user_login_success", user_id=user.id)
-    return LoginWithApiKeyResponse(access_token=create_user_access_token(user.id))
+    if user is not None and user.is_active:
+        await user_crud.touch_last_login(db, user)
+        logger.info("user_login_success", user_id=user.id)
+        return LoginWithApiKeyResponse(access_token=create_user_access_token(user.id))
+
+    # Fallback: check ApiKeys table (for admin-issued keys, tenant_id may not have
+    # a corresponding User record yet, e.g. after DB reset).
+    key_record = await api_key_crud.get_by_key(db, payload.api_key)
+    if key_record is not None and key_record.is_active:
+        logger.info("api_key_login_success", api_key_id=key_record.id)
+        return LoginWithApiKeyResponse(access_token=create_user_access_token(key_record.id))
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")
 
 
 @router.get("/me", response_model=MeResponse)

@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import (
@@ -50,7 +52,13 @@ async def send_code(
         raise _config_error_to_http(exc)
 
     try:
-        sent = await client.send_code_request(account.phone)
+        # Add timeout wrapper to avoid hanging on slow Telegram SMS delivery
+        sent = await asyncio.wait_for(client.send_code_request(account.phone), timeout=30)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="텔레그램 서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.",
+        )
     except PhoneNumberInvalidError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="유효하지 않은 전화번호입니다.")
     except FloodWaitError as exc:

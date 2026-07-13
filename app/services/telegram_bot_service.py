@@ -184,6 +184,17 @@ async def start_bot() -> None:
     # so this can live inside the FastAPI lifespan alongside uvicorn's own event loop.
     await application.initialize()
     await application.start()
+
+    # Gracefully close any stale polling session before starting our own, to avoid
+    # 409 Conflict when another instance (e.g. a Render.com deployment that shares the
+    # same bot token) is still connected.  This is best-effort: close() may fail due to
+    # rate limits or network errors, but polling will still be attempted.
+    try:
+        await application.bot.close()
+        logger.info("telegram_bot_stale_session_closed")
+    except Exception as exc:
+        logger.warning("telegram_bot_close_skipped", error=str(exc))
+
     await application.updater.start_polling()
     _application = application
     logger.info("telegram_bot_started")

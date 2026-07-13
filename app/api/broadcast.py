@@ -12,7 +12,7 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
-from app.schemas.broadcast import BroadcastChildrenRead, BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES
+from app.schemas.broadcast import BroadcastChildrenRead, BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES, DeliveryMode
 from app.services.broadcast_processor import process_broadcast
 from app.services.failure_intel import classify_failure
 from app.services.media import save_broadcast_media
@@ -53,6 +53,12 @@ async def create_broadcast(
     recurring_interval_minutes: Annotated[
         str | None, Form(description="Minutes between recurring sends. One of: 30, 60, 120, 180, 360, 720, 1440")
     ] = None,
+    delivery_mode: Annotated[
+        str | None, Form(description="Delivery mode: normal (1min/group), cycle (round-robin), bulk (instant all), reply (reply to latest message)")
+    ] = None,
+    reply_to_msg_id: Annotated[
+        str | None, Form(description="Message ID to reply to (only used when delivery_mode is 'reply')")
+    ] = None,
     image: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
@@ -84,6 +90,27 @@ async def create_broadcast(
                 detail="recurring_interval_minutes는 유효한 정수여야 합니다.",
             )
 
+    # Parse delivery_mode
+    mode_val: DeliveryMode = "normal"
+    if delivery_mode is not None and delivery_mode.strip():
+        if delivery_mode.strip() not in ("normal", "cycle", "bulk", "reply"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="delivery_mode는 normal, cycle, bulk, reply 중 하나여야 합니다.",
+            )
+        mode_val = delivery_mode.strip()
+
+    # Parse reply_to_msg_id
+    parsed_reply_to_id: int | None = None
+    if reply_to_msg_id is not None and reply_to_msg_id.strip():
+        try:
+            parsed_reply_to_id = int(reply_to_msg_id.strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="reply_to_msg_id는 유효한 정수여야 합니다.",
+            )
+
     try:
         payload = BroadcastCreate(
             account_id=account_id,
@@ -91,6 +118,8 @@ async def create_broadcast(
             recipients=recipients_list,
             scheduled_at=scheduled_at or None,
             recurring_interval_minutes=recurring_val,
+            delivery_mode=mode_val,
+            reply_to_msg_id=parsed_reply_to_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())

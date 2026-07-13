@@ -40,6 +40,8 @@ async def create_broadcast(
         scheduled_at=scheduled_at,
         recurring_interval_minutes=data.recurring_interval_minutes,
         next_scheduled_at=None,
+        delivery_mode=getattr(data, "delivery_mode", "normal"),
+        reply_to_msg_id=getattr(data, "reply_to_msg_id", None),
     )
     if data.recurring_interval_minutes is not None:
         if scheduled_at is None or scheduled_at <= now:

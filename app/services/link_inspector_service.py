@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from telethon import TelegramClient
@@ -215,17 +216,16 @@ async def _inspect_one(client: TelegramClient, raw_link: str) -> dict:
 
 
 async def inspect_links(account: Account, links: list[str]) -> tuple[list[dict], int]:
-    """Inspect a batch of pasted links using the account's Telethon session.
-
-    Returns (items, duplicates_removed). Dedupe happens before any Telethon
-    call so repeated links in a paste don't cost extra round-trips.
-    """
     client = await get_authorized_client(account)
     deduped, duplicates_removed = _dedupe_links(links)
 
-    items: list[dict] = []
-    for link in deduped:
-        items.append(await _inspect_one(client, link))
+    semaphore = asyncio.Semaphore(10)
+
+    async def _inspect_one_with_semaphore(link: str) -> dict:
+        async with semaphore:
+            return await _inspect_one(client, link)
+
+    items = await asyncio.gather(*[_inspect_one_with_semaphore(link) for link in deduped])
 
     return items, duplicates_removed
 

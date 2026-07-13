@@ -95,8 +95,12 @@ class DeliveryRequest:
     recipients: list[str]
     message: str
     media_path: str | None = None
-    source: str = "manual"  # manual, broadcast, reply_macro, auto_reply, scheduled
-    source_id: str | None = None  # broadcast_id, macro_id, etc.
+    source: str = "manual"
+    source_id: str | None = None
+    on_status_change: Callable | None = None
+    inter_message_delay: float = 1.0
+    reply_to_msg_id: int | None = None
+    reply_to_map: dict[str, int] | None = None
 
 
 def utcnow_naive() -> datetime:
@@ -146,14 +150,15 @@ async def _send_single(
     target: int | str,
     message: str,
     media_path: str | None,
+    reply_to_msg_id: int | None = None,
 ) -> tuple[DeliveryStatus, int | None, str | None, int | None]:
     """Send a single message and return (status, telegram_msg_id, safe_error, flood_wait_seconds)."""
     try:
         if media_path:
-            result = await client.send_file(target, media_path, caption=message)
+            result = await client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id)
             msg_id = result.id if hasattr(result, "id") else None
         else:
-            result = await client.send_message(target, message)
+            result = await client.send_message(target, message, reply_to=reply_to_msg_id)
             msg_id = result.id
         return (DeliveryStatus.SUCCESS, msg_id, None, None)
     except Exception as exc:
@@ -229,6 +234,7 @@ async def _deliver_with_retry(
     source_id: str | None,
     account_id: str,
     on_status_change: Callable | None = None,
+    reply_to_msg_id: int | None = None,
 ) -> DeliveryResult:
     """Attempt delivery with retry for recoverable failures.
 
@@ -246,7 +252,7 @@ async def _deliver_with_retry(
             _publish_event(EVENT_RETRYING, None, source, source_id, on_status_change)
 
         started_at = utcnow_naive()
-        status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path)
+        status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path, reply_to_msg_id)
         completed_at = utcnow_naive()
 
         result = DeliveryResult(
@@ -435,6 +441,11 @@ async def deliver_message(
 
     for i, recipient in enumerate(request.recipients):
         target = _resolve_target(recipient)
+        reply_to = (
+            request.reply_to_map.get(recipient)
+            if request.reply_to_map is not None
+            else request.reply_to_msg_id
+        )
         result = await _deliver_with_retry(
             client=client,
             target=target,
@@ -445,6 +456,7 @@ async def deliver_message(
             source_id=request.source_id,
             account_id=request.account_id,
             on_status_change=on_status_change,
+            reply_to_msg_id=reply_to,
         )
         results.append(result)
 
@@ -459,8 +471,8 @@ async def deliver_message(
             except Exception as persist_err:
                 logger.warning("banned_persistence_failed", account_id=request.account_id, error=str(persist_err))
 
-        # Pacing delay between recipients
+        # Pacing delay between recipients (configurable per request)
         if i < len(request.recipients) - 1:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(request.inter_message_delay)
 
     return results
