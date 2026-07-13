@@ -1,17 +1,22 @@
-"""Self-service API key issuance / retrieval for the Telegram bot.
-
-This service is invoked from the bot's "🔑 API 키 받기" inline-button callback.
-It reuses the *same* security primitives as the existing free-api-key and admin
-manual-issue flows (``generate_user_api_key``, ``hash_api_key``,
-``is_channel_member``, ``apply_plan_limits``, ``get_plan``) — it does **not**
-create a parallel key-generation system.
+"""Self-service API key RECOVERY for the Telegram bot — for an existing,
+already-eligible TeleMon account only. This is a fallback issuance path, not
+an independent signup/free-trial path: it never creates a User or Tenant and
+never grants a new trial. It reuses the *same* security primitives as the
+existing free-api-key and admin manual-issue flows (``generate_user_api_key``,
+``hash_api_key``, ``is_channel_member``) — it does **not** create a parallel
+key-generation system, and does **not** create a parallel account-creation
+system either.
 
 Trust model
 -----------
 The ``telegram_user_id`` passed in comes straight from a Telegram ``Update``
 object inside the bot's polling connection, so it cannot be forged by an HTTP
-client.  Channel membership is re-verified server-side on every call
-(fail-closed), exactly like ``telegram_verify.py``.
+client. Channel membership is re-verified server-side on every call
+(fail-closed), exactly like ``telegram_verify.py`` — but membership alone is
+never sufficient to issue a key. A ``User`` must already exist with phone
+``tg_<telegram_user_id>``, which only ``app/api/free_api_key.py``'s ``issue``
+endpoint (the real, channel-verified web signup/free-trial flow) creates. If
+no such ``User`` exists, this returns ``not_linked`` regardless of membership.
 
 Key retrieval policy
 --------------------
@@ -22,18 +27,16 @@ This service respects that contract — if a key already exists we report
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.core.plans import get_plan
-from app.core.security import generate_user_api_key, hash_api_key, mask_api_key
+from app.core.security import generate_user_api_key, hash_api_key
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.telegram_membership import MembershipCheckUnavailable, is_channel_member
-from app.services.usage_tracker import apply_plan_limits
 
 logger = get_logger(__name__)
 
@@ -111,28 +114,6 @@ def _is_subscription_active(tenant: Tenant) -> bool:
     return True
 
 
-async def _get_or_create_free_tenant(db: AsyncSession, phone: str) -> Tenant:
-    """Reuse the same tenant-creation logic as free_api_key.py / admin.py."""
-    result = await db.execute(select(Tenant).where(Tenant.phone == phone))
-    tenant = result.scalar_one_or_none()
-
-    if tenant is None:
-        plan_def = get_plan("free")
-        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 24
-        trial_expires = _utcnow_naive() + timedelta(hours=trial_hours)
-        tenant = Tenant(
-            phone=phone,
-            plan="free",
-            subscription_status="active",
-            trial_expires_at=trial_expires,
-        )
-        db.add(tenant)
-        await db.flush()
-        await apply_plan_limits(db, tenant, "free")
-
-    return tenant
-
-
 # ─── Main entry point ─────────────────────────────────────────────────
 
 
@@ -171,39 +152,64 @@ async def handle_self_service_api_key(
 
 
 async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult:
+    """Recovery/fallback issuance for an EXISTING, already-eligible TeleMon
+    account — never an independent signup path. Bare channel membership is
+    never sufficient on its own; this only ever reuses eligibility state a
+    prior payment/free-trial/verification flow already produced.
+    """
     identifier = _tg_identifier(telegram_user_id)
 
-    # ── 2. Verify linked TeleMon account ────────────────────────────────
+    # ── 2. Verify a securely linked TeleMon account already exists ──────
+    # A User with this exact identifier can only exist if this Telegram
+    # identity already completed the real, channel-verified web signup/
+    # free-trial flow — see app/api/free_api_key.py's `issue` endpoint,
+    # which creates User(phone=f"tg_{telegram_user_id}") from a *consumed*,
+    # verified TelegramChannelVerification row (the same trusted
+    # telegram_user_id source used here). This self-service flow must
+    # never originate that account itself: if no such User exists, there
+    # is nothing to recover, regardless of current channel membership.
     user = await _find_user(db, identifier)
+    if user is None:
+        return BotApiKeyResult(
+            status="not_linked",
+            detail=(
+                "연결된 TeleMon 계정을 찾을 수 없습니다.\n"
+                "먼저 공식 채널(@TeleMon_2)에 가입하고 웹사이트에서 회원가입(무료 체험)을 완료해주세요."
+            ),
+        )
 
-    # ── 3. Verify eligibility ───────────────────────────────────────────
-    # If the user already exists, check their tenant status.
-    # If not, we still allow issuance *if* they're a channel member (free trial).
-    tenant: Tenant | None = None
-    if user is not None:
-        tenant = await _find_tenant(db, user.phone)
+    # ── 3. Reuse the eligibility state the normal flow already created —
+    #        never create or grant a tenant/trial here. ─────────────────
+    tenant = await _find_tenant(db, user.phone)
+    if tenant is None:
+        return BotApiKeyResult(
+            status="not_eligible",
+            detail=(
+                "요금제 또는 무료 체험 정보를 찾을 수 없습니다.\n"
+                "웹사이트에서 회원가입(무료 체험) 또는 결제를 완료해주세요."
+            ),
+        )
+    if tenant.subscription_status == "pending":
+        return BotApiKeyResult(
+            status="payment_pending",
+            detail=(
+                "결제가 진행 중입니다. USDT 입금이 확인되면 자동으로 API 키가 발급됩니다.\n"
+                "잠시 후 다시 확인해주세요."
+            ),
+        )
+    if not (_is_subscription_active(tenant) or _is_trial_valid(tenant)):
+        return BotApiKeyResult(
+            status="not_eligible",
+            detail=(
+                "현재 유효한 요금제 또는 무료 체험이 없습니다.\n"
+                "결제를 완료하거나 공식 채널에 가입 후 다시 시도해주세요."
+            ),
+        )
 
-    if tenant is not None:
-        if tenant.subscription_status == "pending":
-            return BotApiKeyResult(
-                status="payment_pending",
-                detail=(
-                    "결제가 진행 중입니다. USDT 입금이 확인되면 자동으로 API 키가 발급됩니다.\n"
-                    "잠시 후 다시 확인해주세요."
-                ),
-            )
-        if not (_is_subscription_active(tenant) or _is_trial_valid(tenant)):
-            return BotApiKeyResult(
-                status="not_eligible",
-                detail=(
-                    "현재 유효한 요금제 또는 무료 체험이 없습니다.\n"
-                    "결제를 완료하거나 공식 채널에 가입 후 다시 시도해주세요."
-                ),
-            )
-
-    # For new users (no tenant yet), channel membership is the eligibility gate.
-    # For existing eligible users, we still re-verify membership as a fail-closed
-    # security check — the same policy as telegram_verify.py.
+    # ── 4. Fail-closed re-verification of current channel membership —
+    #        the same policy as telegram_verify.py. An already-linked,
+    #        already-eligible account that has since left the channel is
+    #        not_eligible, not not_linked (the account link itself is real). ──
     try:
         is_member = await is_channel_member(telegram_user_id)
     except MembershipCheckUnavailable:
@@ -212,16 +218,7 @@ async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult
             status="server_error",
             detail="일시적인 서버 오류입니다. 잠시 후 다시 시도해주세요.",
         )
-
     if not is_member:
-        if user is None:
-            return BotApiKeyResult(
-                status="not_linked",
-                detail=(
-                    "연결된 TeleMon 계정을 찾을 수 없습니다.\n"
-                    "먼저 공식 채널(@TeleMon_2)에 가입하고 웹사이트에서 회원가입을 완료해주세요."
-                ),
-            )
         return BotApiKeyResult(
             status="not_eligible",
             detail=(
@@ -230,8 +227,8 @@ async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult
             ),
         )
 
-    # ── 4. Check current API key state ──────────────────────────────────
-    if user is not None and user.api_key_hash is not None:
+    # ── 5. Check current API key state ──────────────────────────────────
+    if user.api_key_hash is not None:
         # Existing eligible key — raw key cannot be retrieved (hash-only storage).
         # We report "already issued" with a masked hint.  This is the safest
         # compatible flow: we do NOT weaken security or make raw keys retrievable.
@@ -250,24 +247,16 @@ async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult
             ),
         )
 
-    # ── 5. Issue a new API key (reusing existing primitives) ────────────
+    # ── 6. Issue — the user and tenant already exist; only the key hash
+    #        gets written here, nothing else. ───────────────────────────
     raw_key = generate_user_api_key()
-
-    if user is None:
-        user = User(phone=identifier)
-        db.add(user)
-        await db.flush()
 
     user.api_key_hash = hash_api_key(raw_key)
     await db.flush()
-
-    # Ensure a free-trial tenant exists (same as free_api_key.py / admin.py)
-    await _get_or_create_free_tenant(db, identifier)
-
     await db.commit()
     await db.refresh(user)
 
-    # ── 6. Log (never the raw key) ──────────────────────────────────────
+    # ── 7. Log (never the raw key) ──────────────────────────────────────
     logger.info(
         "bot_api_key_issued",
         telegram_user_id=telegram_user_id,

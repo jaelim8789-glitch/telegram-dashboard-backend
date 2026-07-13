@@ -1,13 +1,16 @@
 """Focused tests for the Telegram bot self-service API key flow.
 
-Covers:
-  - unauthorized/unlinked Telegram user
-  - ineligible user (not a channel member)
-  - eligible user issuance success
+This is a RECOVERY/FALLBACK issuance path for an existing, already-eligible
+TeleMon account — never an independent free-trial signup path. Covers:
+  - an unlinked channel member cannot receive an API key
+  - the bot cannot create a new User/Tenant for an unknown Telegram user
+  - an existing eligible linked user can self-issue successfully
+  - ineligible linked user (not a channel member, expired trial, no tenant)
   - duplicate issuance prevention
   - concurrent/repeated button clicks (race-condition guard)
   - raw API key not logged
   - existing issuance flow regression (free_api_key / admin manual still work)
+  - idempotency, cross-user isolation
 """
 
 import asyncio
@@ -16,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import select
 
 from app.config import settings
 from app.core.security import generate_user_api_key, hash_api_key
@@ -66,11 +70,40 @@ def _patch_membership_unavailable(monkeypatch):
     )
 
 
+async def _create_linked_eligible_user(db_session, identifier: str) -> tuple[User, Tenant]:
+    """Simulates an account that already completed the real, channel-verified
+    web signup/free-trial flow: a User + an active free-trial Tenant, both
+    keyed by the same tg_<id> identifier app/api/free_api_key.py's `issue`
+    endpoint uses. This is the ONLY way the bot self-service flow is allowed
+    to find an eligible account — it must never manufacture this state itself.
+    """
+    user = User(phone=identifier)
+    db_session.add(user)
+    tenant = Tenant(
+        phone=identifier,
+        plan="free",
+        subscription_status="active",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24),
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+    await db_session.commit()
+    return user, tenant
+
+
 async def _create_user_with_key(db_session, identifier: str, raw_key: str | None = None) -> User:
+    """An existing, already-issued account — user + active tenant + key hash."""
     if raw_key is None:
         raw_key = generate_user_api_key()
     user = User(phone=identifier, api_key_hash=hash_api_key(raw_key))
     db_session.add(user)
+    tenant = Tenant(
+        phone=identifier,
+        plan="free",
+        subscription_status="active",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24),
+    )
+    db_session.add(tenant)
     await db_session.flush()
     await db_session.commit()
     return user
@@ -117,35 +150,59 @@ async def test_unlinked_user_not_member_rejected(db_session, monkeypatch):
     assert "TeleMon" in result.detail
 
 
-async def test_unlinked_user_but_member_gets_issued(db_session, monkeypatch):
-    """A new Telegram user who IS a channel member -> gets a free-trial key."""
+async def test_unlinked_channel_member_cannot_receive_api_key(db_session, monkeypatch):
+    """SECURITY: a brand-new Telegram user who IS a channel member, but has no
+    existing TeleMon account, must NOT receive an API key. Bare channel
+    membership is not sufficient proof of an existing, eligible account."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
 
     result = await handle_self_service_api_key(db_session, telegram_user_id=888002)
 
-    assert result.status == "issued"
-    assert result.api_key is not None
-    assert result.api_key.startswith("sk-")
+    assert result.status == "not_linked"
+    assert result.api_key is None
+    assert result.masked_key is None
 
-    from sqlalchemy import select
+
+async def test_unlinked_channel_member_no_user_or_tenant_created(db_session, monkeypatch):
+    """SECURITY: the bot self-service flow must never create a new User or
+    Tenant for a Telegram identity it doesn't already recognize — even when
+    that identity is a verified channel member."""
+    _patch_channel_config(monkeypatch)
+    _patch_membership(monkeypatch, is_member=True)
+
+    result = await handle_self_service_api_key(db_session, telegram_user_id=888002)
+    assert result.status == "not_linked"
+
     user = (
         await db_session.execute(select(User).where(User.phone == "tg_888002"))
     ).scalar_one_or_none()
-    assert user is not None
-    assert user.api_key_hash == hash_api_key(result.api_key)
+    assert user is None, "bot self-service must never originate a new User"
+
+    tenant = (
+        await db_session.execute(select(Tenant).where(Tenant.phone == "tg_888002"))
+    ).scalar_one_or_none()
+    assert tenant is None, "bot self-service must never originate a new Tenant/trial"
 
 
 # ─── 2. Ineligible user ────────────────────────────────────────────────
 
 
 async def test_ineligible_user_not_member_rejected(db_session, monkeypatch):
-    """Existing user but not a channel member -> not_eligible."""
+    """Existing linked, eligible-tenant user who is no longer a channel member -> not_eligible."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=False)
 
-    user = User(phone="tg_888003")
+    identifier = "tg_888003"
+    user = User(phone=identifier)
     db_session.add(user)
+    tenant = Tenant(
+        phone=identifier,
+        plan="free",
+        subscription_status="active",
+        trial_expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24),
+    )
+    db_session.add(tenant)
     await db_session.flush()
     await db_session.commit()
 
@@ -174,13 +231,41 @@ async def test_ineligible_expired_trial_rejected(db_session, monkeypatch):
     assert result.api_key is None
 
 
-# ─── 3. Eligible user issuance success ─────────────────────────────────
-
-
-async def test_eligible_user_issuance_success(db_session, monkeypatch):
-    """A channel member with no existing key -> key issued, hash stored, tenant created."""
+async def test_linked_user_without_tenant_gets_not_eligible(db_session, monkeypatch):
+    """A User row exists but has no Tenant at all -> not_eligible, and no
+    tenant/trial is silently created to paper over it."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
+
+    identifier = "tg_888015"
+    user = User(phone=identifier)
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.commit()
+
+    result = await handle_self_service_api_key(db_session, telegram_user_id=888015)
+
+    assert result.status == "not_eligible"
+    assert result.api_key is None
+
+    tenant = (
+        await db_session.execute(select(Tenant).where(Tenant.phone == identifier))
+    ).scalar_one_or_none()
+    assert tenant is None, "must not silently create a tenant/trial for a linked user"
+
+
+# ─── 3. Eligible, already-linked user issuance success ─────────────────
+
+
+async def test_eligible_linked_user_can_self_issue(db_session, monkeypatch):
+    """An EXISTING, already-eligible TeleMon account (User + active free-trial
+    Tenant already created by the normal web flow) can self-issue via the bot
+    — this is the only path that should ever result in "issued"."""
+    _patch_channel_config(monkeypatch)
+    _patch_membership(monkeypatch, is_member=True)
+
+    identifier = "tg_888005"
+    _, existing_tenant = await _create_linked_eligible_user(db_session, identifier)
 
     result = await handle_self_service_api_key(db_session, telegram_user_id=888005)
 
@@ -188,20 +273,21 @@ async def test_eligible_user_issuance_success(db_session, monkeypatch):
     assert result.api_key is not None
     assert result.api_key.startswith("sk-")
 
-    from sqlalchemy import select
     user = (
-        await db_session.execute(select(User).where(User.phone == "tg_888005"))
+        await db_session.execute(select(User).where(User.phone == identifier))
     ).scalar_one_or_none()
     assert user is not None
     assert user.api_key_hash == hash_api_key(result.api_key)
     assert user.api_key_hash != result.api_key
 
-    tenant = (
-        await db_session.execute(select(Tenant).where(Tenant.phone == "tg_888005"))
-    ).scalar_one_or_none()
-    assert tenant is not None
-    assert tenant.plan == "free"
-    assert tenant.subscription_status == "active"
+    # The pre-existing tenant is reused, not replaced/duplicated.
+    tenants = (
+        await db_session.execute(select(Tenant).where(Tenant.phone == identifier))
+    ).scalars().all()
+    assert len(tenants) == 1
+    assert tenants[0].id == existing_tenant.id
+    assert tenants[0].plan == "free"
+    assert tenants[0].subscription_status == "active"
 
 
 # ─── 4. Duplicate issuance prevention ──────────────────────────────────
@@ -245,6 +331,9 @@ async def test_repeated_clicks_after_completion_ok(db_session, monkeypatch):
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
 
+    identifier = "tg_888008"
+    await _create_linked_eligible_user(db_session, identifier)
+
     result1 = await handle_self_service_api_key(db_session, telegram_user_id=888008)
     assert result1.status == "issued"
 
@@ -257,6 +346,9 @@ async def test_concurrent_issuance_only_one_key(db_session, monkeypatch):
     """Genuinely concurrent asyncio tasks -> only one issues."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
+
+    identifier = "tg_888009"
+    await _create_linked_eligible_user(db_session, identifier)
 
     _in_flight.clear()
 
@@ -277,6 +369,9 @@ async def test_raw_api_key_not_logged(db_session, monkeypatch, caplog):
     """The raw API key must never appear in log output."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
+
+    identifier = "tg_888010"
+    await _create_linked_eligible_user(db_session, identifier)
 
     with caplog.at_level(logging.INFO, logger="app.services.bot_api_key_service"):
         result = await handle_self_service_api_key(db_session, telegram_user_id=888010)
@@ -331,13 +426,29 @@ async def test_payment_pending_rejected(db_session, monkeypatch):
 
 
 async def test_server_error_on_membership_unavailable(db_session, monkeypatch):
-    """If the Telegram API is unreachable -> server_error (fail closed)."""
+    """An already-linked, eligible account whose membership can't be verified
+    (Telegram API unreachable) -> server_error (fail closed), not issued."""
     _patch_channel_config(monkeypatch)
     _patch_membership_unavailable(monkeypatch)
+
+    identifier = "tg_888013"
+    await _create_linked_eligible_user(db_session, identifier)
 
     result = await handle_self_service_api_key(db_session, telegram_user_id=888013)
 
     assert result.status == "server_error"
+    assert result.api_key is None
+
+
+async def test_unlinked_user_membership_unavailable_still_not_linked(db_session, monkeypatch):
+    """An unlinked user gets not_linked even if the membership API is down —
+    that check is never reached for an unrecognized Telegram identity."""
+    _patch_channel_config(monkeypatch)
+    _patch_membership_unavailable(monkeypatch)
+
+    result = await handle_self_service_api_key(db_session, telegram_user_id=888013002)
+
+    assert result.status == "not_linked"
     assert result.api_key is None
 
 
@@ -408,6 +519,9 @@ async def test_idempotent_across_sessions(db_session, monkeypatch):
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
 
+    identifier = "tg_888014"
+    await _create_linked_eligible_user(db_session, identifier)
+
     result1 = await handle_self_service_api_key(db_session, telegram_user_id=888014)
     assert result1.status == "issued"
 
@@ -424,6 +538,9 @@ async def test_cross_user_isolation(db_session, monkeypatch):
     """User A's key must never be returned to User B."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
+
+    await _create_linked_eligible_user(db_session, "tg_888020")
+    await _create_linked_eligible_user(db_session, "tg_888021")
 
     result_a = await handle_self_service_api_key(db_session, telegram_user_id=888020)
     assert result_a.status == "issued"
