@@ -26,7 +26,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "monthly_message_limit": 100,
             "monthly_auto_reply_limit": 100,
             "cooldown_minimum_minutes": 60,
-            "can_broadcast": False,
+            "can_broadcast": True,
             "can_schedule": False,
             "can_attach_images": False,
             "can_export_data": False,

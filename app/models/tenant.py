@@ -48,7 +48,7 @@ class Tenant(Base):
     stars_balance: Mapped[int] = mapped_column(Integer, default=0)
     
     # Features enabled
-    can_broadcast: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_broadcast: Mapped[bool] = mapped_column(Boolean, default=True)
     can_schedule: Mapped[bool] = mapped_column(Boolean, default=False)
     can_attach_images: Mapped[bool] = mapped_column(Boolean, default=False)
     can_export_data: Mapped[bool] = mapped_column(Boolean, default=False)
