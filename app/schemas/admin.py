@@ -48,3 +48,9 @@ class ManualIssueResponse(BaseModel):
     phone: str
     api_key: str
     already_issued: bool = False
+
+
+class GuideHubPublishResponse(BaseModel):
+    chat_id: str
+    message_id: int
+    created: bool

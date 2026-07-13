@@ -214,7 +214,7 @@ async def test_verified_token_continues_into_existing_trial_and_api_key_flow(
 
     row = await verification_crud.create_verification(db_session)
     await verification_crud.link_telegram_user(db_session, row.id, telegram_user_id=555)
-    await verification_crud.mark_verified(db_session, row)
+    await verification_crud.mark_verified(db_session, row.id)
 
     res = await _complete_signup_with_token(
         unauthenticated_client, "+821099990001", monkeypatch, row.id
@@ -286,7 +286,7 @@ async def test_verified_token_cannot_be_reused_for_a_second_trial(
 
     row = await verification_crud.create_verification(db_session)
     await verification_crud.link_telegram_user(db_session, row.id, telegram_user_id=888)
-    await verification_crud.mark_verified(db_session, row)
+    await verification_crud.mark_verified(db_session, row.id)
 
     first = await _complete_signup_with_token(
         unauthenticated_client, "+821099990004", monkeypatch, row.id
@@ -316,7 +316,7 @@ async def test_returning_user_does_not_need_a_token_and_gets_no_second_trial(
 
     row = await verification_crud.create_verification(db_session)
     await verification_crud.link_telegram_user(db_session, row.id, telegram_user_id=111)
-    await verification_crud.mark_verified(db_session, row)
+    await verification_crud.mark_verified(db_session, row.id)
     first = await _complete_signup_with_token(unauthenticated_client, "+821099990006", monkeypatch, row.id)
     assert first.status_code == 200
     first_key = first.json()["api_key"]

@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # admin of this channel to call getChatMember on non-admin members.
     telegram_official_channel_id: str = "@TeleMon_2"
 
+    # JSON object mapping guide-hub button keys (see GUIDE_HUB_BUTTONS in
+    # app/services/guide_hub_service.py) to the official channel's guide post URLs, e.g.
+    # {"free_trial": "https://t.me/TeleMon_2/12", "auto_reply": "https://t.me/TeleMon_2/15"}.
+    # Kept out of source so guide posts can be re-linked without a code change; a key
+    # missing from this map simply omits that button rather than erroring.
+    telegram_guide_hub_links_json: str = "{}"
+
     environment: str = "development"
     debug: bool = True
 
@@ -170,6 +177,20 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def telegram_guide_hub_links(self) -> dict[str, str]:
+        """Parsed button-key -> URL map. Malformed JSON degrades to "no links
+        configured" (all buttons omitted) rather than crashing settings load."""
+        import json
+
+        try:
+            parsed = json.loads(self.telegram_guide_hub_links_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items() if v}
 
     @property
     def telegram_credentials(self) -> tuple[int, str]:

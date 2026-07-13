@@ -17,10 +17,12 @@ from app.schemas.admin import (
     AdminLoginRequest,
     AdminMeResponse,
     AdminTokenResponse,
+    GuideHubPublishResponse,
     ManualIssueRequest,
     ManualIssueResponse,
     UserLookupResponse,
 )
+from app.services.guide_hub_service import GuideHubUnavailable, publish_or_update_guide_hub
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 
@@ -290,3 +292,22 @@ async def manual_issue_key(
 
     logger.info("manual_api_key_issued", user_id=user.id, identifier=identifier, memo=payload.memo)
     return ManualIssueResponse(user_id=user.id, phone=user.phone, api_key=raw_key)
+
+
+@router.post(
+    "/guide-hub/publish",
+    response_model=GuideHubPublishResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def publish_guide_hub(db: AsyncSession = Depends(get_db)):
+    """(Re-)publish the pinned 이용 가이드 허브 message in the official channel.
+
+    First call posts and pins a new message; every later call edits that same
+    message in place. Admin-only — this posts to the public official channel.
+    """
+    try:
+        chat_id, message_id, created = await publish_or_update_guide_hub(db)
+    except GuideHubUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    logger.info("guide_hub_publish_requested", chat_id=chat_id, message_id=message_id, created=created)
+    return GuideHubPublishResponse(chat_id=chat_id, message_id=message_id, created=created)
