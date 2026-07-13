@@ -137,13 +137,29 @@ async def test_issue_rejects_expired_token(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_issue_rejects_missing_phone(client, db_session, monkeypatch):
-    """Regression: missing/empty phone must be rejected before any key is generated."""
+async def test_issue_succeeds_without_phone(client, db_session, monkeypatch):
+    """Regression: missing/empty phone is now allowed — the token's telegram_user_id
+    is used as the identifier instead. This enables the /admin/login 무료체험 tab flow."""
     _patch_channel(monkeypatch)
     token = await _create_verified_token(db_session)
 
     res = await client.post("/api/free-api-key/issue", json={"token": token})
-    assert res.status_code == 422
+    assert res.status_code == 200
+    body = res.json()
+    assert body["api_key"].startswith("sk-")
+    assert body["already_issued"] is False
+
+
+async def test_issue_succeeds_with_empty_phone(client, db_session, monkeypatch):
+    """Regression: empty phone string is now accepted — the token's telegram_user_id
+    is used as the identifier."""
+    _patch_channel(monkeypatch)
+    token = await _create_verified_token(db_session)
+
+    res = await client.post("/api/free-api-key/issue", json={"token": token, "phone": ""})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["api_key"].startswith("sk-")
 
 
 @pytest.mark.asyncio
