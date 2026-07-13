@@ -1,8 +1,9 @@
 # Telegram ToS-friendly self-imposed limits for the broadcast feature.
-MAX_RECIPIENTS_PER_BROADCAST = 10
+# No hard cap on recipients per broadcast — the plan's monthly_message_limit
+# and per-account 60s cooldown provide sufficient guardrails.
 BROADCAST_MIN_INTERVAL_SECONDS = 60
 # Small pause between individual sends within one broadcast, on top of the
-# per-account cooldown above, so a 10-recipient job doesn't fire in a burst.
+# per-account cooldown above, so a burst doesn't hit Telegram's rate limits.
 INTER_MESSAGE_DELAY_SECONDS = 2
 
 MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB

@@ -76,7 +76,6 @@ async def lifespan(app: FastAPI):
     # ── Telegram bot (optional) ────────────────────────────────────────
     try:
         await start_bot()
-        logger.info("telegram_bot_started")
     except Exception as exc:
         logger.error("telegram_bot_startup_failed", error=str(exc))
 
