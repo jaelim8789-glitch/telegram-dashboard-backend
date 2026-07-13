@@ -196,6 +196,17 @@ async def process_incoming_tx(tx: dict) -> dict:
         db.add(api_key)
         await db.flush()
 
+        # Also set api_key_hash on the User record so the key works with
+        # both X-API-Key (api_keys table) and login-with-api-key (users.api_key_hash).
+        if tenant.phone and not tenant.phone.startswith("pending-"):
+            from app.crud import user as user_crud
+            user = await user_crud.get_user_by_phone(db, tenant.phone)
+            if user is not None and user.api_key_hash is None:
+                from app.core.security import hash_api_key
+                user.api_key_hash = hash_api_key(raw_key)
+                await db.flush()
+                logger.info("usdt_user_api_key_hash_set", tenant_id=tenant.id, user_id=user.id)
+
         db.add(PaymentRecord(
             tx_id=tx_id, tenant_id=tenant.id, from_address=from_addr,
             amount_usdt=amount_cents, plan=plan_name, billing=billing,

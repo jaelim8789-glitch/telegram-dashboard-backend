@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.telegram_verification import TelegramChannelVerification
@@ -45,21 +45,43 @@ async def link_telegram_user(db: AsyncSession, token: str, telegram_user_id: int
     return True
 
 
-async def mark_verified(db: AsyncSession, row: TelegramChannelVerification) -> None:
-    row.status = "verified"
-    row.verified_at = utcnow_naive()
+async def mark_verified(db: AsyncSession, token: str) -> bool:
+    """Atomic-conditional mark: only a ``linked``, not-yet-verified, unexpired row
+    gets promoted to ``verified``. Returns True iff exactly one row was updated."""
+    cutoff = utcnow_naive() - timedelta(minutes=TOKEN_TTL_MINUTES)
+    now = utcnow_naive()
+    result = await db.execute(
+        update(TelegramChannelVerification)
+        .where(
+            TelegramChannelVerification.id == token,
+            TelegramChannelVerification.status == "linked",
+            TelegramChannelVerification.verified_at.is_(None),
+            TelegramChannelVerification.created_at > cutoff,
+        )
+        .values(status="verified", verified_at=now)
+        .returning(TelegramChannelVerification.id)
+    )
     await db.commit()
+    return result.scalar_one_or_none() is not None
 
 
 async def consume_verified_token(db: AsyncSession, token: str) -> bool:
-    """Atomically spend a verified, not-yet-consumed, unexpired token. Returns False
-    (and leaves the row untouched) for anything else — missing, expired, not yet
-    verified, or already consumed — so a token can fund at most one trial ever."""
-    row = await get_verification(db, token)
-    if row is None:
-        return False
-    if row.status != "verified" or row.consumed_at is not None:
-        return False
-    row.consumed_at = utcnow_naive()
+    """Atomically spend a verified, not-yet-consumed, unexpired token. Uses a single
+    conditional UPDATE so two concurrent callers cannot both succeed — the database
+    serialises the two UPDATEs and only the first sees ``consumed_at IS NULL``.
+    Returns True iff exactly one row was updated."""
+    cutoff = utcnow_naive() - timedelta(minutes=TOKEN_TTL_MINUTES)
+    now = utcnow_naive()
+    result = await db.execute(
+        update(TelegramChannelVerification)
+        .where(
+            TelegramChannelVerification.id == token,
+            TelegramChannelVerification.status == "verified",
+            TelegramChannelVerification.consumed_at.is_(None),
+            TelegramChannelVerification.created_at > cutoff,
+        )
+        .values(consumed_at=now)
+        .returning(TelegramChannelVerification.id)
+    )
     await db.commit()
-    return True
+    return result.scalar_one_or_none() is not None

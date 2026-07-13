@@ -80,6 +80,7 @@ class PaymentRecord(Base):
     billing: Mapped[str | None] = mapped_column(String(10), nullable=True)  # monthly, annual
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, completed, unmatched, failed
     api_key_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claimed: Mapped[bool] = mapped_column(Boolean, default=False)  # raw API key has been delivered to the user
     block_timestamp: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

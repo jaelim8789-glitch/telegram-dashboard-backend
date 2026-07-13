@@ -474,7 +474,7 @@ async def test_existing_free_api_key_flow_still_works(client, db_session, monkey
 
     row = await verification_crud.create_verification(db_session)
     await verification_crud.link_telegram_user(db_session, row.id, 999001)
-    await verification_crud.mark_verified(db_session, row)
+    await verification_crud.mark_verified(db_session, row.id)
 
     res = await client.post(
         "/api/free-api-key/issue",
@@ -491,6 +491,8 @@ async def test_existing_admin_manual_issue_still_works(client, db_session):
     from app.core.security import create_access_token
     from app.database import get_db
     from app.main import app
+    from app.models.user import User
+    from app.models.tenant import Tenant
 
     async def _override_get_db():
         yield db_session
@@ -498,6 +500,13 @@ async def test_existing_admin_manual_issue_still_works(client, db_session):
     app.dependency_overrides[get_db] = _override_get_db
 
     phone = "+821099990002"
+    # Pre-create user+tenant (admin manual-issue requires existing records)
+    db_session.add(User(phone=phone))
+    await db_session.flush()
+    db_session.add(Tenant(phone=phone, plan="free", subscription_status="active"))
+    await db_session.flush()
+    await db_session.commit()
+
     token = create_access_token()
     res = await client.post(
         "/api/admin/manual-issue-key",

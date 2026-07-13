@@ -1,9 +1,10 @@
 """USDT 결제 API — API 키 발급받기 전용.
 
 Trust boundary:
-  /plans           — intentionally public (read-only plan info)
-  /request-key     — intentionally public (user hasn't paid yet), rate-limited
-  /status/{ref}    — intentionally public, returns masked API key only
+  /plans              — intentionally public (read-only plan info)
+  /request-key        — intentionally public (user hasn't paid yet), rate-limited
+  /status/{ref}       — intentionally public, returns masked API key only
+  /claim-key/{ref}    — one-time raw key retrieval, rate-limited per IP
 
 Payment verification is done server-side by usdt_watcher.py (scheduled task)
 which queries Trongrid directly — client-supplied tx data is NOT trusted here.
@@ -12,9 +13,10 @@ Plan definitions sourced from canonical app.core.plans.
 """
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.plans import (
@@ -22,8 +24,9 @@ from app.core.plans import (
     get_plan,
     validate_plan_id,
 )
+from app.core.rate_limiter import check_rate_limit, get_client_ip
 from app.crud import user as user_crud
-from app.database import async_session_maker
+from app.database import async_session_maker, get_db
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
 from app.models.user import User
@@ -204,3 +207,47 @@ async def check_payment_status(payment_ref: str):
             "plan": tenant.plan,
             "tx_id": payment.tx_id if payment is not None else None,
         }
+
+
+@router.get("/claim-key/{payment_ref}")
+async def claim_api_key(payment_ref: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """One-time raw API key retrieval for a completed USDT payment.
+    
+    The raw key is returned on the FIRST call to this endpoint and stored as
+    ``claimed`` on the PaymentRecord so it can never be retrieved again.
+    Rate-limited per IP (10 calls / 5 minutes) to slow brute-force attempts
+    against the 8-byte hex ``payment_ref``.
+    """
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "payment_claim_key", max_attempts=10, window_seconds=300):
+        raise HTTPException(status_code=429, detail="너무 많은 요청. 잠시 후 다시 시도해주세요.")
+
+    result = await db.execute(select(Tenant).where(Tenant.payment_ref == payment_ref))
+    tenant = result.scalar_one_or_none()
+    if tenant is None or tenant.subscription_status != "active":
+        raise HTTPException(status_code=404, detail="결제 정보를 찾을 수 없거나 아직 완료되지 않았습니다.")
+
+    payment_result = await db.execute(
+        select(PaymentRecord)
+        .where(PaymentRecord.tenant_id == tenant.id, PaymentRecord.claimed == False)
+        .order_by(PaymentRecord.created_at.desc())
+        .limit(1)
+    )
+    payment = payment_result.scalars().first()
+    if payment is None:
+        # Either already claimed, or no payment record
+        return {"status": "already_claimed", "detail": "API 키는 이미 수령되었습니다."}
+
+    if payment.api_key_id is None:
+        raise HTTPException(status_code=500, detail="결제 기록에 API 키가 연결되어 있지 않습니다. 관리자에게 문의해주세요.")
+
+    api_key = await db.get(APIKey, payment.api_key_id)
+    if api_key is None:
+        raise HTTPException(status_code=500, detail="API 키를 찾을 수 없습니다. 관리자에게 문의해주세요.")
+
+    raw_key = api_key.key
+    payment.claimed = True
+    await db.commit()
+
+    logger.info("payment_api_key_claimed", payment_ref=payment_ref, api_key_id=api_key.id)
+    return {"status": "success", "api_key": raw_key}

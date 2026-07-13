@@ -18,7 +18,9 @@ from app.core.plans import (
     get_plan_limits,
     is_deprecated_plan,
 )
+from app.crud import user as user_crud
 from app.database import async_session_maker
+from app.models.api_key import APIKey
 from app.models.tenant import PaymentRecord, Tenant
 from app.services.usage_tracker import apply_plan_limits
 
@@ -143,6 +145,25 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
         tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, tenant.plan)
 
+        # Issue API key for this tenant (matches the auto-watcher pattern)
+        from app.core.security import generate_user_api_key, hash_api_key
+        raw_key = generate_user_api_key()
+        api_key = APIKey(
+            key=raw_key,
+            name=f"USDT-{tenant.plan}-admin-confirm",
+            is_active=True,
+            tenant_id=tenant.id,
+        )
+        db.add(api_key)
+        await db.flush()
+
+        # Also set api_key_hash for login-with-api-key compatibility
+        if tenant.phone and not tenant.phone.startswith("pending-"):
+            user = await user_crud.get_user_by_phone(db, tenant.phone)
+            if user is not None and user.api_key_hash is None:
+                user.api_key_hash = hash_api_key(raw_key)
+                await db.flush()
+
         db.add(PaymentRecord(
             tx_id=tx_hash,
             tenant_id=tenant.id,
@@ -150,6 +171,7 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
             amount_usdt=matched_tx["amount_cents"],
             plan=tenant.plan,
             status="completed",
+            api_key_id=api_key.id,
             block_timestamp=matched_tx["block_timestamp"],
         ))
         await db.commit()
@@ -276,12 +298,13 @@ async def cancel_subscription(tenant_id: str) -> dict:
 
 
 async def downgrade_expired_tenants() -> dict:
-    """Scheduled job: revert any paid-plan tenant whose billing period has ended back
-    to free-tier limits — whether they explicitly canceled or simply never renewed
-    (USDT payments are manual, not auto-recurring, so nothing else ever revokes access
-    once billing_period_end passes). This is the only place that removes elevated
-    access, so a canceled or lapsed subscription can no longer keep paid-tier limits
-    indefinitely.
+    """Scheduled job: revert any paid-plan or expired-free-trial tenant whose access
+    period has ended back to free-tier limits or blocked state.
+    
+    Paid tenants (plan != "free"): reverts to free-tier limits when billing_period_end
+    passes. Free-trial tenants (plan == "free"): blocks access when trial_expires_at
+    passes, keeping the tenant row in "expired" state for audit but revoking plan
+    entitlements.
     """
     from sqlalchemy import select
 
@@ -289,6 +312,7 @@ async def downgrade_expired_tenants() -> dict:
     downgraded: list[str] = []
 
     async with async_session_maker() as db:
+        # Paid tenants with expired billing period
         result = await db.execute(
             select(Tenant).where(
                 Tenant.plan != "free",
@@ -305,5 +329,22 @@ async def downgrade_expired_tenants() -> dict:
             await apply_plan_limits(db, tenant, "free")
             downgraded.append(tenant.id)
             logger.info("tenant_plan_expired_downgraded", tenant_id=tenant.id, previous_plan=previous_plan)
+
+        # Free-trial tenants with expired trial
+        result = await db.execute(
+            select(Tenant).where(
+                Tenant.plan == "free",
+                Tenant.subscription_status == "active",
+                Tenant.trial_expires_at.is_not(None),
+                Tenant.trial_expires_at < now,
+            )
+        )
+        expired_trials = result.scalars().all()
+
+        for tenant in expired_trials:
+            tenant.subscription_status = "expired"
+            await apply_plan_limits(db, tenant, "free")
+            downgraded.append(tenant.id)
+            logger.info("free_trial_expired", tenant_id=tenant.id)
 
     return {"downgraded": len(downgraded), "tenant_ids": downgraded}

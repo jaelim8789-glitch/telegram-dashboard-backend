@@ -82,5 +82,9 @@ async def check(payload: TelegramVerifyCheckRequest, request: Request, db: Async
     if not is_member:
         return TelegramVerifyCheckResponse(status="unverified", reason="not_a_member")
 
-    await verification_crud.mark_verified(db, row)
+    marked = await verification_crud.mark_verified(db, payload.token)
+    if not marked:
+        # Race: another request already marked this token as verified.
+        # The response is still "verified" — the frontend will see it and proceed.
+        logger.info("telegram_verify_race_lost", token=payload.token)
     return TelegramVerifyCheckResponse(status="verified")

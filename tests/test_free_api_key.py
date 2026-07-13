@@ -35,7 +35,7 @@ def _patch_channel(monkeypatch, status_or_exc=None):
 async def _create_verified_token(db_session, telegram_user_id: int = 999) -> str:
     row = await verification_crud.create_verification(db_session)
     await verification_crud.link_telegram_user(db_session, row.id, telegram_user_id)
-    await verification_crud.mark_verified(db_session, row)
+    await verification_crud.mark_verified(db_session, row.id)
     return row.id
 
 
