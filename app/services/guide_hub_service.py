@@ -20,20 +20,16 @@ logger = get_logger(__name__)
 
 # (button key, label) in display order — 2 per row. Keys are looked up in
 # settings.telegram_guide_hub_links; a key with no configured URL is omitted
-# from the keyboard instead of producing a dead/error button.
+# from the keyboard instead of producing a dead/error button. Kept 1:1 with the
+# guide posts that actually exist in the official channel — add a key here
+# only once its matching post exists and its URL is added to
+# TELEGRAM_GUIDE_HUB_LINKS_JSON, never the other way around.
 GUIDE_HUB_BUTTONS: list[tuple[str, str]] = [
-    ("getting_started", "🚀 시작하기"),
     ("free_trial", "🎁 24시간 무료체험"),
-    ("signup_login", "👤 회원가입·로그인"),
-    ("account_connect", "📱 Telegram 계정 연결"),
-    ("send_message", "📨 메시지 발송"),
-    ("recurring_send", "🔄 반복 발송"),
+    ("send_and_macro", "📨 메시지 발송 & 답장 매크로"),
     ("auto_reply", "🤖 자동응답"),
-    ("reply_macro", "💬 답장 매크로"),
-    ("group_search", "🔍 그룹 검색·참여"),
-    ("analytics", "📊 결과 분석"),
-    ("billing_plan", "💳 결제·플랜"),
-    ("troubleshoot", "❓ 문제 해결"),
+    ("group_search", "🔍 그룹 검색 및 참여"),
+    ("link_inspector", "🔗 링크 일괄검사"),
 ]
 
 GUIDE_HUB_TEXT = (
