@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import Request, APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,7 +56,7 @@ async def create_broadcast(
     delivery_mode: Annotated[
         str | None, Form(description="Delivery mode: normal (1min/group), cycle (round-robin), bulk (instant all), reply (reply to latest message)")
     ] = None,
-    reply_to_msg_id: Annotated[
+    reply_to_message_id: Annotated[
         str | None, Form(description="Message ID to reply to (only used when delivery_mode is 'reply')")
     ] = None,
     image: Annotated[UploadFile | None, File()] = None,
@@ -100,15 +100,15 @@ async def create_broadcast(
             )
         mode_val = delivery_mode.strip()
 
-    # Parse reply_to_msg_id
+    # Parse reply_to_message_id
     parsed_reply_to_id: int | None = None
-    if reply_to_msg_id is not None and reply_to_msg_id.strip():
+    if reply_to_message_id is not None and reply_to_message_id.strip():
         try:
-            parsed_reply_to_id = int(reply_to_msg_id.strip())
+            parsed_reply_to_id = int(reply_to_message_id.strip())
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="reply_to_msg_id는 유효한 정수여야 합니다.",
+                detail="reply_to_message_id는 유효한 정수여야 합니다.",
             )
 
     try:
@@ -119,7 +119,7 @@ async def create_broadcast(
             scheduled_at=scheduled_at or None,
             recurring_interval_minutes=recurring_val,
             delivery_mode=mode_val,
-            reply_to_msg_id=parsed_reply_to_id,
+            reply_to_message_id=parsed_reply_to_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
@@ -212,6 +212,7 @@ async def retry_broadcast(
     return _enrich_broadcast(updated)
 
 
+
 # ── Recurring broadcast endpoints ──────────────────────────────────
 # Static routes must be declared before parameterised routes so that
 # e.g. "/recurring" is not captured by "/{broadcast_id}".
@@ -227,6 +228,7 @@ async def read_recurring_broadcasts(
 
 
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
+@router.get("/{broadcast_id}", response_model=BroadcastRead)
 async def read_broadcast(
     broadcast_id: str,
     db: AsyncSession = Depends(get_db),
@@ -235,12 +237,36 @@ async def read_broadcast(
     broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
     if broadcast is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
-    # Verify the broadcast's account belongs to the caller's tenant
     account = await account_crud.get_account(db, broadcast.account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
     await require_account_tenant_access(broadcast.account_id, db, identity)
     return _enrich_broadcast(broadcast)
+
+
+@router.post("/dispatch/{broadcast_id}", response_model=BroadcastRead)
+async def dispatch_broadcast(
+    broadcast_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=404, detail="broadcast not found")
+    await require_account_tenant_access(broadcast.account_id, db, identity)
+    if broadcast.recurring_interval_minutes is not None:
+        raise HTTPException(status_code=409, detail="recurring cannot use send-now")
+    from app.services.broadcast_processor import process_broadcast
+    from app.crud.broadcast import retry_broadcast as crud_retry
+    updated = await crud_retry(db, broadcast_id)
+    if updated is None:
+        raise HTTPException(status_code=409, detail="retry failed")
+    await db.commit()
+    await db.refresh(updated)
+    await process_broadcast(updated.id)
+    await db.refresh(updated)
+    logger.info("broadcast_send_now", broadcast_id=broadcast_id)
+    return _enrich_broadcast(updated)
 
 
 # ── Cancel broadcast ──────────────────────────────────────────────
