@@ -28,10 +28,15 @@ from telethon.errors import (
     ChatWriteForbiddenError,
     FloodWaitError,
     InputUserDeactivatedError,
+    PhoneNumberBannedError,
+    RPCError,
     SlowModeWaitError,
     UserBannedInChannelError,
+    UserDeactivatedBanError,
+    UserIsBlockedError,
     UserKickedError,
     UserNotParticipantError,
+    UsernameInvalidError,
     UsernameNotOccupiedError,
 )
 from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl

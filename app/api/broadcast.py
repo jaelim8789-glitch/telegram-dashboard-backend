@@ -62,6 +62,9 @@ async def create_broadcast(
     delay_seconds: Annotated[
         str | None, Form(description="Per-recipient pacing override in seconds for delivery_mode 'normal' (e.g. 5, 10, 30, 60)")
     ] = None,
+    inline_buttons: Annotated[
+        str | None, Form(description="JSON array of inline buttons, e.g. [{\"label\":\"홈페이지\",\"url\":\"https://...\"}]")
+    ] = None,
     image: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
@@ -125,6 +128,23 @@ async def create_broadcast(
                 detail="delay_seconds는 유효한 정수여야 합니다.",
             )
 
+    # Parse inline_buttons
+    parsed_inline_buttons: list[dict] | None = None
+    if inline_buttons is not None and inline_buttons.strip():
+        try:
+            parsed_list = json.loads(inline_buttons.strip())
+            if not isinstance(parsed_list, list):
+                raise ValueError("inline_buttons must be a JSON array")
+            for btn in parsed_list:
+                if not isinstance(btn, dict) or "label" not in btn or "url" not in btn:
+                    raise ValueError("each button must have 'label' and 'url' fields")
+            parsed_inline_buttons = parsed_list
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"inline_buttons 형식이 올바르지 않습니다: {exc}",
+            )
+
     try:
         payload = BroadcastCreate(
             account_id=account_id,
@@ -135,6 +155,7 @@ async def create_broadcast(
             delivery_mode=mode_val,
             reply_to_msg_id=parsed_reply_to_id,
             delay_seconds=parsed_delay_seconds,
+            inline_buttons=parsed_inline_buttons,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())

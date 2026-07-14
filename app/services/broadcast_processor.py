@@ -79,6 +79,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         message_local = broadcast.message
         media_path_local = broadcast.media_path
         delay_seconds_local = getattr(broadcast, "delay_seconds", None)
+        inline_buttons_local = getattr(broadcast, "inline_buttons", None)
 
         parent_id = broadcast.id if is_recurring_parent else broadcast.parent_broadcast_id
 
@@ -143,6 +144,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         source_id=broadcast_id,
         reply_to_msg_id=explicit_reply_to_id,
         reply_to_map=reply_to_map,
+        inline_buttons=inline_buttons_local,
     )
 
     if delivery_mode == "bulk":

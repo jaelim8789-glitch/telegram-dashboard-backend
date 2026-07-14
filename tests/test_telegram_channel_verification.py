@@ -400,6 +400,58 @@ async def test_paid_plan_tenant_unaffected_by_channel_gate(unauthenticated_clien
     assert tenant.plan == "pro"
 
 
+# ── 12: a pending (unpaid/unverified) Tenant stub must not bypass the gate ────
+
+
+@pytest.mark.asyncio
+async def test_pending_tenant_stub_does_not_bypass_channel_gate(
+    unauthenticated_client, db_session, monkeypatch
+):
+    """POST /api/payment/request-key is public and unauthenticated, and creates a
+    "pending" Tenant row for any phone before any payment is confirmed. That stub
+    must not be treated as an already-entitled tenant — verify-code must still
+    demand real channel verification for it, exactly like a brand-new signup."""
+    monkeypatch.setattr(settings, "telegram_official_channel_id", "@telemon_official")
+
+    phone = "+821099990010"
+    tenant = Tenant(phone=phone, plan="pro", subscription_status="pending", payment_ref="TM-TEST0001")
+    db_session.add(tenant)
+    await db_session.commit()
+
+    res = await _complete_signup_with_token(unauthenticated_client, phone, monkeypatch, None)
+    assert res.status_code == 403
+
+    from app.crud import user as user_crud
+    user = await user_crud.get_user_by_phone(db_session, phone)
+    assert user is None  # no API key silently issued for the unverified pending stub
+
+    await db_session.refresh(tenant)
+    assert tenant.subscription_status == "pending"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_pending_tenant_stub_succeeds_with_valid_token(
+    unauthenticated_client, db_session, monkeypatch
+):
+    """A pending stub CAN still complete signup if it actually provides a real,
+    server-verified channel-membership token — the gate isn't disabled, it just
+    isn't skipped for free."""
+    monkeypatch.setattr(settings, "telegram_official_channel_id", "@telemon_official")
+
+    phone = "+821099990011"
+    tenant = Tenant(phone=phone, plan="pro", subscription_status="pending", payment_ref="TM-TEST0002")
+    db_session.add(tenant)
+    await db_session.commit()
+
+    row = await verification_crud.create_verification(db_session)
+    await verification_crud.link_telegram_user(db_session, row.id, telegram_user_id=222)
+    await verification_crud.mark_verified(db_session, row.id)
+
+    res = await _complete_signup_with_token(unauthenticated_client, phone, monkeypatch, row.id)
+    assert res.status_code == 200
+    assert res.json()["api_key"].startswith("sk-")
+
+
 # ── bot /start handler links the real Telegram identity ──────────────
 
 
