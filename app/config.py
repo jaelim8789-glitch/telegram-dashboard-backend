@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # Broadcast execution timeout in seconds (Sprint 23+).
     # Prevents a stuck delivery from blocking the scheduler indefinitely.
     # Configurable via BROADCAST_TIMEOUT_SECONDS env var.  Must be >= 1.
-    broadcast_timeout_seconds: int = 300
+    broadcast_timeout_seconds: int = 600
 
     # Maximum number of manual retries for a failed broadcast (Sprint 26).
     # Configurable via BROADCAST_MAX_RETRIES env var.  Must be >= 0.

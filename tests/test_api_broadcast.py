@@ -35,12 +35,38 @@ async def test_create_broadcast_immediate(client):
 
 
 @pytest.mark.asyncio
-async def test_create_broadcast_too_many_recipients(client):
+async def test_create_broadcast_persists_delay_seconds(client):
+    """Production symptom: the frontend's '일반 발송 간격' selector (5/10/30/60초)
+    sent delay_seconds, but create_broadcast had no such Form parameter — it
+    was silently dropped and the selector had zero effect."""
+    account_id = await _create_account(client)
+    data = _broadcast_form(account_id)
+    data["delay_seconds"] = "10"
+    res = await client.post("/api/broadcast", data=data)
+    assert res.status_code == 202, res.text
+    assert res.json()["delay_seconds"] == 10
+
+
+@pytest.mark.asyncio
+async def test_create_broadcast_without_delay_seconds_defaults_to_none(client):
+    account_id = await _create_account(client)
+    res = await client.post("/api/broadcast", data=_broadcast_form(account_id))
+    assert res.status_code == 202
+    assert res.json()["delay_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_broadcast_allows_more_than_ten_recipients(client):
+    """Pre-existing stale test updated: the 10-recipient hard cap was removed
+    from app/core/limits.py in an earlier, unrelated change ("무제한 발송") —
+    this suite still asserted the old 422-at-11 behavior. Not part of the
+    13-problem recovery scope; fixed here only because it shares this file
+    with the delay_seconds tests above and was failing in the full test run."""
     account_id = await _create_account(client)
 
     recipients = [str(i) for i in range(11)]
     res = await client.post("/api/broadcast", data=_broadcast_form(account_id, recipients=recipients))
-    assert res.status_code == 422
+    assert res.status_code == 202
 
 
 @pytest.mark.asyncio

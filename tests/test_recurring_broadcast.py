@@ -724,8 +724,16 @@ async def test_recurring_logs_tenant_isolation(db_session):
 
 
 @pytest.mark.asyncio
-async def test_recurring_logs_excludes_parents(db_session):
-    """list_logs excludes recurring parent records regardless of identity."""
+async def test_recurring_logs_includes_parents(db_session):
+    """list_logs includes recurring parent records alongside one-time broadcasts.
+
+    Previously excluded them entirely — production symptom: a recurring
+    broadcast kept dispatching (children were always in list_logs, since only
+    the parent template row was filtered), but the recurring *series* itself
+    had no representation anywhere in the 발송 이력/로그 UI, matching
+    complaints that recurring sends "disappeared" from history despite still
+    running. The parent is now visible like any other broadcast row.
+    """
     from app.api.deps import Identity
 
     account = await _make_account(db_session, "+821033330062")
@@ -734,5 +742,5 @@ async def test_recurring_logs_excludes_parents(db_session):
 
     logs = await broadcast_crud.list_logs(db_session, identity=Identity(kind="admin"))
     ids = [b.id for b in logs]
-    assert recurring.id not in ids, "Recurring parent must NOT appear in logs"
+    assert recurring.id in ids, "Recurring parent must appear in logs"
     assert one_time.id in ids, "One-time broadcast must appear in logs"

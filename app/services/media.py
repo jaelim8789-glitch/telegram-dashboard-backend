@@ -13,6 +13,10 @@ _EXTENSION_BY_CONTENT_TYPE = {
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/x-msvideo": ".avi",
+    "video/x-matroska": ".mkv",
 }
 
 
@@ -20,14 +24,13 @@ async def save_broadcast_media(upload: UploadFile) -> str:
     if upload.content_type not in ALLOWED_MEDIA_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미지 파일만 업로드할 수 있습니다 (jpeg/png/webp/gif).",
+            detail="이미지 또는 영상 파일만 업로드할 수 있습니다 (jpeg/png/webp/gif/mp4/mov/avi/mkv).",
         )
 
     data = await upload.read()
     if len(data) > MAX_MEDIA_SIZE_BYTES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미지 파일은 10MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="파일은 500MB를 초과할 수 없습니다.")
 
-    # Filename is always server-generated (never the client-supplied name) to rule out path traversal.
     extension = _EXTENSION_BY_CONTENT_TYPE[upload.content_type]
     filename = f"{uuid.uuid4()}{extension}"
     destination = MEDIA_ROOT / filename
