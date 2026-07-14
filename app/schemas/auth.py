@@ -33,6 +33,7 @@ class LoginWithApiKeyRequest(BaseModel):
 
 class LoginWithApiKeyResponse(BaseModel):
     access_token: str
+    session_token: str | None = None
     token_type: str = "bearer"
 
 

@@ -10,6 +10,7 @@ from app.models.message_log import MessageLog
 from app.models.message_template import FollowUpRule, MessageTemplate, TeamMember
 from app.models.reply_macro import ReplyMacro, ReplyMacroLog
 from app.models.telegram_verification import TelegramChannelVerification
+from app.models.session import UserSession
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
 from app.models.user import PhoneVerification, User
 
@@ -35,6 +36,7 @@ __all__ = [
     "ReplyMacroLog",
     "TeamMember",
     "TelegramChannelVerification",
+    "UserSession",
     "Tenant",
     "UsageRecord",
     "User",
