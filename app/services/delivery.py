@@ -28,16 +28,13 @@ from telethon.errors import (
     ChatWriteForbiddenError,
     FloodWaitError,
     InputUserDeactivatedError,
-    PhoneNumberBannedError,
-    RPCError,
+    SlowModeWaitError,
     UserBannedInChannelError,
-    UserDeactivatedBanError,
-    UserIsBlockedError,
     UserKickedError,
     UserNotParticipantError,
-    UsernameInvalidError,
     UsernameNotOccupiedError,
 )
+from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl
 
 from app.core.logging import get_logger
 from app.crud import account as account_crud
@@ -109,6 +106,7 @@ class DeliveryRequest:
     inter_message_delay: float = 1.0
     reply_to_msg_id: int | None = None
     reply_to_map: dict[str, int] | None = None
+    inline_buttons: list[dict] | None = None
 
 
 def utcnow_naive() -> datetime:
@@ -159,14 +157,27 @@ async def _send_single(
     message: str,
     media_path: str | None,
     reply_to_msg_id: int | None = None,
+    inline_buttons: list[dict] | None = None,
 ) -> tuple[DeliveryStatus, int | None, str | None, int | None]:
     """Send a single message and return (status, telegram_msg_id, safe_error, flood_wait_seconds)."""
     started = datetime.now(timezone.utc)
     try:
+        # Build inline keyboard markup if buttons are provided
+        buttons = None
+        if inline_buttons:
+            rows = []
+            for btn in inline_buttons:
+                label = btn.get("label", "")
+                url = btn.get("url", "")
+                if label and url:
+                    rows.append([KeyboardButtonUrl(text=label, url=url)])
+            if rows:
+                buttons = ReplyInlineMarkup(rows=rows)
+
         if media_path:
-            send_coro = client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id)
+            send_coro = client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id, buttons=buttons)
         else:
-            send_coro = client.send_message(target, message, reply_to=reply_to_msg_id)
+            send_coro = client.send_message(target, message, reply_to=reply_to_msg_id, buttons=buttons)
         result = await asyncio.wait_for(send_coro, timeout=PER_MESSAGE_TIMEOUT_SECONDS)
         msg_id = result.id if hasattr(result, "id") else None
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
@@ -250,6 +261,7 @@ async def _deliver_with_retry(
     account_id: str,
     on_status_change: Callable | None = None,
     reply_to_msg_id: int | None = None,
+    inline_buttons: list[dict] | None = None,
 ) -> DeliveryResult:
     """Attempt delivery with retry for recoverable failures.
 
@@ -267,7 +279,9 @@ async def _deliver_with_retry(
             _publish_event(EVENT_RETRYING, None, source, source_id, on_status_change)
 
         started_at = utcnow_naive()
-        status, msg_id, safe_error, flood_wait = await _send_single(client, target, message, media_path, reply_to_msg_id)
+        status, msg_id, safe_error, flood_wait = await _send_single(
+            client, target, message, media_path, reply_to_msg_id, inline_buttons,
+        )
         completed_at = utcnow_naive()
 
         result = DeliveryResult(
@@ -472,6 +486,7 @@ async def deliver_message(
             account_id=request.account_id,
             on_status_change=on_status_change,
             reply_to_msg_id=reply_to,
+            inline_buttons=request.inline_buttons,
         )
         results.append(result)
 
