@@ -1382,14 +1382,21 @@ async def test_get_overview_real_query_does_not_500(db_session):
     db_session.add(account)
     await db_session.flush()
 
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     db_session.add_all([
+        # started_at/completed_at populated so the latency sub-queries
+        # (get_latency_analytics/by_source/by_account) compute a real
+        # AVG()/percentile_cont() instead of short-circuiting on zero rows —
+        # that's exactly where the Decimal-from-Postgres bug surfaced.
         MessageLog(
             account_id=account.id, recipient="-100001", source="broadcast",
             source_id="bc-1", status="success", success=True,
+            started_at=now, completed_at=now,
         ),
         MessageLog(
             account_id=account.id, recipient="-100002", source="broadcast",
             source_id="bc-1", status="permanent_failure", success=False,
+            started_at=now, completed_at=now,
         ),
     ])
     await db_session.commit()

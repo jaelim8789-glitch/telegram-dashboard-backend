@@ -944,8 +944,8 @@ async def get_latency_analytics(
             start_time=start_dt, end_time=end_dt,
         )
         count_row = (await db.execute(count_q)).one()
-        total_rows = count_row.total or 0
-        timed_rows = count_row.timed or 0
+        total_rows = int(count_row.total or 0)
+        timed_rows = int(count_row.timed or 0)
 
         if timed_rows == 0:
             return LatencyResult(
@@ -986,13 +986,15 @@ async def get_latency_analytics(
             )
             p95_row = (await db.execute(p95_q)).one()
             if p95_row.p95_sec is not None:
-                p95_ms = round(p95_row.p95_sec * 1000.0, 1)
+                p95_ms = round(float(p95_row.p95_sec) * 1000.0, 1)
         except Exception:
             p95_ms = 0.0
 
         # Execute avg query
         avg_row = (await db.execute(stats_q)).one()
-        avg_sec = avg_row.avg_sec or 0.0
+        # PostgreSQL's AVG() can return numeric (Decimal) depending on the
+        # extract()/grouping shape — Decimal * float raises TypeError.
+        avg_sec = float(avg_row.avg_sec or 0.0)
         avg_ms = round(avg_sec * 1000.0, 1)
 
         return LatencyResult(
@@ -1040,10 +1042,10 @@ async def get_latency_by_source(
 
         items = []
         for row in result.all():
-            total = row.total_measured or 0
+            total = int(row.total_measured or 0)
             if total == 0:
                 continue
-            avg_ms = round((row.avg_sec or 0.0) * 1000.0, 1)
+            avg_ms = round(float(row.avg_sec or 0.0) * 1000.0, 1)
             items.append(LatencyBySourceItem(
                 source=row.source,
                 average_latency_ms=avg_ms,
@@ -1090,10 +1092,10 @@ async def get_latency_by_account(
 
         items = []
         for row in result.all():
-            total = row.total_measured or 0
+            total = int(row.total_measured or 0)
             if total == 0:
                 continue
-            avg_ms = round((row.avg_sec or 0.0) * 1000.0, 1)
+            avg_ms = round(float(row.avg_sec or 0.0) * 1000.0, 1)
             items.append(LatencyByAccountItem(
                 account_id=row.account_id,
                 average_latency_ms=avg_ms,
