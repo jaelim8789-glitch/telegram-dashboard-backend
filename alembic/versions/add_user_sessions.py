@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "add_user_sessions"
-down_revision: str | None = "merge_heads_20260713"
+down_revision: str | None = "a1c3e5f7b9d1"
 branch_labels: str | None = None
 depends_on: str | None = None
 
