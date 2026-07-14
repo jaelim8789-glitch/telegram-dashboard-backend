@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timedelta, timezone
@@ -17,9 +17,11 @@ from app.core.limits import (
 from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
 from app.crud import telegram_verification as verification_crud
 from app.crud import api_key as api_key_crud
+from app.crud import session as session_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.schemas.auth import (
     LoginWithApiKeyRequest,
     LoginWithApiKeyResponse,
@@ -153,15 +155,27 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
     user = await user_crud.get_by_api_key_hash(db, hash_api_key(payload.api_key))
     if user is not None and user.is_active:
         await user_crud.touch_last_login(db, user)
+        tenant_id = await _resolve_tenant_id_by_user(db, user)
+        raw_token, _ = await session_crud.create_session(
+            db, user_id=user.id, tenant_id=tenant_id,
+        )
         logger.info("user_login_success", user_id=user.id)
-        return LoginWithApiKeyResponse(access_token=create_user_access_token(user.id))
+        return LoginWithApiKeyResponse(
+            access_token=create_user_access_token(user.id),
+            session_token=raw_token,
+        )
 
-    # Fallback: check ApiKeys table (for admin-issued keys, tenant_id may not have
-    # a corresponding User record yet, e.g. after DB reset).
+    # Fallback: check ApiKeys table
     key_record = await api_key_crud.get_by_key(db, payload.api_key)
     if key_record is not None and key_record.is_active:
+        raw_token, _ = await session_crud.create_session(
+            db, api_key_id=key_record.id, tenant_id=key_record.tenant_id,
+        )
         logger.info("api_key_login_success", api_key_id=key_record.id)
-        return LoginWithApiKeyResponse(access_token=create_user_access_token(key_record.id))
+        return LoginWithApiKeyResponse(
+            access_token=create_user_access_token(key_record.id),
+            session_token=raw_token,
+        )
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")
 
@@ -173,7 +187,6 @@ async def me(
 ):
     if identity.kind == "user" and identity.user is not None:
         from sqlalchemy import select
-        from app.models.tenant import Tenant
         result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
         tenant = result.scalar_one_or_none()
         return MeResponse(
@@ -183,4 +196,33 @@ async def me(
             plan=tenant.plan if tenant else None,
             trial_expires_at=tenant.trial_expires_at if tenant else None,
         )
+    if identity.tenant_id:
+        from sqlalchemy import select
+        result = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
+        tenant = result.scalar_one_or_none()
+        return MeResponse(
+            role="user",
+            subscription_status=tenant.subscription_status if tenant else None,
+            plan=tenant.plan if tenant else None,
+            trial_expires_at=tenant.trial_expires_at if tenant else None,
+        )
     return MeResponse(role=identity.kind)
+
+
+async def _resolve_tenant_id_by_user(db: AsyncSession, user: User) -> str | None:
+    from sqlalchemy import select
+    from app.models.tenant import Tenant
+    result = await db.execute(select(Tenant.id).where(Tenant.phone == user.phone))
+    return result.scalar_one_or_none()
+
+
+@router.post("/logout")
+async def logout(
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+    db: AsyncSession = Depends(get_db),
+):
+    if x_session_token:
+        session = await session_crud.get_session_by_token(db, x_session_token)
+        if session is not None:
+            await session_crud.deactivate_session(db, session)
+    return {"ok": True}
