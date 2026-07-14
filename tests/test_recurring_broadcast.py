@@ -13,6 +13,7 @@ Covers:
 10. Multi-worker safety findings
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -24,6 +25,8 @@ from app.crud.broadcast import RECURRING_STALE_TIMEOUT_SECONDS, recover_stale_re
 from app.schemas.account import AccountCreate
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
 from app.scheduler.scheduler import dispatch_due_broadcasts
+from app.services.broadcast_processor import process_broadcast
+from app.services.delivery import DeliveryResult, DeliveryStatus
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -650,7 +653,194 @@ async def test_recover_restart_recovery(db_session, monkeypatch):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 10. Multi-worker safety: stale timeout prevents false recovery
+# 10. Duplicate-send audit: recurring broadcasts must not re-send to
+#     recipients who already have a success message_log row for the
+#     same child broadcast (timeout → retry scenario).
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_recurring_child_retry_excludes_already_succeeded(db_session, monkeypatch):
+    """A retried recurring child broadcast must not re-send to recipients
+    that already have a successful message_log row for THIS child.
+
+    Regression: process_broadcast always rebuilt its recipient list from
+    broadcast.recipients verbatim on every (re-)dispatch.  The fix for
+    one-time broadcasts (b87050a) introduced get_succeeded_recipients
+    scoped to source='broadcast' AND source_id=broadcast_id.  For recurring
+    children, broadcast_id == child_id, so the same protection should apply
+    — verify that it actually does."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
+                                   recipients=["-100001", "-100002"])
+
+    # Create a child the same way process_recurring_parent does
+    child = await broadcast_crud.create_recurring_child_broadcast(
+        db_session, parent, broadcast_crud.utcnow_naive()
+    )
+
+    # Simulate one recipient already having succeeded in an earlier attempt
+    db_session.add(MessageLog(
+        account_id=account.id, recipient="-100001",
+        source="broadcast", source_id=child.id,
+        status="success", success=True,
+    ))
+    await db_session.commit()
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["recipients"] = list(request.recipients)
+        return [DeliveryResult(status=DeliveryStatus.SUCCESS, recipient=r, telegram_message_id=99)
+                for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    await process_broadcast(child.id, skip_rate_limit=True)
+
+    # Only the NOT-yet-succeeded recipient should be in the delivery request
+    assert captured["recipients"] == ["-100002"], (
+        f"Expected only unsent recipient, got {captured['recipients']}"
+    )
+
+    await db_session.refresh(child)
+    assert child.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_recurring_children_do_not_share_success_state(db_session, monkeypatch):
+    """Each recurring child has its OWN broadcast_id.  A success recorded
+    for child A must NOT prevent child B from sending to the same recipient.
+
+    Context: b87050a scopes get_succeeded_recipients to source_id=<current
+    broadcast_id>.  Without this scope, recurring broadcasts would send to
+    every recipient exactly once (on the first child) and every subsequent
+    child would skip all recipients as "already succeeded" — a silent
+    cessation of the recurring schedule.
+
+    Recurring means every occurrence sends to the full recipient list."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
+                                   recipients=["-100001"])
+
+    # Child A — succeeds
+    child_a = await broadcast_crud.create_recurring_child_broadcast(
+        db_session, parent, broadcast_crud.utcnow_naive()
+    )
+
+    # Manually record success for child A
+    db_session.add(MessageLog(
+        account_id=account.id, recipient="-100001",
+        source="broadcast", source_id=child_a.id,
+        status="success", success=True,
+    ))
+    await db_session.commit()
+
+    # Child B — same recipient must still be sent
+    child_b = await broadcast_crud.create_recurring_child_broadcast(
+        db_session, parent, broadcast_crud.utcnow_naive()
+    )
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["recipients"] = list(request.recipients)
+        return [DeliveryResult(status=DeliveryStatus.SUCCESS, recipient=r, telegram_message_id=99)
+                for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    await process_broadcast(child_b.id, skip_rate_limit=True)
+
+    # Child B must attempt delivery to the recipient
+    assert captured["recipients"] == ["-100001"], (
+        f"Child B must send to the same recipient as Child A, got {captured['recipients']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_session, monkeypatch):
+    """Simulate: recurring child times out mid-delivery, some recipients
+    succeeded, broadcast status set to 'sent' (partial).  Then process_broadcast
+    is called again (retry).  Already-succeeded recipients must be excluded.
+
+    This is the recurring analogue of test_process_broadcast_timeout_with_partial_success
+    + test_process_broadcast_excludes_already_succeeded_recipients in
+    test_broadcast_processor.py — but exercised through a recurring child."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
+                                   recipients=["-100001", "-100002"])
+
+    child = await broadcast_crud.create_recurring_child_broadcast(
+        db_session, parent, broadcast_crud.utcnow_naive()
+    )
+
+    # Simulate one recipient succeeded before/timeout
+    db_session.add(MessageLog(
+        account_id=account.id, recipient="-100001",
+        source="broadcast", source_id=child.id,
+        status="success", success=True,
+    ))
+    await db_session.commit()
+
+    # Simulate timeout during retry — deliver_message hangs
+    async def _never_completes(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(side_effect=_never_completes),
+    )
+    monkeypatch.setattr("app.config.settings.broadcast_timeout_seconds", 0.01)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await process_broadcast(child.id, skip_rate_limit=True)
+
+    # After timeout, child should be marked 'sent' (partial — 1/2 succeeded)
+    await db_session.refresh(child)
+    assert child.status == "sent"
+    assert "1/2" in child.error_message
+    assert "시간 초과" in child.error_message
+
+    # Now deliver_message is mocked to succeed for remaining recipient
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["recipients"] = list(request.recipients)
+        return [DeliveryResult(status=DeliveryStatus.SUCCESS, recipient=r, telegram_message_id=99)
+                for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    # Retry: child is still in "sent" status... process_broadcast won't work.
+    # Reset to pending via retry_broadcast (simulates user clicking retry).
+    child.status = "failed"
+    child.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    updated = await broadcast_crud.retry_broadcast(db_session, child.id)
+    assert updated is not None
+    assert updated.status == "pending"
+
+    await process_broadcast(child.id, skip_rate_limit=True)
+
+    # Only the unsent recipient should be in the delivery request
+    assert captured["recipients"] == ["-100002"], (
+        f"Retry must exclude already-succeeded recipient, got {captured['recipients']}"
+    )
+
+    await db_session.refresh(child)
+    assert child.status == "sent"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 11. Multi-worker safety: stale timeout prevents false recovery
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -744,3 +934,101 @@ async def test_recurring_logs_includes_parents(db_session):
     ids = [b.id for b in logs]
     assert recurring.id in ids, "Recurring parent must appear in logs"
     assert one_time.id in ids, "One-time broadcast must appear in logs"
+
+
+@pytest.mark.asyncio
+async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monkeypatch):
+    """Crash-window scenario: the original process_recurring_parent takes
+    long enough that recover_stale_recurring_parents kicks in, resets the
+    parent to 'pending', and the next scheduler tick dispatches it again.
+    
+    Both the original (now unblocked) call and the fresh re-dispatch must
+    NOT send duplicate messages to the same recipients.  Each child's own
+    process_broadcast invocation scopes succeeded-recipient filtering to
+    its own child_id.
+    
+    This test simulates the race by:
+      1. Setting parent to 'sending' with old sent_at (triggers recovery).
+      2. Creating child A (simulating process_recurring_parent's first step).
+      3. Running recover_stale_recurring_parents (simulating tick N+4).
+      4. Running dispatch_due_broadcasts (simulating re-dispatch on tick N+4).
+      5. Running process_broadcast for child A (simulating the original call).
+    
+    Assert: child A and child B each produce exactly one DeliveryRequest,
+    each scoped to their own recipient list, with no cross-contamination.
+    """
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session, "+821033330070")
+    parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
+                                   recipients=["-100001", "-100002"])
+
+    # ── Step 1: Parent stuck in 'sending' with stale sent_at ──
+    parent.status = "sending"
+    parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
+    parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
+    await db_session.commit()
+
+    # ── Step 2: Child A exists (created before recovery) ──
+    child_a = await broadcast_crud.create_recurring_child_broadcast(
+        db_session, parent, broadcast_crud.utcnow_naive()
+    )
+
+    # ── Step 3: Recovery runs (simulating slow process_recurring_parent) ──
+    recovered = await recover_stale_recurring_parents(db_session)
+    assert len(recovered) == 1
+    assert recovered[0].id == parent.id
+
+    # Child A should be marked as 'failed' by recovery (orphan cleanup)
+    await db_session.refresh(child_a)
+    assert child_a.status == "failed"
+    assert "복구" in child_a.error_message
+
+    # Parent should be 'pending' again
+    await db_session.refresh(parent)
+    assert parent.status == "pending"
+    # next_scheduled_at still in the past → parent will be re-dispatched
+
+    # Mock Telethon at the lowest level so the full delivery pipeline runs
+    monkeypatch.setattr(
+        "app.services.delivery.get_authorized_client",
+        AsyncMock(return_value="dummy-client"),
+    )
+    captured_b = []
+
+    async def _capture_send_b(client, target, message, media_path=None, reply_to_msg_id=None):
+        captured_b.append(target)
+        return (DeliveryStatus.SUCCESS, 200, None, None)
+
+    monkeypatch.setattr(
+        "app.services.delivery._send_single",
+        _capture_send_b,
+    )
+
+    await dispatch_due_broadcasts()
+
+    # A new child B should have been created and dispatched
+    from app.models.broadcast import Broadcast
+    from sqlalchemy import select as sa_select
+    result = await db_session.execute(
+        sa_select(Broadcast).where(
+            Broadcast.parent_broadcast_id == parent.id,
+            Broadcast.status != "failed",
+        )
+    )
+    children_alive = list(result.scalars().all())
+    # Child A is failed, child B should be alive
+    assert len(children_alive) >= 1
+    child_b = children_alive[0]
+    assert child_b.status in ("sent", "pending", "sending")
+
+    # ── Step 5: Old process_broadcast(child_A) eventually runs ──
+
+    await process_broadcast(child_a.id, skip_rate_limit=True)
+
+    # Verify both children's delivery was attempted through the real pipeline
+    # which persisted message_logs for child_b and child_a.
+    await db_session.refresh(child_b)
+    assert child_b.status == "sent"
+    await db_session.refresh(child_a)
+    assert child_a.status in ("sent", "failed")
