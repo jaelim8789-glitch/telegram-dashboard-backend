@@ -119,7 +119,7 @@ async def create_broadcast(
             scheduled_at=scheduled_at or None,
             recurring_interval_minutes=recurring_val,
             delivery_mode=mode_val,
-            reply_to_message_id=parsed_reply_to_id,
+            reply_to_msg_id=parsed_reply_to_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())

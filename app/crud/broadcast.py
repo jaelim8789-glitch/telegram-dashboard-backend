@@ -203,9 +203,7 @@ async def list_logs(
     status: str | None = None,
     date: str | None = None,
 ) -> list[Broadcast]:
-    query = select(Broadcast).where(
-        Broadcast.recurring_interval_minutes.is_(None)
-    )
+    query = select(Broadcast)
 
     if identity is not None and identity.kind != "admin" and account_id is None:
         if identity.tenant_id:

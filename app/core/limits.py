@@ -6,8 +6,8 @@ BROADCAST_MIN_INTERVAL_SECONDS = 60
 # per-account cooldown above, so a burst doesn't hit Telegram's rate limits.
 INTER_MESSAGE_DELAY_SECONDS = 2
 
-MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
-ALLOWED_MEDIA_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_MEDIA_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+ALLOWED_MEDIA_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"}
 
 # Phone verification (Sprint 6 user login) — SMS costs money, so codes are deliberately
 # short-lived and resend is throttled per phone number.

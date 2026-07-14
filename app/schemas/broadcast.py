@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 BroadcastStatus = Literal["pending", "sending", "sent", "failed", "cancelled"]
 
@@ -13,12 +13,18 @@ RECURRING_INTERVAL_VALUES = {30, 60, 120, 180, 360, 720, 1440}
 
 class BroadcastCreate(BaseModel):
     account_id: str
-    message: str = Field(min_length=1, max_length=4096)
+    message: str = Field(default="", max_length=4096)
     recipients: list[str] = Field(min_length=1)
     scheduled_at: datetime | None = None
     recurring_interval_minutes: int | None = None
     delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_message_or_reply(self):
+        if not self.message and self.reply_to_msg_id is None:
+            raise ValueError("message or reply_to_msg_id is required")
+        return self
 
     @classmethod
     def validate_recurring_interval(cls, v: int | None) -> int | None:
