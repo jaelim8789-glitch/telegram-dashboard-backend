@@ -591,6 +591,149 @@ async def test_retry_broadcast_returns_none_for_missing(db_session):
     assert result is None
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 29 — retry/redispatch must not resend to already-succeeded recipients
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_excludes_already_succeeded_recipients(db_session, monkeypatch):
+    """A recipient with a prior success message_log for this broadcast must not
+    be included in the recipient list handed to deliver_message on a re-run
+    (e.g. after a timeout, or a manual retry/send-now)."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001", "-100002", "-100003"])
+
+    db_session.add(
+        MessageLog(
+            account_id=account.id, recipient="-100001", source="broadcast",
+            source_id=broadcast.id, status="success", success=True,
+        )
+    )
+    await db_session.commit()
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["recipients"] = list(request.recipients)
+        return [_success_result(r) for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    await process_broadcast(broadcast.id)
+
+    assert captured["recipients"] == ["-100002", "-100003"]
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_all_recipients_already_succeeded_skips_redispatch(db_session, monkeypatch):
+    """If every recipient already has a recorded success, re-running the
+    broadcast must not call deliver_message at all — there's nothing left
+    to send, and calling it would resend duplicate messages."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001", "-100002"])
+
+    for recipient in ("-100001", "-100002"):
+        db_session.add(
+            MessageLog(
+                account_id=account.id, recipient=recipient, source="broadcast",
+                source_id=broadcast.id, status="success", success=True,
+            )
+        )
+    await db_session.commit()
+
+    deliver_mock = AsyncMock()
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
+
+    await process_broadcast(broadcast.id)
+
+    deliver_mock.assert_not_called()
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_reports_partial_success_when_remaining_recipients_fail(db_session, monkeypatch):
+    """A recipient that already succeeded in an earlier attempt must keep the
+    broadcast's final status as partial success ("sent"), even if every
+    recipient attempted *this round* fails — the earlier success must not be
+    erased just because this round found nothing new to succeed at."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001", "-100002"])
+
+    db_session.add(
+        MessageLog(
+            account_id=account.id, recipient="-100001", source="broadcast",
+            source_id=broadcast.id, status="success", success=True,
+        )
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_failure_result("-100002", error="일시적 오류")]),
+    )
+
+    await process_broadcast(broadcast.id)
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_recipient_filter_scoped_to_this_broadcast_only(db_session, monkeypatch):
+    """A success log for the *same recipient* under a different broadcast_id
+    must not exclude that recipient here — the filter is scoped strictly to
+    this broadcast's own source_id, so unrelated broadcasts (including a
+    different recurring child) never cross-contaminate each other."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    other_broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001"])
+    db_session.add(
+        MessageLog(
+            account_id=account.id, recipient="-100001", source="broadcast",
+            source_id=other_broadcast.id, status="success", success=True,
+        )
+    )
+    await db_session.commit()
+
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001"])
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["recipients"] = list(request.recipients)
+        return [_success_result(r) for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    # skip_rate_limit=True: this test is about broadcast-id scoping, not the
+    # unrelated per-account 60s cooldown that two broadcasts created back to
+    # back for the same account would otherwise trip.
+    await process_broadcast(broadcast.id, skip_rate_limit=True)
+
+    assert captured["recipients"] == ["-100001"]
+
+
+@pytest.mark.asyncio
+async def test_get_succeeded_recipients_empty_for_fresh_broadcast(db_session):
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    result = await broadcast_crud.get_succeeded_recipients(db_session, broadcast.id)
+    assert result == set()
+
+
 @pytest.mark.asyncio
 async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch):
     account = await _make_account(db_session)

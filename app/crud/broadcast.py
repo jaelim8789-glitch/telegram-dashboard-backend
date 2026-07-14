@@ -233,6 +233,27 @@ async def summarize_message_log_outcomes(
     return any_success, all_success, succeeded_count
 
 
+async def get_succeeded_recipients(db: AsyncSession, broadcast_id: str) -> set[str]:
+    """Distinct recipients that already have a successful message_log row for this
+    exact broadcast (source="broadcast", source_id=broadcast_id).
+
+    Consulted before every (re-)dispatch of a broadcast so a manual retry, a
+    send-now redispatch, or a re-run after a timeout never re-sends to a
+    recipient who already received the message — only recipients still
+    pending or previously failed are targeted.
+    """
+    from app.models.message_log import MessageLog
+
+    result = await db.execute(
+        select(MessageLog.recipient).where(
+            MessageLog.source == "broadcast",
+            MessageLog.source_id == broadcast_id,
+            MessageLog.success.is_(True),
+        ).distinct()
+    )
+    return set(result.scalars().all())
+
+
 async def list_logs(
     db: AsyncSession,
     *,

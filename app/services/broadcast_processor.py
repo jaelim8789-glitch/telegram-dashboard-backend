@@ -49,12 +49,33 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
         delivery_mode = getattr(broadcast, "delivery_mode", "normal")
 
+        # A retry, a send-now redispatch, or a re-run after a timeout must never
+        # re-send to a recipient who already has a successful message_log row for
+        # this broadcast — otherwise a recipient that succeeded before the retry
+        # (or before the outer timeout fired) gets the message a second time.
+        all_recipients_local = broadcast.recipients
+        already_succeeded = await broadcast_crud.get_succeeded_recipients(db, broadcast_id)
+        recipients_local = (
+            [r for r in all_recipients_local if r not in already_succeeded]
+            if already_succeeded else all_recipients_local
+        )
+
+        if already_succeeded and not recipients_local:
+            # Every recipient already has a recorded success — nothing left to send.
+            await broadcast_crud.update_broadcast_status(db, broadcast, status="sent")
+            logger.info(
+                "broadcast_already_fully_delivered",
+                broadcast_id=broadcast_id,
+                recipient_count=len(all_recipients_local),
+            )
+            return
+
         logger.info("broadcast_started", broadcast_id=broadcast_id, account_id=account.id,
-                     recipient_count=len(broadcast.recipients), delivery_mode=delivery_mode)
+                     recipient_count=len(recipients_local), delivery_mode=delivery_mode,
+                     already_succeeded_count=len(already_succeeded))
         await broadcast_crud.update_broadcast_status(db, broadcast, status="sending", mark_sent=True)
 
         account_id_local = broadcast.account_id
-        recipients_local = broadcast.recipients
         message_local = broadcast.message
         media_path_local = broadcast.media_path
         delay_seconds_local = getattr(broadcast, "delay_seconds", None)
@@ -136,7 +157,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         )
     except asyncio.TimeoutError:
         logger.error("broadcast_timeout", broadcast_id=broadcast_id, timeout_seconds=timeout)
-        total = len(recipients_local)
+        total = len(all_recipients_local)
         async with async_session_maker() as db:
             broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
             if broadcast is not None:
@@ -168,7 +189,10 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         raise
 
     all_success = all(r.status.value == "success" for r in results)
-    any_success = any(r.status.value == "success" for r in results)
+    # already_succeeded recipients were excluded from this attempt entirely, so a
+    # broadcast with earlier-recorded successes must not be reported as a total
+    # failure just because everything *attempted this round* failed.
+    any_success = any(r.status.value == "success" for r in results) or bool(already_succeeded)
     errors = [r.error_message for r in results if r.error_message]
 
     async with async_session_maker() as db:
