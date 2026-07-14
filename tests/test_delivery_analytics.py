@@ -1258,3 +1258,59 @@ async def test_broadcast_recurring_not_confused_with_broadcast_id(client, db_ses
         f"Expected 200 or 403, got {resp.status_code}: {resp.text}. "
         f"If 404, the static /recurring route is being captured by /{{broadcast_id}}."
     )
+
+
+# ─── Regression: date_trunc must declare a result type ──────────────
+#
+# Production hit `AttributeError: 'NoneType' object has no attribute
+# 'dialect_impl'` on GET /api/delivery-analytics/overview. Root cause: the
+# custom `date_trunc` FunctionElement had `type = None`, which only breaks
+# once SQLAlchemy needs to resolve the column's result type — a step the
+# fully-mocked test_timeline_daily/test_overview_does_not_crash tests above
+# never exercise (mocked session), and that SQLite's dialect-specific
+# @compiles override can sidestep. This test checks the class attribute
+# directly so it fails regardless of which DB engine runs the suite.
+
+
+def test_date_trunc_declares_a_result_type():
+    from sqlalchemy import Column, DateTime as SA_DateTime
+
+    from app.services.delivery_analytics import date_trunc
+
+    col = Column("created_at", SA_DateTime())
+    expr = date_trunc("day", col)
+    assert expr.type is not None, (
+        "date_trunc.type must not be None — SQLAlchemy raises "
+        "AttributeError: 'NoneType' object has no attribute 'dialect_impl' "
+        "as soon as this expression's result type is needed (e.g. GROUP BY "
+        "+ row materialization on PostgreSQL)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_timeline_real_query_with_data(db_session):
+    """Real (non-mocked) DB round-trip through get_timeline with actual
+    MessageLog rows — exercises the same date_trunc query path production
+    hit, unlike the mocked test_timeline_daily above."""
+    from app.models.account import Account
+    from app.models.message_log import MessageLog
+
+    account = Account(phone="+821000000999", name="date-trunc-test")
+    db_session.add(account)
+    await db_session.flush()
+
+    db_session.add(
+        MessageLog(
+            account_id=account.id,
+            recipient="-100123",
+            source="broadcast",
+            source_id="bc-1",
+            status="success",
+            success=True,
+        )
+    )
+    await db_session.commit()
+
+    identity = Identity(kind="admin")
+    timeline = await get_timeline(identity, account_id=account.id, days=30, interval="day")
+    assert isinstance(timeline, list)

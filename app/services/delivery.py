@@ -72,6 +72,14 @@ MAX_RETRIES = 3
 BASE_BACKOFF_SECONDS = 5.0
 MAX_WAIT_SECONDS = 60.0
 
+# Per-recipient send timeout. Without this, a single Telethon call that hangs
+# (dead connection, DC migration stall, etc.) silently consumes the *entire*
+# broadcast-level timeout budget — the outer asyncio.wait_for in
+# broadcast_processor.py then cancels the whole broadcast, even though every
+# other recipient would have gone through fine. Bounding each individual send
+# turns a full-broadcast stall into one classified, retriable failure.
+PER_MESSAGE_TIMEOUT_SECONDS = 30.0
+
 EVENT_QUEUED = "queued"
 EVENT_SENDING = "sending"
 EVENT_RETRYING = "retrying"
@@ -153,14 +161,21 @@ async def _send_single(
     reply_to_msg_id: int | None = None,
 ) -> tuple[DeliveryStatus, int | None, str | None, int | None]:
     """Send a single message and return (status, telegram_msg_id, safe_error, flood_wait_seconds)."""
+    started = datetime.now(timezone.utc)
     try:
         if media_path:
-            result = await client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id)
-            msg_id = result.id if hasattr(result, "id") else None
+            send_coro = client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id)
         else:
-            result = await client.send_message(target, message, reply_to=reply_to_msg_id)
-            msg_id = result.id
+            send_coro = client.send_message(target, message, reply_to=reply_to_msg_id)
+        result = await asyncio.wait_for(send_coro, timeout=PER_MESSAGE_TIMEOUT_SECONDS)
+        msg_id = result.id if hasattr(result, "id") else None
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        if elapsed > 5.0:
+            logger.warning("delivery_slow_send", recipient=str(target), elapsed_seconds=round(elapsed, 1))
         return (DeliveryStatus.SUCCESS, msg_id, None, None)
+    except asyncio.TimeoutError:
+        logger.warning("delivery_send_timeout", recipient=str(target), timeout_seconds=PER_MESSAGE_TIMEOUT_SECONDS)
+        return (DeliveryStatus.NETWORK_ERROR, None, "전송 응답이 지연되어 시간 초과되었습니다.", None)
     except Exception as exc:
         status, safe_error = classify_error(exc)
         flood_wait = exc.seconds if isinstance(exc, FloodWaitError) else None

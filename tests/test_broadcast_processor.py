@@ -46,6 +46,32 @@ async def test_process_broadcast_success(db_session, monkeypatch):
     assert broadcast.sent_at is not None
 
 
+@pytest.mark.asyncio
+async def test_process_broadcast_applies_delay_seconds_for_normal_mode(db_session, monkeypatch):
+    """Production symptom: the '일반 발송 간격' selector had no backend effect —
+    delay_seconds was accepted nowhere in the pipeline."""
+    from app.schemas.broadcast import BroadcastCreate
+
+    account = await _make_account(db_session)
+    payload = BroadcastCreate(
+        account_id=account.id, message="테스트", recipients=["-100999"], delay_seconds=10
+    )
+    broadcast = await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
+    assert broadcast.delay_seconds == 10
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["inter_message_delay"] = request.inter_message_delay
+        return [_success_result()]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    await process_broadcast(broadcast.id)
+
+    assert captured["inter_message_delay"] == 10.0
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Sprint 28 — Banned account state synchronization
 # ═══════════════════════════════════════════════════════════════════════
@@ -433,6 +459,49 @@ async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, mon
 
 
 @pytest.mark.asyncio
+async def test_process_broadcast_timeout_with_partial_success_marks_sent(db_session, monkeypatch):
+    """Production symptom: a broadcast to 89 recipients logged 53 successful
+    sends in message_logs, but the overall Broadcast row was blanket-marked
+    "failed" because the outer wait_for hit its timeout — misleading, since
+    most recipients actually got the message. The final status must reflect
+    what message_logs actually show instead of assuming total failure."""
+    from app.models.message_log import MessageLog
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001", "-100002"])
+
+    # Simulate one recipient already having succeeded before the cutoff.
+    db_session.add(
+        MessageLog(
+            account_id=account.id,
+            recipient="-100001",
+            source="broadcast",
+            source_id=broadcast.id,
+            status="success",
+            success=True,
+        )
+    )
+    await db_session.commit()
+
+    async def _never_completes(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(side_effect=_never_completes),
+    )
+    monkeypatch.setattr("app.config.settings.broadcast_timeout_seconds", 0.01)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await process_broadcast(broadcast.id)
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "sent"
+    assert "1/2" in broadcast.error_message
+    assert "시간 초과" in broadcast.error_message
+
+
+@pytest.mark.asyncio
 async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, monkeypatch):
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
@@ -459,7 +528,7 @@ async def test_process_broadcast_timeout_releases_scheduler_guard(db_session, mo
 
 @pytest.mark.asyncio
 async def test_process_broadcast_timeout_configurable_via_settings(db_session, monkeypatch):
-    assert settings.broadcast_timeout_seconds == 300
+    assert settings.broadcast_timeout_seconds == 600
     assert hasattr(settings, "broadcast_timeout_seconds")
 
 

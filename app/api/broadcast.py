@@ -59,6 +59,9 @@ async def create_broadcast(
     reply_to_message_id: Annotated[
         str | None, Form(description="Message ID to reply to (only used when delivery_mode is 'reply')")
     ] = None,
+    delay_seconds: Annotated[
+        str | None, Form(description="Per-recipient pacing override in seconds for delivery_mode 'normal' (e.g. 5, 10, 30, 60)")
+    ] = None,
     image: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
@@ -111,6 +114,17 @@ async def create_broadcast(
                 detail="reply_to_message_id는 유효한 정수여야 합니다.",
             )
 
+    # Parse delay_seconds
+    parsed_delay_seconds: int | None = None
+    if delay_seconds is not None and delay_seconds.strip():
+        try:
+            parsed_delay_seconds = int(delay_seconds.strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="delay_seconds는 유효한 정수여야 합니다.",
+            )
+
     try:
         payload = BroadcastCreate(
             account_id=account_id,
@@ -120,6 +134,7 @@ async def create_broadcast(
             recurring_interval_minutes=recurring_val,
             delivery_mode=mode_val,
             reply_to_msg_id=parsed_reply_to_id,
+            delay_seconds=parsed_delay_seconds,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())

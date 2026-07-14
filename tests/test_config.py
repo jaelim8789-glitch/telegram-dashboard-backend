@@ -32,10 +32,10 @@ def test_database_url_leaves_explicit_driver_alone():
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def test_broadcast_timeout_default_is_300():
-    """Default value is 300 seconds."""
+def test_broadcast_timeout_default_is_600():
+    """Default value is 600 seconds (raised from 300 in an earlier, unrelated change)."""
     s = _settings("postgresql+asyncpg://u:p@h/db")
-    assert s.broadcast_timeout_seconds == 300
+    assert s.broadcast_timeout_seconds == 600
 
 
 def test_broadcast_timeout_custom_value():

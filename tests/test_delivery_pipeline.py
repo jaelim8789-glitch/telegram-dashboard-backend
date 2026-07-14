@@ -165,7 +165,7 @@ async def test_send_single_success(mock_client):
     assert status == DeliveryStatus.SUCCESS
     assert msg_id == 42
     assert error is None
-    mock_client.send_message.assert_awaited_once_with(-100123, "hi")
+    mock_client.send_message.assert_awaited_once_with(-100123, "hi", reply_to=None)
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_send_single_success_with_file(mock_client):
     status, msg_id, error, flood = await _send_single(mock_client, -100123, "hi", "/path/img.jpg")
     assert status == DeliveryStatus.SUCCESS
     assert msg_id == 99
-    mock_client.send_file.assert_awaited_once_with(-100123, "/path/img.jpg", caption="hi")
+    mock_client.send_file.assert_awaited_once_with(-100123, "/path/img.jpg", caption="hi", reply_to=None)
 
 
 @pytest.mark.asyncio
@@ -195,6 +195,26 @@ async def test_send_single_never_exposes_secrets_in_error(mock_client):
     assert error is not None
     assert "UserDeactivatedBanError" not in error
     assert "차단" in error
+
+
+@pytest.mark.asyncio
+async def test_send_single_hung_call_times_out_instead_of_blocking_forever(mock_client, monkeypatch):
+    """Production symptom: a single stalled Telethon call silently consumed the
+    entire broadcast-level timeout budget, cancelling the whole broadcast even
+    though every other recipient would have gone through fine. A bounded
+    per-message timeout turns that into one classified, retriable failure."""
+    from app.services import delivery as delivery_module
+
+    monkeypatch.setattr(delivery_module, "PER_MESSAGE_TIMEOUT_SECONDS", 0.05)
+
+    async def _hang(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    mock_client.send_message.side_effect = _hang
+    status, msg_id, error, flood = await _send_single(mock_client, -100123, "hi", None)
+    assert status == DeliveryStatus.NETWORK_ERROR
+    assert msg_id is None
+    assert "지연" in error or "시간" in error
 
 
 # ═══════════════════════════════════════════════════════════════════════

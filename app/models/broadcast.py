@@ -42,3 +42,5 @@ class Broadcast(Base):
     delivery_mode: Mapped[str] = mapped_column(String(20), default="normal", server_default="normal")
     # When delivery_mode is "reply", the specific message ID to reply to (null = auto-fetch latest)
     reply_to_msg_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Per-recipient pacing override in seconds for delivery_mode "normal" (null = default 60s cooldown pacing).
+    delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

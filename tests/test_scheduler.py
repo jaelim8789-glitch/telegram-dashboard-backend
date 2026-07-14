@@ -272,3 +272,61 @@ async def test_dispatch_reply_macros_not_duplicated_when_seen_due_twice(db_sessi
     await dispatch_due_reply_macros()
 
     execute_mock.assert_awaited_once_with(macro.id)
+
+
+# ─── Regression: recurring broadcasts must stay visible in /scheduler/upcoming ──
+#
+# Production symptom: a recurring broadcast kept firing (dispatch_due_broadcasts
+# kept processing it) but vanished from the scheduler UI after its first tick.
+# Root cause: list_upcoming_scheduled_broadcasts filtered on
+# `scheduled_at > now`, but reschedule_recurring_broadcast only ever advances
+# `next_scheduled_at` — `scheduled_at` is frozen at creation time and falls
+# into the past the moment the parent fires once.
+
+
+@pytest.mark.asyncio
+async def test_recurring_parent_still_upcoming_after_first_fire(db_session):
+    from app.api.deps import Identity
+
+    account = await _make_account(db_session)
+    payload = BroadcastCreate(
+        account_id=account.id,
+        message="반복 발송",
+        recipients=["-100999"],
+        recurring_interval_minutes=30,
+    )
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
+    parent = await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=future)
+
+    # Simulate the parent having fired once: next_scheduled_at advances into
+    # the future, but scheduled_at (from creation) is left untouched.
+    await broadcast_crud.reschedule_recurring_broadcast(db_session, parent.id)
+
+    upcoming = await broadcast_crud.list_upcoming_scheduled_broadcasts(db_session, identity=Identity(kind="admin"))
+    assert parent.id in [b.id for b in upcoming], (
+        "Recurring parent disappeared from /scheduler/upcoming after its first "
+        "tick even though it is still due again per next_scheduled_at."
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_recurring_parent_not_upcoming(db_session):
+    from app.api.deps import Identity
+
+    account = await _make_account(db_session)
+    payload = BroadcastCreate(
+        account_id=account.id,
+        message="취소된 반복 발송",
+        recipients=["-100999"],
+        recurring_interval_minutes=30,
+    )
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
+    parent = await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=future)
+    await broadcast_crud.reschedule_recurring_broadcast(db_session, parent.id)
+
+    parent = await broadcast_crud.get_broadcast(db_session, parent.id)
+    parent.status = "cancelled"
+    await db_session.commit()
+
+    upcoming = await broadcast_crud.list_upcoming_scheduled_broadcasts(db_session, identity=Identity(kind="admin"))
+    assert parent.id not in [b.id for b in upcoming]

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity
@@ -42,6 +42,7 @@ async def create_broadcast(
         next_scheduled_at=None,
         delivery_mode=getattr(data, "delivery_mode", "normal"),
         reply_to_msg_id=getattr(data, "reply_to_msg_id", None),
+        delay_seconds=getattr(data, "delay_seconds", None),
     )
     if data.recurring_interval_minutes is not None:
         if scheduled_at is None or scheduled_at <= now:
@@ -176,11 +177,25 @@ async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | No
 
 
 async def list_upcoming_scheduled_broadcasts(db: AsyncSession, identity: Identity | None = None) -> list[Broadcast]:
+    """One-time broadcasts still pending, plus recurring parents that are still
+    due to fire again. A recurring parent's own `status` moves away from
+    "pending" (sending/sent/failed) after its first dispatch and its relevant
+    "next run" time lives in `next_scheduled_at`, not `scheduled_at` — without
+    the second branch here, every recurring broadcast disappears from this
+    view after its first tick even though the scheduler keeps dispatching it.
+    """
     now = utcnow_naive()
     query = select(Broadcast).where(
-        Broadcast.status == "pending",
-        Broadcast.scheduled_at.is_not(None),
-        Broadcast.scheduled_at > now,
+        or_(
+            (Broadcast.status == "pending")
+            & Broadcast.scheduled_at.is_not(None)
+            & (Broadcast.scheduled_at > now),
+            (Broadcast.recurring_interval_minutes.is_not(None))
+            & Broadcast.next_scheduled_at.is_not(None)
+            & (Broadcast.next_scheduled_at > now)
+            & (Broadcast.status != "cancelled")
+            & (Broadcast.is_recurring_paused.is_(False)),
+        )
     )
 
     if identity is not None and identity.kind != "admin":
@@ -190,9 +205,32 @@ async def list_upcoming_scheduled_broadcasts(db: AsyncSession, identity: Identit
         else:
             return []
 
-    query = query.order_by(Broadcast.scheduled_at.asc())
+    query = query.order_by(func.coalesce(Broadcast.next_scheduled_at, Broadcast.scheduled_at).asc())
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+async def summarize_message_log_outcomes(
+    db: AsyncSession, broadcast_id: str, total_recipients: int
+) -> tuple[bool, bool, int]:
+    """Reconstruct (any_success, all_success, succeeded_count) from message_logs
+    already persisted for this broadcast. Used when delivery was cut off by the
+    outer timeout so the final status reflects what actually went out instead
+    of blanket-failing a broadcast that mostly succeeded.
+    """
+    from app.models.message_log import MessageLog
+
+    result = await db.execute(
+        select(func.count(func.distinct(MessageLog.recipient))).where(
+            MessageLog.source == "broadcast",
+            MessageLog.source_id == broadcast_id,
+            MessageLog.success.is_(True),
+        )
+    )
+    succeeded_count = result.scalar_one() or 0
+    any_success = succeeded_count > 0
+    all_success = total_recipients > 0 and succeeded_count >= total_recipients
+    return any_success, all_success, succeeded_count
 
 
 async def list_logs(
@@ -390,6 +428,7 @@ async def create_recurring_child_broadcast(
         status="pending",
         scheduled_at=scheduled_at,
         parent_broadcast_id=parent.id,
+        delay_seconds=parent.delay_seconds,
     )
     db.add(child)
     await db.commit()

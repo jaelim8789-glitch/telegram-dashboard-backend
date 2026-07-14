@@ -19,6 +19,7 @@ class BroadcastCreate(BaseModel):
     recurring_interval_minutes: int | None = None
     delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
+    delay_seconds: int | None = Field(default=None, ge=1, le=3600)
 
     @model_validator(mode="after")
     def _validate_message_or_reply(self):
@@ -56,6 +57,7 @@ class BroadcastRead(BaseModel):
     failure_info: dict | None = None
     delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
+    delay_seconds: int | None = None
 
 
 class BroadcastChildrenRead(BaseModel):

@@ -57,6 +57,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         recipients_local = broadcast.recipients
         message_local = broadcast.message
         media_path_local = broadcast.media_path
+        delay_seconds_local = getattr(broadcast, "delay_seconds", None)
 
         parent_id = broadcast.id if is_recurring_parent else broadcast.parent_broadcast_id
 
@@ -125,6 +126,8 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
     if delivery_mode == "bulk":
         request.inter_message_delay = 0.3
+    elif delivery_mode == "normal" and delay_seconds_local is not None:
+        request.inter_message_delay = float(delay_seconds_local)
 
     try:
         results = await asyncio.wait_for(
@@ -133,13 +136,35 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         )
     except asyncio.TimeoutError:
         logger.error("broadcast_timeout", broadcast_id=broadcast_id, timeout_seconds=timeout)
+        total = len(recipients_local)
         async with async_session_maker() as db:
             broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
             if broadcast is not None:
-                await broadcast_crud.update_broadcast_status(
-                    db, broadcast, status="failed",
-                    error_message=f"발송 시간이 초과되었습니다 ({timeout}초).",
+                # The outer wait_for was cancelled mid-delivery, but individual
+                # sends already completed are persisted in message_logs — check
+                # those instead of blanket-failing a broadcast that mostly went
+                # through (matches the any_success/all_success handling below).
+                any_success, all_success, succeeded_count = await broadcast_crud.summarize_message_log_outcomes(
+                    db, broadcast_id, total
                 )
+                if all_success:
+                    await broadcast_crud.update_broadcast_status(
+                        db, broadcast, status="sent",
+                        error_message=f"발송은 완료됐으나 상태 확인이 {timeout}초를 초과했습니다.",
+                    )
+                elif any_success:
+                    await broadcast_crud.update_broadcast_status(
+                        db, broadcast, status="sent",
+                        error_message=(
+                            f"{succeeded_count}/{total}명에게 발송 후 {timeout}초 시간 초과 — "
+                            "나머지 수신자는 처리되지 못했습니다."
+                        ),
+                    )
+                else:
+                    await broadcast_crud.update_broadcast_status(
+                        db, broadcast, status="failed",
+                        error_message=f"발송 시간이 초과되었습니다 ({timeout}초). 처리된 수신자: 0/{total}.",
+                    )
         raise
 
     all_success = all(r.status.value == "success" for r in results)

@@ -15,7 +15,9 @@ def utcnow_naive() -> datetime:
 # ─── MACRO CRUD ───────────────────────────────────────────────────────
 
 
-async def create_macro(db: AsyncSession, account_id: str, data: ReplyMacroCreate) -> ReplyMacro:
+async def create_macro(
+    db: AsyncSession, account_id: str, data: ReplyMacroCreate, *, media_path: str | None = None
+) -> ReplyMacro:
     macro = ReplyMacro(
         account_id=account_id,
         name=data.name,
@@ -26,6 +28,7 @@ async def create_macro(db: AsyncSession, account_id: str, data: ReplyMacroCreate
         fixed_time=data.fixed_time,
         max_sends_per_day=data.max_sends_per_day,
         is_active=data.is_active,
+        media_path=media_path,
     )
     db.add(macro)
     await db.commit()

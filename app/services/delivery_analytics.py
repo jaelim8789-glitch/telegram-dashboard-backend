@@ -44,7 +44,7 @@ OPTIMIZATIONS (Sprint 19):
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Integer, case, func, select, literal_column, text
+from sqlalchemy import DateTime, Integer, case, func, select, literal_column, text
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import FunctionElement
 
@@ -59,7 +59,11 @@ from app.api.deps import Identity
 
 class date_trunc(FunctionElement):
     name = "date_trunc"
-    type = None
+    # date_trunc always returns a timestamp — leaving this unset as None makes
+    # SQLAlchemy raise `AttributeError: 'NoneType' object has no attribute
+    # 'dialect_impl'` as soon as this expression's result type is needed
+    # (e.g. GROUP BY + row materialization on PostgreSQL).
+    type = DateTime()
 
 
 @compiles(date_trunc, "sqlite")
