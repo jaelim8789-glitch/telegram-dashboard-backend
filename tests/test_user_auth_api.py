@@ -176,7 +176,16 @@ async def test_auth_me_reports_admin_role(unauthenticated_client):
 
     res = await unauthenticated_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
-    assert res.json() == {"role": "admin", "phone": None}
+    # MeResponse gained plan/subscription_status/trial_expires_at in an
+    # earlier, unrelated commit (73803c9, channel-verification gate) — an
+    # admin identity has no linked User/Tenant, so these stay null.
+    assert res.json() == {
+        "role": "admin",
+        "phone": None,
+        "subscription_status": None,
+        "plan": None,
+        "trial_expires_at": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -197,7 +206,16 @@ async def test_auth_me_reports_user_role_and_phone(unauthenticated_client, monke
 
     res = await unauthenticated_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
-    assert res.json() == {"role": "user", "phone": "+821000000008"}
+    body = res.json()
+    # verify-code creates a fresh free-trial Tenant, so MeResponse's later
+    # plan/subscription_status/trial_expires_at fields (73803c9) are populated
+    # from it — trial_expires_at is a live timestamp, so only its presence is
+    # checked, not an exact value.
+    assert body["role"] == "user"
+    assert body["phone"] == "+821000000008"
+    assert body["plan"] == "free"
+    assert body["subscription_status"] == "active"
+    assert body["trial_expires_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -217,4 +235,13 @@ async def test_auth_me_reports_api_key_role(unauthenticated_client):
 
     res = await unauthenticated_client.get("/api/auth/me", headers={"X-API-Key": raw_key})
     assert res.status_code == 200
-    assert res.json() == {"role": "api_key", "phone": None}
+    # An admin-issued key with no linked User/Tenant has nothing to enrich
+    # MeResponse's later plan/subscription_status/trial_expires_at fields
+    # (73803c9) with — they stay null.
+    assert res.json() == {
+        "role": "api_key",
+        "phone": None,
+        "subscription_status": None,
+        "plan": None,
+        "trial_expires_at": None,
+    }

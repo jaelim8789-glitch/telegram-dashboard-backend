@@ -118,7 +118,18 @@ def test_billing_routers_missing_auth():
     payment_routes = [r for r in app.routes if "/api/payment" in getattr(r, "path", "")]
     for route in payment_routes:
         path = getattr(route, "path", "")
-        if path in ("/api/payment/plans", "/api/payment/request-key", "/api/payment/status/{payment_ref}"):
+        if path in (
+            "/api/payment/plans",
+            "/api/payment/request-key",
+            "/api/payment/status/{payment_ref}",
+            # Same trust model as /status/{payment_ref} above, documented in
+            # usdt_payment.py's module docstring: the caller hasn't paid/signed
+            # up yet, so there's no session to require. payment_ref is an
+            # unguessable, single-use, rate-limited (10/5min per IP) token —
+            # knowing it *is* the authentication, the same pattern as a
+            # password-reset or Stripe checkout-session link.
+            "/api/payment/claim-key/{payment_ref}",
+        ):
             continue
         deps = getattr(route, "dependencies", [])
         if not deps:

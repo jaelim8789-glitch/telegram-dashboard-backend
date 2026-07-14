@@ -174,26 +174,40 @@ def test_production_rejects_all_insecure_defaults_together():
 
 
 def test_production_accepts_overridden_credentials():
-    """Production with all credentials overridden is accepted."""
+    """Production with every insecure default overridden (credentials, debug,
+    sms_provider, frontend_url, cors_origins) is accepted. The validator was
+    extended, in an earlier unrelated hardening change, to also require
+    debug=False / a real sms_provider / a non-localhost frontend_url and
+    cors_origins — this test's config must satisfy all of them, not just the
+    admin credentials, to be a genuinely valid production example."""
     s = _settings(
         "postgresql+asyncpg://u:p@h/db",
         environment="production",
         admin_username="admin",
         admin_password="V3ryS3cur3!",
         admin_jwt_secret="".join("x" for _ in range(48)),
+        debug=False,
+        sms_provider="twilio",
+        frontend_url="https://telemon.online",
+        cors_origins="https://telemon.online",
     )
     assert s.environment == "production"
     assert s.admin_username == "admin"
 
 
 def test_production_accepts_overridden_jwt_secret():
-    """Production with a non-default JWT secret + full credentials is accepted."""
+    """Production with a non-default JWT secret + full credentials (and every
+    other insecure default overridden) is accepted."""
     s = _settings(
         "postgresql+asyncpg://u:p@h/db",
         environment="production",
         admin_username="telemon-admin",
         admin_password="Str0ng!Pass",
         admin_jwt_secret="a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+        debug=False,
+        sms_provider="twilio",
+        frontend_url="https://telemon.online",
+        cors_origins="https://telemon.online",
     )
     assert s.admin_jwt_secret == "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"
 
@@ -210,13 +224,17 @@ def test_prod_environment_variant_accepted():
 
 
 def test_prod_variant_with_overrides_accepted():
-    """'prod' environment + overridden credentials is accepted."""
+    """'prod' environment + every insecure default overridden is accepted."""
     s = _settings(
         "postgresql+asyncpg://u:p@h/db",
         environment="prod",
         admin_username="admin",
         admin_password="S3cur3P@ss",
         admin_jwt_secret="".join("y" for _ in range(48)),
+        debug=False,
+        sms_provider="twilio",
+        frontend_url="https://telemon.online",
+        cors_origins="https://telemon.online",
     )
     assert s.admin_username == "admin"
 

@@ -68,8 +68,17 @@ async def test_create_account_admin_bypasses_capacity_check(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_create_broadcast_blocked_when_plan_disallows(client, db_session):
-    tenant = await _make_tenant(db_session, plan="free")  # can_broadcast=False
+async def test_create_broadcast_blocked_when_can_broadcast_is_false(client, db_session):
+    """require_broadcast_capacity's can_broadcast=False branch is defensive
+    code — no current plan in PLAN_CATALOG sets it False (free plan's
+    can_broadcast was intentionally changed to True so the 24-hour free trial
+    can exercise the product's headline feature; "메시지 발송" is already
+    advertised as a Free Trial feature on the pricing page). Exercised here by
+    overriding the flag directly on the tenant rather than via a plan, since
+    the underlying guard is still real production code that must keep
+    rejecting a tenant with the flag off, whichever plan set it that way.
+    """
+    tenant = await _make_tenant(db_session, plan="free", can_broadcast=False)
     _as_tenant(client, tenant.id)
 
     account = await client.post("/api/accounts", json={"phone": "+821090000005"})
@@ -77,10 +86,43 @@ async def test_create_broadcast_blocked_when_plan_disallows(client, db_session):
 
     res = await client.post(
         "/api/broadcast",
-        data={"account_id": account_id, "message": "hi", "recipients": "[]"},
+        data={"account_id": account_id, "message": "hi", "recipients": '["-100123"]'},
     )
     assert res.status_code == 403
     assert "발송 기능" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_broadcast_blocked_when_monthly_limit_exceeded(client, db_session):
+    """Free plan's monthly_message_limit (100) is the real, current guardrail
+    against abuse now that free-trial tenants can broadcast at all."""
+    from datetime import datetime, timezone
+
+    from app.models.tenant import UsageRecord
+
+    tenant = await _make_tenant(db_session, plan="free")
+    assert tenant.can_broadcast is True
+    assert tenant.monthly_message_limit == 100
+    db_session.add(
+        UsageRecord(
+            tenant_id=tenant.id,
+            action="broadcast",
+            count=100,
+            recorded_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    )
+    await db_session.commit()
+    _as_tenant(client, tenant.id)
+
+    account = await client.post("/api/accounts", json={"phone": "+821090000015"})
+    account_id = account.json()["id"]
+
+    res = await client.post(
+        "/api/broadcast",
+        data={"account_id": account_id, "message": "hi", "recipients": '["-100123"]'},
+    )
+    assert res.status_code == 403
+    assert "한도" in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -120,7 +162,12 @@ async def test_downgrade_expired_tenants_reverts_canceled_past_period(db_session
     assert tenant.id in result["tenant_ids"]
     assert tenant.plan == "free"
     assert tenant.max_accounts == 1
-    assert tenant.can_broadcast is False
+    # Free plan's can_broadcast is intentionally True (24-hour free trial
+    # exercises the product's headline feature — see the entitlement test
+    # above) — downgrading to free must apply that plan's *actual* current
+    # limits, not the paid-tier ones it's losing.
+    assert tenant.can_broadcast is True
+    assert tenant.monthly_message_limit == 100
     assert tenant.subscription_status == "canceled"
 
 
