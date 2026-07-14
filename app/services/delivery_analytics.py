@@ -377,8 +377,10 @@ async def get_summary(
         result = await db.execute(query)
         row = result.one()
 
-    total = row.total or 0
-    successful = row.successful or 0
+    # PostgreSQL's SUM() over a CASE expression returns numeric (Decimal), not
+    # int — Decimal * float raises TypeError in the rate calculation below.
+    total = int(row.total or 0)
+    successful = int(row.successful or 0)
     failed = total - successful
     rate = (successful / total * 100.0) if total > 0 else 0.0
 
@@ -458,8 +460,10 @@ async def get_account_performance(
         result = await db.execute(query)
         items = []
         for row in result.all():
-            total = row.total or 0
-            successful = row.successful or 0
+            # See get_summary above: SUM() over a CASE returns Decimal on
+            # PostgreSQL, and Decimal * float raises TypeError below.
+            total = int(row.total or 0)
+            successful = int(row.successful or 0)
             failed = total - successful
             rate = (successful / total * 100.0) if total > 0 else 0.0
             items.append(AccountPerformanceItem(
@@ -513,9 +517,9 @@ async def get_timeline(
         return [
             TimelineItem(
                 period=row.period,
-                attempted=row.total or 0,
-                successful=row.successful or 0,
-                failed=(row.total or 0) - (row.successful or 0),
+                attempted=int(row.total or 0),
+                successful=int(row.successful or 0),
+                failed=int(row.total or 0) - int(row.successful or 0),
             )
             for row in result.all()
         ]
@@ -601,8 +605,10 @@ async def get_source_analytics(
 
         items = []
         for row in result.all():
-            total = row.total or 0
-            successful = row.successful or 0
+            # See get_summary above: SUM() over a CASE returns Decimal on
+            # PostgreSQL, and Decimal * float raises TypeError below.
+            total = int(row.total or 0)
+            successful = int(row.successful or 0)
             failed = total - successful
             rate = (successful / total * 100.0) if total > 0 else 0.0
             items.append(SourceAnalyticsItem(
@@ -655,8 +661,10 @@ async def get_broadcast_analytics(
 
         items = []
         for row in result.all():
-            total = row.total or 0
-            successful = row.successful or 0
+            # See get_summary above: SUM() over a CASE returns Decimal on
+            # PostgreSQL, and Decimal * float raises TypeError below.
+            total = int(row.total or 0)
+            successful = int(row.successful or 0)
             failed = total - successful
             rate = (successful / total * 100.0) if total > 0 else 0.0
             items.append(BroadcastAnalyticsItem(
@@ -714,8 +722,11 @@ async def get_failure_intelligence(
 
         items = []
         for row in result.all():
-            count = row.count or 0
-            total_failures = row.total_failures or 0
+            # PostgreSQL's SUM() window function returns numeric (Decimal), not
+            # int, even summing a COUNT() — Decimal * float raises TypeError.
+            # This only ever counts rows, so int() is always exact.
+            count = int(row.count or 0)
+            total_failures = int(row.total_failures or 0)
             percentage = round((count / total_failures * 100.0), 1) if total_failures > 0 else 0.0
             items.append(FailureIntelligenceItem(
                 status=row.status,
@@ -793,8 +804,10 @@ async def get_logical_summary(
         )
         row = result.one()
 
-    total = row.total or 0
-    successful = row.successful or 0
+    # PostgreSQL's SUM() over a CASE expression returns numeric (Decimal), not
+    # int — Decimal * float raises TypeError in the rate calculation below.
+    total = int(row.total or 0)
+    successful = int(row.successful or 0)
     failed = total - successful
     rate = (successful / total * 100.0) if total > 0 else 0.0
 
@@ -860,8 +873,10 @@ async def get_logical_broadcast_analytics(
 
         items = []
         for row in result.all():
-            total = row.total or 0
-            successful = row.successful or 0
+            # See get_summary above: SUM() over a CASE returns Decimal on
+            # PostgreSQL, and Decimal * float raises TypeError below.
+            total = int(row.total or 0)
+            successful = int(row.successful or 0)
             failed = total - successful
             rate = (successful / total * 100.0) if total > 0 else 0.0
             items.append(LogicalBroadcastItem(

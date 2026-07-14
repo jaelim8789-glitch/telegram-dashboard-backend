@@ -1314,3 +1314,86 @@ async def test_get_timeline_real_query_with_data(db_session):
     identity = Identity(kind="admin")
     timeline = await get_timeline(identity, account_id=account.id, days=30, interval="day")
     assert isinstance(timeline, list)
+
+
+# ─── Regression: Decimal from SUM() breaks percentage arithmetic ────
+#
+# Second production 500 on GET /api/delivery-analytics/overview, uncovered
+# only after the date_trunc fix above stopped masking it: PostgreSQL's SUM()
+# over a CASE/COUNT expression returns numeric (Decimal), and `Decimal * 100.0`
+# raises TypeError. All mocked tests above use plain Python ints for
+# row.successful/row.total/row.total_failures, so they never exercised this.
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_failure_intelligence_handles_decimal_from_postgres_sum(mock_session_maker, mock_resolve, tenant_a_identity):
+    from decimal import Decimal
+
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"status": "", "count": 0, "affected_accounts": 0, "latest_occurrence": None, "total_failures": 0})
+    r1 = Row()
+    r1.status, r1.affected_accounts = "flood_wait", 2
+    r1.count, r1.total_failures = Decimal("10"), Decimal("15")
+    r1.latest_occurrence = datetime(2026, 7, 1, 12, 0, 0)
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(rows=[r1])
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    fi = await get_failure_intelligence(tenant_a_identity)
+    assert fi[0].count == 10
+    assert fi[0].percentage == 66.7
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery_analytics._resolve_authorized_account_ids")
+@patch("app.services.delivery_analytics.async_session_maker")
+async def test_summary_handles_decimal_successful_from_postgres_sum(mock_session_maker, mock_resolve, tenant_a_identity):
+    from decimal import Decimal
+
+    mock_resolve.return_value = ["acc-1"]
+    Row = type("Row", (), {"total": 0, "successful": 0})
+    row = Row()
+    row.total, row.successful = 20, Decimal("18")
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = _mock_result(one_result=row)
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_db
+    mock_session_maker.return_value = mock_session
+
+    summary = await get_summary(tenant_a_identity)
+    assert summary.successful == 18
+    assert summary.success_rate == 90.0
+
+
+@pytest.mark.asyncio
+async def test_get_overview_real_query_does_not_500(db_session):
+    """Full real (non-mocked) round-trip through get_overview — the exact
+    call GET /api/delivery-analytics/overview makes — with actual failed and
+    successful MessageLog rows, exercising every sub-query asyncio.gather
+    runs concurrently."""
+    from app.models.account import Account
+    from app.models.message_log import MessageLog
+
+    account = Account(phone="+821000000998", name="overview-test")
+    db_session.add(account)
+    await db_session.flush()
+
+    db_session.add_all([
+        MessageLog(
+            account_id=account.id, recipient="-100001", source="broadcast",
+            source_id="bc-1", status="success", success=True,
+        ),
+        MessageLog(
+            account_id=account.id, recipient="-100002", source="broadcast",
+            source_id="bc-1", status="permanent_failure", success=False,
+        ),
+    ])
+    await db_session.commit()
+
+    identity = Identity(kind="admin")
+    result = await get_overview(identity, account_id=account.id, days=30)
+    assert result is not None
