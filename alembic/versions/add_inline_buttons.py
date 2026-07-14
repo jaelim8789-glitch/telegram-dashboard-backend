@@ -18,8 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("broadcasts", sa.Column("inline_buttons", sa.JSON(), nullable=True))
+    op.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS inline_buttons JSON NULL")
 
 
 def downgrade() -> None:
-    op.drop_column("broadcasts", "inline_buttons")
+    op.execute("ALTER TABLE broadcasts DROP COLUMN IF EXISTS inline_buttons")
