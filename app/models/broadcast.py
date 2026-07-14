@@ -44,3 +44,8 @@ class Broadcast(Base):
     reply_to_msg_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Per-recipient pacing override in seconds for delivery_mode "normal" (null = default 60s cooldown pacing).
     delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # ── Inline keyboard buttons ─────────────────────────────────────
+    # JSON array: [{"label": "...", "url": "..."}, ...]
+    # These are rendered as URL inline buttons on the Telegram message.
+    inline_buttons: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=None)

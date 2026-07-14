@@ -43,6 +43,7 @@ async def create_broadcast(
         delivery_mode=getattr(data, "delivery_mode", "normal"),
         reply_to_msg_id=getattr(data, "reply_to_msg_id", None),
         delay_seconds=getattr(data, "delay_seconds", None),
+        inline_buttons=getattr(data, "inline_buttons", None),
     )
     if data.recurring_interval_minutes is not None:
         if scheduled_at is None or scheduled_at <= now:
@@ -473,6 +474,7 @@ async def create_recurring_child_broadcast(
         scheduled_at=scheduled_at,
         parent_broadcast_id=parent.id,
         delay_seconds=parent.delay_seconds,
+        inline_buttons=parent.inline_buttons,
     )
     db.add(child)
     await db.commit()

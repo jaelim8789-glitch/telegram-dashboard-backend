@@ -165,7 +165,7 @@ async def test_send_single_success(mock_client):
     assert status == DeliveryStatus.SUCCESS
     assert msg_id == 42
     assert error is None
-    mock_client.send_message.assert_awaited_once_with(-100123, "hi", reply_to=None)
+    mock_client.send_message.assert_awaited_once_with(-100123, "hi", reply_to=None, buttons=None)
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_send_single_success_with_file(mock_client):
     status, msg_id, error, flood = await _send_single(mock_client, -100123, "hi", "/path/img.jpg")
     assert status == DeliveryStatus.SUCCESS
     assert msg_id == 99
-    mock_client.send_file.assert_awaited_once_with(-100123, "/path/img.jpg", caption="hi", reply_to=None)
+    mock_client.send_file.assert_awaited_once_with(-100123, "/path/img.jpg", caption="hi", reply_to=None, buttons=None)
 
 
 @pytest.mark.asyncio

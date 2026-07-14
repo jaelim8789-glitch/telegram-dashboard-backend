@@ -996,7 +996,7 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     )
     captured_b = []
 
-    async def _capture_send_b(client, target, message, media_path=None, reply_to_msg_id=None):
+    async def _capture_send_b(client, target, message, media_path=None, reply_to_msg_id=None, inline_buttons=None):
         captured_b.append(target)
         return (DeliveryStatus.SUCCESS, 200, None, None)
 

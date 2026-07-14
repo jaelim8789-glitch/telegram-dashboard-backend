@@ -100,7 +100,15 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
     tenant = result.scalar_one_or_none()
 
-    if tenant is None and settings.telegram_official_channel_id:
+    # A Tenant row can exist without ever having been through channel verification —
+    # e.g. /api/payment/request-key (public, unauthenticated, pre-payment) creates a
+    # "pending" Tenant stub for any phone on request. Only an already-*active*
+    # tenant (paid & confirmed, or a previously-verified free trial) is genuinely
+    # entitled to skip the gate; anything else (no tenant, or a pending stub) must
+    # still prove channel membership like a brand-new signup.
+    tenant_already_entitled = tenant is not None and tenant.subscription_status == "active"
+
+    if not tenant_already_entitled and settings.telegram_official_channel_id:
         if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
             db, payload.telegram_verification_token
         ):

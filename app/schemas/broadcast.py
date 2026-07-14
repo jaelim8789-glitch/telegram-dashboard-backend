@@ -20,6 +20,7 @@ class BroadcastCreate(BaseModel):
     delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
     delay_seconds: int | None = Field(default=None, ge=1, le=3600)
+    inline_buttons: list[dict] | None = None
 
     @model_validator(mode="after")
     def _validate_message_or_reply(self):
@@ -58,8 +59,7 @@ class BroadcastRead(BaseModel):
     delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
     delay_seconds: int | None = None
-
-
+    inline_buttons: list[dict] | None = None
 class BroadcastChildrenRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,6 +73,7 @@ class BroadcastChildrenRead(BaseModel):
     error_message: str | None
     failure_info: dict | None = None
     reply_to_msg_id: int | None = None
+    inline_buttons: list[dict] | None = None
 
 
 class BroadcastWithChildCount(BroadcastRead):
