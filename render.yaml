@@ -56,6 +56,8 @@ services:
         value: "telemon_verify_bot"
       - key: TELEGRAM_OFFICIAL_CHANNEL_ID
         value: "@TeleMon_2"
+      - key: TELEGRAM_GUIDE_HUB_LINKS_JSON
+        sync: false
 
 databases:
   - name: telegram-dashboard-db
