@@ -157,20 +157,43 @@ async def record_broadcast_error(db: AsyncSession, broadcast_id: str, error_mess
 
 
 async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
+    """Atomically claim a failed broadcast for retry — same atomic-claim intent
+    as claim_broadcast_dispatch, so two overlapping callers (e.g. a double-click
+    on "재발송", or /retry and /dispatch/{id} racing each other) must not both
+    read status=="failed" and both proceed to redispatch.
+
+    claim_broadcast_dispatch expresses this as SELECT ... FOR UPDATE, which
+    PostgreSQL (production) honors but SQLite (local/test fallback, see
+    tests/conftest.py) silently ignores entirely — it would not actually claim
+    anything here. Instead this uses a single conditional UPDATE ... WHERE,
+    re-checking status/retry_count against the row's true current state at
+    write time rather than a possibly-stale prior read; only the caller whose
+    UPDATE actually matches a row (rowcount == 1) wins the claim. A single
+    UPDATE statement's WHERE evaluation is atomic on every SQL engine,
+    including SQLite, so this is verifiable in both environments.
+    """
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
         return None
-    if broadcast.status != "failed":
-        return None
 
     max_retries = settings.broadcast_max_retries
-    if broadcast.retry_count >= max_retries:
+    result = await db.execute(
+        update(Broadcast)
+        .where(
+            Broadcast.id == broadcast_id,
+            Broadcast.status == "failed",
+            Broadcast.retry_count < max_retries,
+        )
+        .values(
+            status="pending",
+            error_message=None,
+            sent_at=None,
+            retry_count=Broadcast.retry_count + 1,
+        )
+    )
+    if result.rowcount == 0:
         return None
 
-    broadcast.status = "pending"
-    broadcast.error_message = None
-    broadcast.sent_at = None
-    broadcast.retry_count = broadcast.retry_count + 1
     await db.commit()
     await db.refresh(broadcast)
     return broadcast

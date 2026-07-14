@@ -758,3 +758,106 @@ async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch)
     await db_session.refresh(broadcast)
     assert broadcast.status == "sent"
     assert broadcast.sent_at is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 30 — concurrent /retry + /dispatch/{id} must not double-dispatch
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retry_broadcast_calls_only_one_can_claim(db_session):
+    """Two overlapping callers (e.g. two near-simultaneous /dispatch/{id} or
+    /retry requests, each with its own DB session exactly like two real HTTP
+    requests would) both read status=="failed" before either commits. Without
+    a row lock, both would pass the check and both flip status to "pending",
+    so each caller believes it alone won the retry and would independently
+    proceed to call process_broadcast — a double dispatch. Only one of the two
+    concurrent calls must succeed."""
+    import app.services.broadcast_processor as broadcast_processor_module
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id)
+    broadcast.status = "failed"
+    broadcast.error_message = "일시 오류"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    session_maker = broadcast_processor_module.async_session_maker
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _claim_with_barrier():
+        async with session_maker() as db2:
+            # Force both callers to have already read the row before either
+            # is allowed to proceed to its own commit, reproducing the
+            # overlapping-request race deterministically instead of relying
+            # on incidental timing.
+            await db2.get(type(broadcast), broadcast.id)
+            if not entered.is_set():
+                entered.set()
+                await release.wait()
+            else:
+                release.set()
+            return await broadcast_crud.retry_broadcast(db2, broadcast.id)
+
+    r1, r2 = await asyncio.gather(_claim_with_barrier(), _claim_with_barrier())
+    successes = [r for r in (r1, r2) if r is not None]
+    assert len(successes) == 1, (
+        "both concurrent retry_broadcast calls succeeded — a double dispatch "
+        "is now possible from two overlapping /retry or /dispatch/{id} requests"
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dispatch_only_processes_the_winning_claim(db_session, monkeypatch):
+    """Mirrors exactly what POST /api/broadcast/dispatch/{id} does (crud_retry,
+    then process_broadcast only if it won the claim), driven from two
+    concurrent callers on the same failed broadcast — e.g. a double-click on
+    "재발송", or two admin sessions. Only the caller that wins the atomic claim
+    may proceed to process_broadcast; the other must back off instead of also
+    dispatching and later overwriting the winner's final status."""
+    import app.services.broadcast_processor as broadcast_processor_module
+
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001"])
+    broadcast.status = "failed"
+    broadcast.error_message = "일시 오류"
+    broadcast.sent_at = broadcast_crud.utcnow_naive()
+    await db_session.commit()
+
+    session_maker = broadcast_processor_module.async_session_maker
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    deliver_calls = []
+
+    async def _tracking_deliver(request, *args, **kwargs):
+        deliver_calls.append(list(request.recipients))
+        return [_success_result("-100001")]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _tracking_deliver)
+
+    async def _dispatch_like_endpoint():
+        async with session_maker() as db2:
+            await db2.get(type(broadcast), broadcast.id)
+            if not entered.is_set():
+                entered.set()
+                await release.wait()
+            else:
+                release.set()
+            updated = await broadcast_crud.retry_broadcast(db2, broadcast.id)
+        if updated is None:
+            return False
+        await process_broadcast(updated.id, skip_rate_limit=True)
+        return True
+
+    r1, r2 = await asyncio.gather(_dispatch_like_endpoint(), _dispatch_like_endpoint())
+    dispatched = [r for r in (r1, r2) if r]
+    assert len(dispatched) == 1, (
+        f"both concurrent callers dispatched (dispatched={dispatched}) — "
+        "the losing claim should have backed off instead of also redispatching"
+    )
+    assert len(deliver_calls) == 1, (
+        f"deliver_message was called {len(deliver_calls)} times for one broadcast_id — "
+        "a concurrent second call reached actual delivery instead of being rejected"
+    )
