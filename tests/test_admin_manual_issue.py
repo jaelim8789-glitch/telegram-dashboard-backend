@@ -183,6 +183,63 @@ async def test_manual_issue_to_existing_user(unauthenticated_client, db_session)
         _unwire_db(app)
 
 
+async def test_manual_issue_defaults_tenant_to_team_plan(unauthenticated_client, db_session):
+    """Admin-issued keys default to "team" (effectively unlimited) rather than
+    silently keeping whatever plan the tenant signed up under."""
+    app = await _wire_db(unauthenticated_client, db_session)
+    user = await _setup_user_with_tenant(db_session, "+821099991013")
+    try:
+        res = await unauthenticated_client.post(
+            "/api/admin/manual-issue-key",
+            json={"user_identifier": user.phone},
+            headers=_admin_headers(),
+        )
+        assert res.status_code == 200
+
+        from sqlalchemy import select
+        tenant = (await db_session.execute(
+            select(Tenant).where(Tenant.phone == user.phone)
+        )).scalar_one()
+        assert tenant.plan == "team"
+        assert tenant.max_accounts == 20
+    finally:
+        _unwire_db(app)
+
+
+async def test_manual_issue_respects_explicit_plan(unauthenticated_client, db_session):
+    app = await _wire_db(unauthenticated_client, db_session)
+    user = await _setup_user_with_tenant(db_session, "+821099991014")
+    try:
+        res = await unauthenticated_client.post(
+            "/api/admin/manual-issue-key",
+            json={"user_identifier": user.phone, "plan": "pro"},
+            headers=_admin_headers(),
+        )
+        assert res.status_code == 200
+
+        from sqlalchemy import select
+        tenant = (await db_session.execute(
+            select(Tenant).where(Tenant.phone == user.phone)
+        )).scalar_one()
+        assert tenant.plan == "pro"
+    finally:
+        _unwire_db(app)
+
+
+async def test_manual_issue_rejects_unknown_plan(unauthenticated_client, db_session):
+    app = await _wire_db(unauthenticated_client, db_session)
+    user = await _setup_user_with_tenant(db_session, "+821099991015")
+    try:
+        res = await unauthenticated_client.post(
+            "/api/admin/manual-issue-key",
+            json={"user_identifier": user.phone, "plan": "enterprise"},
+            headers=_admin_headers(),
+        )
+        assert res.status_code == 422
+    finally:
+        _unwire_db(app)
+
+
 async def test_manual_issued_key_can_login(unauthenticated_client, db_session):
     app = await _wire_db(unauthenticated_client, db_session)
     user = await _setup_user_with_tenant(db_session, "+821099991011")
