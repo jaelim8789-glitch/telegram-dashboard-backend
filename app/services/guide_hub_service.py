@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 GUIDE_HUB_BUTTONS: list[tuple[str, str]] = [
     ("homepage", "🏠 홈페이지"),
     ("official_channel", "📢 공식 채널"),
-    ("free_trial", "🎁 24시간 무료체험"),
+    ("free_trial", "🎁 3일 무료체험"),
     ("send_and_macro", "📨 메시지 발송 & 답장 매크로"),
     ("auto_reply", "🤖 자동응답"),
     ("group_search", "🔍 그룹 검색 및 참여"),

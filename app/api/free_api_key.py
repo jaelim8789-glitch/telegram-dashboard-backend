@@ -147,7 +147,7 @@ async def _get_or_create_free_tenant(db: AsyncSession, phone: str | None) -> Ten
 
     if tenant is None:
         plan_def = get_plan("free")
-        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 24
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
         trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
         tenant = Tenant(
             phone=phone,

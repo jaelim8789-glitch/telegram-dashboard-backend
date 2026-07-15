@@ -232,7 +232,7 @@ async def test_verified_token_continues_into_existing_trial_and_api_key_flow(
     assert tenant.trial_expires_at is not None
 
     from datetime import datetime, timedelta, timezone
-    expected_min = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=23, minutes=59)
+    expected_min = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=71, minutes=59)
     assert expected_min <= tenant.trial_expires_at <= expected_min + timedelta(minutes=2)
 
     # API key issuance uses the existing secure (hash, shown-once) flow — the raw key
