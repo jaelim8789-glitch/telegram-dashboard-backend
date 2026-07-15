@@ -58,6 +58,7 @@ async def test_resolve_identity_user_token_yields_user_kind_not_admin(db_session
     identity = await _resolve_identity(
         x_api_key=None,
         authorization=f"Bearer {user_token}",
+        x_session_token=None,
         db=db_session,
     )
 
@@ -76,6 +77,7 @@ async def test_resolve_identity_admin_token_yields_admin_kind(db_session):
     identity = await _resolve_identity(
         x_api_key=None,
         authorization=f"Bearer {admin_token}",
+        x_session_token=None,
         db=db_session,
     )
 
@@ -97,6 +99,7 @@ async def test_resolve_identity_inactive_user_token_rejected(db_session):
     identity = await _resolve_identity(
         x_api_key=None,
         authorization=f"Bearer {user_token}",
+        x_session_token=None,
         db=db_session,
     )
 
