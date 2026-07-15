@@ -5,7 +5,7 @@ from app.api.deps import get_current_identity, Identity, require_account_tenant_
 from app.crud import account as account_crud
 from app.database import get_db
 from app.schemas.group import GroupRead, GroupListParams, PaginatedGroups, GroupRecoveryInfo
-from app.services.telegram_actions import AccountNotAuthenticatedError, list_groups
+from app.services.telegram_actions import AccountNotAuthenticatedError, get_folders, list_groups
 
 router = APIRouter(prefix="/api/accounts", tags=["groups"])
 
@@ -61,6 +61,28 @@ async def read_groups(
 
     items = [GroupRead(**g) for g in page_groups]
     return PaginatedGroups(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
+
+
+@router.get("/{account_id}/groups/folders")
+async def read_group_folders(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """List the account's Telegram chat folders (Dialog Filters), each with the
+    group IDs it contains. Best-effort — returns an empty list rather than an
+    error if Telegram folders can't be read, so the caller can always fall
+    back to the plain group list."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    try:
+        folders = await get_folders(account)
+    except AccountNotAuthenticatedError:
+        return []
+    return folders
 
 
 @router.get("/{account_id}/groups/discovery-info")

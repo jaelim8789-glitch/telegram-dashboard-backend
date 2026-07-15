@@ -1,12 +1,16 @@
 import asyncio
 
-from telethon import TelegramClient
-from telethon.tl.types import Channel, Chat
+from telethon import TelegramClient, utils
+from telethon.tl import functions
+from telethon.tl.types import Channel, Chat, DialogFilter
 
 from app.core.crypto import decrypt_session
 from app.core.limits import INTER_MESSAGE_DELAY_SECONDS
+from app.core.logging import get_logger
 from app.models.account import Account
 from app.services.telethon_pool import pool
+
+logger = get_logger(__name__)
 
 
 class AccountNotAuthenticatedError(Exception):
@@ -49,6 +53,45 @@ async def list_groups(account: Account) -> list[dict]:
             }
         )
     return groups
+
+
+def _filter_title(f: DialogFilter) -> str:
+    title = f.title
+    # Telegram layer >=166 wraps DialogFilter.title in TextWithEntities; older
+    # layers (and some Telethon versions) return a plain str. Handle both.
+    return getattr(title, "text", title) or ""
+
+
+async def get_folders(account: Account) -> list[dict]:
+    """Best-effort: the account's Telegram chat folders (Dialog Filters), each
+    mapped to the same canonical dialog IDs used by ``list_groups``.
+
+    Folders are a display-only convenience on top of the group list, never a
+    dependency for it — any failure here (unsupported Telegram API layer,
+    Telethon version differences, transient errors) returns an empty list
+    rather than raising, so the group list itself is never affected.
+    """
+    try:
+        client = await get_authorized_client(account)
+        result = await client(functions.messages.GetDialogFiltersRequest())
+        raw_filters = getattr(result, "filters", result)
+
+        folders: list[dict] = []
+        for f in raw_filters:
+            if not isinstance(f, DialogFilter):
+                continue  # skip DialogFilterDefault / DialogFilterChatlist
+            group_ids: list[str] = []
+            for peer in f.include_peers:
+                try:
+                    group_ids.append(str(utils.get_peer_id(peer)))
+                except Exception:
+                    continue
+            if group_ids:
+                folders.append({"id": str(f.id), "title": _filter_title(f), "group_ids": group_ids})
+        return folders
+    except Exception as exc:
+        logger.warning("telegram_folders_unavailable", account_id=account.id, error=str(exc))
+        return []
 
 
 def _resolve_target(recipient: str) -> int | str:
