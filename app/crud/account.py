@@ -72,6 +72,21 @@ async def set_auth_state(
     return account
 
 
+async def save_session_snapshot(db: AsyncSession, account: Account, session_data: str) -> Account:
+    """Persist the current Telethon session string without touching auth status.
+
+    Called after every step of the multi-step login flow (send-code, verify-code,
+    verify-2fa) so a mid-flow backend restart doesn't strand the account: the next
+    request rebuilds the pool's TelegramClient from this session string instead of
+    a blank one, preserving the auth_key already negotiated with Telegram's DC —
+    even if the user hasn't finished 2FA yet.
+    """
+    account.session_data = session_data
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+
 async def mark_account_session_invalid(db: AsyncSession, account: Account) -> Account:
     account.session_data = None
     account.status = "inactive"

@@ -3,12 +3,17 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import (
+    AuthKeyInvalidError,
+    AuthKeyPermEmptyError,
+    AuthKeyUnregisteredError,
     FloodWaitError,
     PasswordHashInvalidError,
     PhoneCodeExpiredError,
     PhoneCodeInvalidError,
     PhoneNumberInvalidError,
+    SessionExpiredError,
     SessionPasswordNeededError,
+    SessionRevokedError,
     UserDeactivatedBanError,
     UserDeactivatedError,
 )
@@ -37,6 +42,29 @@ def _config_error_to_http(exc: RuntimeError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
+# The auth_key backing an in-progress login is dead beyond recovery — most commonly
+# because the process restarted (wiping TelethonClientPool's in-memory clients)
+# between two steps of send-code -> verify-code -> verify-2fa and no persisted
+# session existed yet to reconnect with. There is no way to resume from here; the
+# only path forward is to start over from send-code.
+_DEAD_SESSION_ERRORS = (
+    AuthKeyInvalidError,
+    AuthKeyPermEmptyError,
+    AuthKeyUnregisteredError,
+    SessionExpiredError,
+    SessionRevokedError,
+)
+
+_DEAD_SESSION_DETAIL = "인증 세션이 만료되었습니다. 처음부터(인증번호 요청) 다시 시도해주세요."
+
+
+async def _recover_from_dead_session(account_id: str, db: AsyncSession, account: Account) -> None:
+    """Self-heal so the next attempt starts clean instead of reusing a poisoned
+    in-memory client or a stale session string."""
+    await pool.remove_client(account_id)
+    await account_crud.mark_account_session_invalid(db, account)
+
+
 @router.post("/{account_id}/send-code", response_model=SendCodeResponse)
 async def send_code(
     account_id: str,
@@ -46,8 +74,9 @@ async def send_code(
     await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id)
+        client = await pool.get_client(account.id, session_string)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
@@ -70,6 +99,17 @@ async def send_code(
         await account_crud.set_auth_state(db, account, status="banned")
         logger.warning("account_banned", account_id=account.id, stage="send_code")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="차단된 계정입니다.")
+    except _DEAD_SESSION_ERRORS:
+        # A previously-persisted session_data turned out to be dead (e.g. revoked
+        # from the Telegram side). Clear it so the retry this error message asks
+        # for actually starts from a blank client instead of the same dead one.
+        await _recover_from_dead_session(account_id, db, account)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_DEAD_SESSION_DETAIL)
+
+    # Persist the connection's auth_key immediately — if the process restarts
+    # before verify-code, the next request reconnects with this session instead
+    # of a blank one.
+    await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
 
     pool.set_pending_auth(account.id, sent.phone_code_hash)
     logger.info("verification_code_sent", account_id=account.id)
@@ -93,14 +133,19 @@ async def verify_code(
             detail="먼저 인증번호를 요청해주세요 (send-code).",
         )
 
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id)
+        client = await pool.get_client(account.id, session_string)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
     try:
         await client.sign_in(phone=account.phone, code=payload.code, phone_code_hash=pending.phone_code_hash)
     except SessionPasswordNeededError:
+        # The auth_key is now fully established even though the user still has to
+        # complete 2FA — persist it so a restart before verify-2fa can resume here
+        # instead of stranding the account with a blank client.
+        await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
         return AuthStepResult(status=account.status, requires_2fa=True, detail="2단계 인증 비밀번호가 필요합니다.")
     except PhoneCodeInvalidError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않습니다.")
@@ -115,6 +160,9 @@ async def verify_code(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도하세요.",
         )
+    except _DEAD_SESSION_ERRORS:
+        await _recover_from_dead_session(account_id, db, account)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_DEAD_SESSION_DETAIL)
 
     session_string = client.session.save()
     account = await account_crud.set_auth_state(
@@ -135,8 +183,9 @@ async def verify_2fa(
     await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id)
+        client = await pool.get_client(account.id, session_string)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
@@ -149,6 +198,9 @@ async def verify_2fa(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도하세요.",
         )
+    except _DEAD_SESSION_ERRORS:
+        await _recover_from_dead_session(account_id, db, account)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_DEAD_SESSION_DETAIL)
 
     session_string = client.session.save()
     account = await account_crud.set_auth_state(
