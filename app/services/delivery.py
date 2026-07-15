@@ -325,8 +325,13 @@ async def _deliver_with_retry(
 
         # Recoverable: wait and retry
         last_result = result
-        wait_time = flood_wait if flood_wait else BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
-        capped_wait = min(wait_time, MAX_WAIT_SECONDS)
+        if flood_wait:
+            # Respect Telegram's flood wait duration — retrying sooner guarantees
+            # another FloodWaitError. Cap at 3600s (1h) to prevent unbounded waits.
+            capped_wait = min(flood_wait, 3600)
+        else:
+            wait_time = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            capped_wait = min(wait_time, MAX_WAIT_SECONDS)
         logger.info(
             "delivery_retry",
             recipient=recipient,

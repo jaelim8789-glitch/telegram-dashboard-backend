@@ -9,6 +9,7 @@ from app.database import async_session_maker
 from app.models.auto_reply import AutoReplyRule
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 from app.services.telethon_pool import pool
+from app.services.usage_tracker import record_usage
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,8 @@ async def _handle_incoming_message(event, account_id: str) -> None:
             reply_sent=matched.reply_content,
             status="success",
         )
+        if account.tenant_id:
+            await record_usage(account.tenant_id, "auto_reply", 1)
         logger.info("auto_reply_sent", rule_id=matched.id, account_id=account_id, chat_id=chat_id)
 
 

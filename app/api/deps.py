@@ -145,6 +145,12 @@ async def require_account_tenant_access(
             detail="이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요.",
         )
     
+    if identity.tenant_id is None or account.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="해당 계정에 접근할 수 없습니다.",
+        )
+
     if account.tenant_id != identity.tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

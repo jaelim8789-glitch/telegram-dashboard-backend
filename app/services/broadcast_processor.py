@@ -8,6 +8,7 @@ from app.crud import broadcast as broadcast_crud
 from app.database import async_session_maker
 from app.services.delivery import DeliveryRequest, deliver_message
 from app.services.telegram_actions import get_authorized_client
+from app.services.usage_tracker import record_usage
 
 logger = get_logger(__name__)
 
@@ -215,6 +216,16 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                 db, broadcast, status="failed", error_message="; ".join(errors[:3])
             )
             logger.error("broadcast_failed", broadcast_id=broadcast_id, errors=errors)
+
+        # Record usage for monthly limit enforcement
+        if any_success or all_success:
+            try:
+                account_for_usage = await account_crud.get_account(db, broadcast.account_id)
+                if account_for_usage is not None and account_for_usage.tenant_id:
+                    succeeded_count = sum(1 for r in results if r.status.value == "success") + len(already_succeeded)
+                    await record_usage(account_for_usage.tenant_id, "broadcast", succeeded_count)
+            except Exception as usage_err:
+                logger.error("broadcast_usage_record_failed", broadcast_id=broadcast_id, error=str(usage_err))
 
 
 

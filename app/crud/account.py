@@ -26,8 +26,8 @@ async def get_account_by_phone(db: AsyncSession, phone: str) -> Account | None:
     return result.scalar_one_or_none()
 
 
-async def create_account(db: AsyncSession, data: AccountCreate) -> Account:
-    account = Account(phone=data.phone, name=data.name)
+async def create_account(db: AsyncSession, data: AccountCreate, *, tenant_id: str | None = None) -> Account:
+    account = Account(phone=data.phone, name=data.name, tenant_id=tenant_id)
     db.add(account)
     await db.commit()
     await db.refresh(account)

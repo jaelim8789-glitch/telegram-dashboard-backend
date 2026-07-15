@@ -192,14 +192,10 @@ async def create_account(
 ):
     await require_account_capacity(db, identity)
     try:
-        account_data = payload.model_dump()
-        if identity.tenant_id:
-            account_data["tenant_id"] = identity.tenant_id
-        account = await account_crud.create_account(db, AccountCreate(**account_data) if hasattr(payload, 'model_dump') else payload)
-        if identity.tenant_id:
-            account.tenant_id = identity.tenant_id
-            await db.commit()
-            await db.refresh(account)
+        account = await account_crud.create_account(
+            db, payload,
+            tenant_id=identity.tenant_id if identity.kind != "admin" and identity.tenant_id else None,
+        )
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 등록된 전화번호입니다.")
