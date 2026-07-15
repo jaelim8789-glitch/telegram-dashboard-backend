@@ -1,3 +1,4 @@
+import random
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select, update
@@ -308,13 +309,16 @@ async def list_logs(
     return list(result.scalars().all())
 
 
-# ── Recurring broadcast CRUD ──────────────────────────────────────
+# ── Recovery constants ────────────────────────────────────────────
 
 
-# How long a recurring parent may stay in "sending" before we consider
-# it stale (crashed worker) and recover it.  Must be > DISPATCH_INTERVAL_SECONDS
+# How long a broadcast may stay in "sending" before we consider it stale
+# (crashed worker) and recover it.  Must be > DISPATCH_INTERVAL_SECONDS
 # * 2 to prevent false-positive recovery while a slow tick is still running.
-RECURRING_STALE_TIMEOUT_SECONDS = 120  # 4x the 30s tick interval
+STALE_TIMEOUT_SECONDS = 120  # 4x the 30s tick interval
+
+
+# ── Recurring broadcast CRUD ──────────────────────────────────────
 
 
 async def list_recurring_broadcasts(db: AsyncSession, identity: Identity | None = None) -> list[Broadcast]:
@@ -337,7 +341,7 @@ async def list_recurring_broadcasts(db: AsyncSession, identity: Identity | None 
 
 async def recover_stale_recurring_parents(db: AsyncSession) -> list[Broadcast]:
     """Find and recover recurring parent broadcasts stuck in "sending" beyond
-    ``RECURRING_STALE_TIMEOUT_SECONDS`` (120s, configurable at module level).
+    ``STALE_TIMEOUT_SECONDS`` (120s, configurable at module level).
 
     Crash windows handled:
       1. Crash immediately after parent claim (status → 'sending', ``sent_at`` set,
@@ -366,7 +370,7 @@ async def recover_stale_recurring_parents(db: AsyncSession) -> list[Broadcast]:
         scheduler tick will dispatch; if advanced past now, the tick skips.
     """
     now = utcnow_naive()
-    cutoff = now - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS)
+    cutoff = now - timedelta(seconds=STALE_TIMEOUT_SECONDS)
 
     result = await db.execute(
         select(Broadcast).where(
@@ -420,6 +424,84 @@ async def recover_stale_recurring_parents(db: AsyncSession) -> list[Broadcast]:
     return recovered
 
 
+async def recover_stale_scheduled_broadcasts(db: AsyncSession) -> list[Broadcast]:
+    """Find and recover one-time (non-recurring) broadcasts stuck in "sending"
+    beyond ``STALE_TIMEOUT_SECONDS`` (120s).
+
+    These broadcasts were mid-flight when the previous process crashed.  Unlike
+    recurring parents (handled by ``recover_stale_recurring_parents``), one-time
+    broadcasts have no ``next_scheduled_at`` to re-dispatch from — they must be
+    resolved to a terminal status based on what actually got delivered.
+
+    Resolution logic:
+      1. Query ``message_log`` for this broadcast's delivery results.
+      2. If every recipient has a success row    → mark ``sent``.
+      3. If some recipients succeeded             → mark ``sent`` (partial),
+         preserving the partial delivery message.
+      4. If no recipients succeeded (or no logs)  → mark ``failed`` so the
+         operator can retry from the UI.
+
+    Child broadcasts (``parent_broadcast_id IS NOT NULL``) of recurring parents
+    are also recovered here — a crash during child dispatch leaves them in
+    "sending" with no recovery path, and they have no ``recurring_interval_minutes``
+    so the recurring-parent recovery skips them.
+    """
+    from app.models.message_log import MessageLog
+
+    now = utcnow_naive()
+    cutoff = now - timedelta(seconds=STALE_TIMEOUT_SECONDS)
+
+    result = await db.execute(
+        select(Broadcast).where(
+            Broadcast.recurring_interval_minutes.is_(None),
+            Broadcast.status == "sending",
+            Broadcast.sent_at.isnot(None),
+            Broadcast.sent_at <= cutoff,
+        ).with_for_update(skip_locked=True)
+    )
+    stale = list(result.scalars().all())
+
+    if not stale:
+        return []
+
+    recovered: list[Broadcast] = []
+    for broadcast in stale:
+        total = len(broadcast.recipients)
+
+        log_result = await db.execute(
+            select(MessageLog.recipient).where(
+                MessageLog.source == "broadcast",
+                MessageLog.source_id == broadcast.id,
+                MessageLog.success.is_(True),
+            ).distinct()
+        )
+        succeeded = set(log_result.scalars().all())
+        succeeded_count = len(succeeded)
+
+        if total > 0 and succeeded_count >= total:
+            broadcast.status = "sent"
+            broadcast.error_message = "서버 재시작 후 복구: 발송이 완료되었습니다."
+            logger.info("stale_broadcast_recovered_sent", broadcast_id=broadcast.id, succeeded=succeeded_count, total=total)
+        elif succeeded_count > 0:
+            broadcast.status = "sent"
+            broadcast.error_message = (
+                f"서버 재시작 후 복구: {succeeded_count}/{total}명 발송 완료 "
+                f"(나머지 {total - succeeded_count}명은 재시작으로 인해 처리되지 못했습니다)."
+            )
+            logger.info("stale_broadcast_recovered_partial", broadcast_id=broadcast.id, succeeded=succeeded_count, total=total)
+        else:
+            broadcast.status = "failed"
+            broadcast.error_message = "서버 재시작으로 인해 발송이 중단되었습니다. 다시 시도해주세요."
+            logger.info("stale_broadcast_recovered_failed", broadcast_id=broadcast.id, total=total)
+
+        recovered.append(broadcast)
+
+    await db.commit()
+    for broadcast in recovered:
+        await db.refresh(broadcast)
+    return recovered
+
+
 async def cancel_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None:
     broadcast = await db.get(Broadcast, broadcast_id)
     if broadcast is None:
@@ -450,7 +532,10 @@ async def reschedule_recurring_broadcast(db: AsyncSession, broadcast_id: str) ->
         return None
 
     now = utcnow_naive()
-    broadcast.next_scheduled_at = now + timedelta(minutes=broadcast.recurring_interval_minutes)
+    interval = broadcast.recurring_interval_minutes
+    jitter = interval * 0.1  # ±10% jitter
+    jittered_interval = interval + random.uniform(-jitter, jitter)
+    broadcast.next_scheduled_at = now + timedelta(minutes=jittered_interval)
     # Release the dispatch claim (status set to "sending" by claim_broadcast_dispatch)
     # now that the child has been created and the next occurrence is scheduled.
     # Without this, the parent stays "sending" forever and claim_broadcast_dispatch's
@@ -475,6 +560,8 @@ async def create_recurring_child_broadcast(
         parent_broadcast_id=parent.id,
         delay_seconds=parent.delay_seconds,
         inline_buttons=parent.inline_buttons,
+        delivery_mode=parent.delivery_mode,
+        reply_to_msg_id=parent.reply_to_msg_id,
     )
     db.add(child)
     await db.commit()

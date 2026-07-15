@@ -19,6 +19,7 @@ from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
+from app.services.auto_reply_service import check_auto_reply_connections
 from app.services.billing import downgrade_expired_tenants
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
@@ -48,18 +49,37 @@ async def dispatch_due_broadcasts() -> None:
     Recurring parent broadcasts are dispatched via process_recurring_parent
     which creates a child record first for history tracking.
 
-    Stale recurring parents (crashed workers) are recovered at the start of
-    each tick.  Recovery resets them to "pending" so the rest of this tick
-    re-dispatches them.
+    Stale broadcasts (crashed workers) are recovered at the start of each
+    tick.  Recovery resolves them to a terminal status (one-time) or resets
+    them to "pending" (recurring) so subsequent ticks re-dispatch them.
+    Recovered broadcasts are intentionally NOT re-dispatched in the same
+    tick to avoid burst/duplicate dispatch on restart — they will be picked
+    up by the next tick (within 30s).
     """
-    # Recover stale recurring parents first so they are eligible this tick
+    # Recover stale broadcasts (crashed workers) — these are NOT re-dispatched
+    # in this tick to prevent burst dispatches on restart.
+    recovered_one_time: set[str] = set()
+    recovered_recurring: set[str] = set()
+
     try:
         async with async_session_maker() as db:
             recovered = await broadcast_crud.recover_stale_recurring_parents(db)
             if recovered:
+                for r in recovered:
+                    recovered_recurring.add(r.id)
                 logger.info("recurring_stale_recovered", count=len(recovered))
     except Exception as exc:
         logger.error("recurring_stale_recovery_failed", error=str(exc))
+
+    try:
+        async with async_session_maker() as db:
+            recovered = await broadcast_crud.recover_stale_scheduled_broadcasts(db)
+            if recovered:
+                for r in recovered:
+                    recovered_one_time.add(r.id)
+                logger.info("scheduled_stale_recovered", count=len(recovered))
+    except Exception as exc:
+        logger.error("scheduled_stale_recovery_failed", error=str(exc))
 
     async with async_session_maker() as db:
         due = await broadcast_crud.list_due_scheduled_broadcasts(db)
@@ -71,6 +91,11 @@ async def dispatch_due_broadcasts() -> None:
                 # Recurring parent
                 if broadcast.id in _running_recurring:
                     logger.info("recurring_skipped_already_running", parent_id=broadcast.id)
+                    continue
+                # Skip broadcasts recovered earlier in THIS tick — they will be
+                # picked up by the next tick.
+                if broadcast.id in recovered_recurring:
+                    logger.info("recurring_skipped_just_recovered", parent_id=broadcast.id)
                     continue
                 recurring_ids.append(broadcast.id)
             else:
@@ -217,6 +242,13 @@ def start_scheduler() -> None:
         process_all_accounts,
         IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
         id="process_join_queue",
+        replace_existing=True,
+    )
+    # Auto-reply Telethon connection heartbeat — every 60s
+    scheduler.add_job(
+        check_auto_reply_connections,
+        IntervalTrigger(seconds=60),
+        id="check_auto_reply_connections",
         replace_existing=True,
     )
     scheduler.start()
