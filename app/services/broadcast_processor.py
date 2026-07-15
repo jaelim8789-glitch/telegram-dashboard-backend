@@ -122,19 +122,18 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                 account = await account_crud.get_account(db, account_id_local)
             if account is not None:
                 client = await get_authorized_client(account)
-                reply_to_map = {}
-                for recipient in recipients_local:
+
+                async def _fetch_latest(recipient: str) -> tuple[str, int | None]:
                     try:
                         target = int(recipient.lstrip("-")) if recipient.lstrip("-").isdigit() else recipient
                         messages = await client.get_messages(target, limit=1)
-                        if messages:
-                            reply_to_map[recipient] = messages[0].id
+                        return recipient, messages[0].id if messages else None
                     except Exception as exc:
-                        logger.warning(
-                            "reply_fetch_failed",
-                            recipient=recipient,
-                            error=str(exc),
-                        )
+                        logger.warning("reply_fetch_failed", recipient=recipient, error=str(exc))
+                        return recipient, None
+
+                results = await asyncio.gather(*[_fetch_latest(r) for r in recipients_local])
+                reply_to_map = {r: mid for r, mid in results if mid is not None}
 
     request = DeliveryRequest(
         account_id=account_id_local,
