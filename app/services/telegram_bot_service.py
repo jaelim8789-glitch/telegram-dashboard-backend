@@ -195,7 +195,12 @@ async def start_bot() -> None:
     except Exception as exc:
         logger.warning("telegram_bot_close_skipped", error=str(exc))
 
-    await application.updater.start_polling()
+    # bootstrap_retries: PTB's default (0) means a single transient failure in the
+    # startup bootstrap (e.g. Telegram returning a 500 on the delete_webhook call
+    # start_polling() makes internally) aborts start_polling() entirely and leaves
+    # the bot never polling for the rest of the container's life — the /start
+    # command then silently goes unanswered until the next restart. Retry instead.
+    await application.updater.start_polling(bootstrap_retries=3)
     _application = application
     logger.info("telegram_bot_started")
 
