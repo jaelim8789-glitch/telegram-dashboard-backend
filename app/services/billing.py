@@ -55,6 +55,7 @@ STARS_PRICES = {
     "premium_template": 30,
     "analytics_report": 200,
     "extra_account_slot": 150,
+    "ai_chat_pack_50": 50,
 }
 
 STARS_DESCRIPTIONS = {
@@ -63,6 +64,13 @@ STARS_DESCRIPTIONS = {
     "premium_template": "🎨 프리미엄 템플릿 5종",
     "analytics_report": "📊 상세 분석 리포트 PDF",
     "extra_account_slot": "🔌 추가 계정 슬롯 1개 (월)",
+    "ai_chat_pack_50": "🤖 AI Chat 50회 추가 사용권",
+}
+
+# AI Chat credits actually granted per pack — kept separate from STARS_PRICES so the
+# Stars price and the credit amount can be tuned independently.
+AI_CHAT_PACK_CREDITS = {
+    "ai_chat_pack_50": 50,
 }
 
 
@@ -220,6 +228,8 @@ async def process_stars_payment(tenant_id: str, item: str, stars_amount: int) ->
             return {"success": False, "error": "Stars 잔액이 부족합니다."}
 
         tenant.stars_balance -= stars_amount
+        if item in AI_CHAT_PACK_CREDITS:
+            tenant.ai_chat_credit_balance = (tenant.ai_chat_credit_balance or 0) + AI_CHAT_PACK_CREDITS[item]
         await db.commit()
 
         benefit = _get_item_benefit(item)
@@ -241,6 +251,7 @@ def _get_item_benefit(item: str) -> str:
         "premium_template": "프리미엄 템플릿 5종이 영구 추가되었습니다.",
         "analytics_report": "월간 분석 리포트 다운로드가 가능합니다.",
         "extra_account_slot": "계정 슬롯이 1개 추가되었습니다 (이번 달).",
+        "ai_chat_pack_50": "AI Chat 50회 추가 사용권이 적립되었습니다.",
     }
     return benefits.get(item, "구매가 완료되었습니다.")
 

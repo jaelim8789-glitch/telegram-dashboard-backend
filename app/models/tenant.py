@@ -32,7 +32,12 @@ class Tenant(Base):
     max_reply_macros: Mapped[int] = mapped_column(Integer, default=1)
     monthly_message_limit: Mapped[int] = mapped_column(Integer, default=100)
     monthly_auto_reply_limit: Mapped[int] = mapped_column(Integer, default=100)
+    monthly_ai_chat_limit: Mapped[int] = mapped_column(Integer, default=20)
     cooldown_minimum_minutes: Mapped[int] = mapped_column(Integer, default=60)  # minimum cooldown
+
+    # Extra AI Chat credits purchased with Telegram Stars, spent once the monthly
+    # plan quota (monthly_ai_chat_limit) is exhausted.
+    ai_chat_credit_balance: Mapped[int] = mapped_column(Integer, default=0)
     
     # Billing
     stripe_customer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -125,6 +130,24 @@ class Lead(Base):
     # Tags (JSON array)
     tags: Mapped[str] = mapped_column(Text, default="[]")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AiChatMessage(Base):
+    """A single turn (user or assistant) in a tenant's bot "AI Chat" conversation.
+
+    Kept per (tenant_id, telegram_user_id) so ai_chat_service can rebuild recent
+    context for DeepSeek and so history survives a bot process restart.
+    """
+
+    __tablename__ = "ai_chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    telegram_user_id: Mapped[str] = mapped_column(String(100), index=True)
+    role: Mapped[str] = mapped_column(String(20))  # "user" | "assistant"
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -91,6 +91,15 @@ class Settings(BaseSettings):
     # Frontend URL for cross-domain redirects and payment success links.
     frontend_url: str = "http://localhost:3000"
 
+    # DeepSeek API (bot "AI Chat" menu). Empty key => feature degrades gracefully
+    # (ai_chat_service returns a "not configured" server_error instead of crashing).
+    deepseek_api_key: str = ""
+    deepseek_api_base: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-chat"
+    ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
+    # How many past turns (user+assistant pairs) to include as context for DeepSeek.
+    ai_chat_history_turns: int = 10
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")

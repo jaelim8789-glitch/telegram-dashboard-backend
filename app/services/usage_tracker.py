@@ -97,6 +97,7 @@ async def apply_plan_limits(db: AsyncSession, tenant: Tenant, plan: str) -> Tena
     tenant.max_reply_macros = limits["max_reply_macros"]
     tenant.monthly_message_limit = limits["monthly_message_limit"]
     tenant.monthly_auto_reply_limit = limits["monthly_auto_reply_limit"]
+    tenant.monthly_ai_chat_limit = limits["monthly_ai_chat_limit"]
     tenant.cooldown_minimum_minutes = limits["cooldown_minimum_minutes"]
     tenant.can_broadcast = limits["can_broadcast"]
     tenant.can_schedule = limits["can_schedule"]

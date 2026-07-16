@@ -1,5 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -8,10 +8,15 @@ from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.models.tenant import PaymentRecord
-from app.services import bot_account_service
+from app.services import ai_chat_service, bot_account_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
+
+# Telegram user ids currently inside the "AI Chat" free-text conversation flow.
+# Process-local, like bot_api_key_service._in_flight — the bot is a single
+# polling instance, so a plain set is sufficient to gate the free-text handler.
+_active_ai_chat_users: set[int] = set()
 
 logger = get_logger(__name__)
 
@@ -52,7 +57,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🆘 고객센터", callback_data="support:info"),
                 InlineKeyboardButton("📢 공지", callback_data="notice:info"),
             ],
-            [InlineKeyboardButton("🤖 AI Chat (준비중)", callback_data="aichat:soon")],
+            [InlineKeyboardButton("🤖 AI Chat", callback_data="aichat:start")],
         ]
     )
 
@@ -400,19 +405,83 @@ async def notice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def aichat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle "🤖 AI Chat (준비중)" — placeholder slot for a future DeepSeek chat menu."""
+    """Handle "🤖 AI Chat" — enters free-text chat mode with the DeepSeek assistant.
+
+    Eligibility (linked + active sub/trial) is the same gate bot_api_key_service
+    uses; only after that does this add the user to _active_ai_chat_users so
+    ai_chat_text_handler starts routing their free text to DeepSeek.
+    """
     query = update.callback_query
     await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        snapshot = await bot_account_service.get_account_snapshot(db, telegram_user_id)
+
+    if not snapshot.linked:
+        await query.edit_message_text(
+            "🤖 AI Chat은 TeleMon 계정 연동 후 이용할 수 있습니다.\n"
+            "'💰 결제(업그레이드)' 메뉴에서 요금제를 구매하거나 무료체험을 시작해주세요.",
+            reply_markup=_back_to_main_keyboard(),
+        )
+        return
+
+    _active_ai_chat_users.add(telegram_user_id)
     await query.edit_message_text(
-        "🚧 AI Chat 기능은 준비 중입니다. 곧 만나보실 수 있어요!",
+        "💬 AI Chat을 시작합니다! 편하게 메시지를 보내보세요.\n"
+        "종료하려면 아래 '◀ 메인 메뉴' 버튼을 눌러주세요.",
         reply_markup=_back_to_main_keyboard(),
     )
 
 
+async def ai_chat_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Free-text handler for the "AI Chat" flow. Only acts for users who entered
+    that mode via aichat_callback — every other free-text message is ignored,
+    exactly like before this feature existed (no regression for other flows)."""
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None or telegram_user_id not in _active_ai_chat_users:
+        return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    async with async_session_maker() as db:
+        result = await ai_chat_service.send_message(db, telegram_user_id, update.message.text or "")
+
+    if result.status == "ok":
+        await update.message.reply_text(result.reply)
+        return
+
+    if result.status == "quota_exceeded":
+        await update.message.reply_text(f"📊 {result.detail}", reply_markup=_pay_menu_keyboard())
+        return
+
+    prefix = {
+        "not_linked": "🔗",
+        "not_eligible": "🚫",
+        "rate_limited": "⏳",
+        "too_long": "✂️",
+        "server_error": "⚠️",
+    }.get(result.status, "⚠️")
+    await update.message.reply_text(f"{prefix} {result.detail}")
+
+
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle "◀ 메인 메뉴" — return to the top-level menu from any submenu."""
+    """Handle "◀ 메인 메뉴" — return to the top-level menu from any submenu.
+
+    Also exits AI Chat mode if the user was in it, so their free text stops
+    being routed to DeepSeek once they've navigated away.
+    """
     query = update.callback_query
     await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is not None:
+        _active_ai_chat_users.discard(telegram_user_id)
+
     await query.edit_message_text("안녕하세요! 아래 메뉴에서 원하는 기능을 선택해주세요.", reply_markup=_main_menu_keyboard())
 
 
@@ -471,6 +540,9 @@ async def start_bot() -> None:
     application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=r"^menu:main$"))
     application.add_handler(CommandHandler("start", start_command))
+    # No other flow reads free text today, so this is safe to add unconditionally —
+    # ai_chat_text_handler itself no-ops for anyone not in _active_ai_chat_users.
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_text_handler))
 
     # Non-blocking startup (vs. the usual Application.run_polling(), which blocks forever)
     # so this can live inside the FastAPI lifespan alongside uvicorn's own event loop.
