@@ -1,5 +1,7 @@
 import json
 
+from typing import Annotated
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +37,7 @@ async def list_macros(
     return await macro_crud.list_macros(db, account_id)
 
 
-@router.post(, response_model=ReplyMacroRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ReplyMacroRead, status_code=status.HTTP_201_CREATED)
 async def create_macro(
  account_id: str,
  payload: ReplyMacroCreate,
@@ -48,7 +50,7 @@ async def create_macro(
 
  media_path = await save_broadcast_media(file) if file is not None else None
  macro = await macro_crud.create_macro(db, account_id, payload, media_path=media_path)
- logger.info( reply_macro_created, account_id=account_id, macro_id=macro.id)
+ logger.info("reply_macro_created", account_id=account_id, macro_id=macro.id)
  return macro
 
 @router.get("/{macro_id}", response_model=ReplyMacroRead)
