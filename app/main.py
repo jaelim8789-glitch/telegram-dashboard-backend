@@ -29,6 +29,7 @@ from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
 from app.api.join_queue import router as join_queue_router
 from app.api.deps import require_api_key_or_admin
+from app.api.channel_hub import router as channel_hub_router
 from app.api.folder import router as folder_router
 from app.api.group_search import router as group_search_router
 from app.api.groups import router as groups_router
@@ -156,6 +157,7 @@ app.include_router(accounts_router, dependencies=_auth_required)
 app.include_router(telegram_auth_router, dependencies=_auth_required)
 app.include_router(groups_router, dependencies=_auth_required)
 app.include_router(folder_router, dependencies=_auth_required)
+app.include_router(channel_hub_router, dependencies=_auth_required)
 app.include_router(broadcast_router, dependencies=_auth_required)
 app.include_router(logs_router, dependencies=_auth_required)
 app.include_router(scheduler_router, dependencies=_auth_required)
