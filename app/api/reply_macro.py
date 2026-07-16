@@ -2,7 +2,7 @@ import json
 
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,19 +39,55 @@ async def list_macros(
 
 @router.post("", response_model=ReplyMacroRead, status_code=status.HTTP_201_CREATED)
 async def create_macro(
- account_id: str,
- payload: ReplyMacroCreate,
- file: Annotated[UploadFile | None, File()] = None,
- db: AsyncSession = Depends(get_db),
- identity: Identity = Depends(get_current_identity),
+    account_id: str,
+    name: Annotated[str, Form()],
+    target_chats: Annotated[str, Form(description="JSON array of chat/group ids")],
+    message_content: Annotated[str, Form()],
+    schedule_type: Annotated[str, Form()] = "interval",
+    interval_hours: Annotated[int, Form()] = 24,
+    fixed_time: Annotated[str | None, Form()] = None,
+    max_sends_per_day: Annotated[int, Form()] = 10,
+    is_active: Annotated[bool, Form()] = True,
+    reply_to_message_id: Annotated[int | None, Form()] = None,
+    file: Annotated[UploadFile | None, File()] = None,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
 ):
- await require_account_tenant_access(account_id, db, identity)
- await _get_account_or_404(account_id, db)
+    # NOTE: this endpoint accepts multipart/form-data ONLY, not a JSON body.
+    # File uploads (UploadFile/File()) force the whole request into multipart
+    # encoding, and FastAPI cannot deserialize a Pydantic model directly from
+    # form fields — so every field must be its own Form(). Do not collapse
+    # these back into a single `payload: ReplyMacroCreate` body param; that
+    # combination makes FastAPI require a "payload" wrapper key that no real
+    # client (JSON or multipart) can satisfy, and every create request 422s.
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
 
- media_path = await save_broadcast_media(file) if file is not None else None
- macro = await macro_crud.create_macro(db, account_id, payload, media_path=media_path)
- logger.info("reply_macro_created", account_id=account_id, macro_id=macro.id)
- return macro
+    try:
+        target_chats_list = json.loads(target_chats)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target_chats는 JSON 배열이어야 합니다.")
+
+    try:
+        payload = ReplyMacroCreate(
+            name=name,
+            target_chats=target_chats_list,
+            message_content=message_content,
+            schedule_type=schedule_type,
+            interval_hours=interval_hours,
+            fixed_time=fixed_time or None,
+            max_sends_per_day=max_sends_per_day,
+            is_active=is_active,
+            reply_to_message_id=reply_to_message_id,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
+
+    media_path = await save_broadcast_media(file) if file is not None else None
+    macro = await macro_crud.create_macro(db, account_id, payload, media_path=media_path)
+    logger.info("reply_macro_created", account_id=account_id, macro_id=macro.id)
+    return macro
+
 
 @router.get("/{macro_id}", response_model=ReplyMacroRead)
 async def read_macro(

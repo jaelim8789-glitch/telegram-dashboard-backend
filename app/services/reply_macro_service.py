@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
@@ -15,8 +15,15 @@ logger = get_logger(__name__)
 
 
 async def _count_daily_sends(macro_id: str) -> int:
-    """Count how many times this macro has been sent today (UTC)."""
-    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=None)
+    """Count how many times this macro has been sent today (UTC).
+
+    Must use a UTC day boundary, not local server time: list_active_macros_due /
+    mark_macro_sent / claim_macro_dispatch (app/crud/reply_macro.py) all key their
+    "once per day" and interval math off utcnow_naive(). A local-time boundary here
+    would drift out of sync with those whenever the host's timezone isn't UTC.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     async with async_session_maker() as db:
         result = await db.execute(
             select(func.count(ReplyMacroLog.id)).where(
