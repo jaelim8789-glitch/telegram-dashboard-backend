@@ -3,6 +3,7 @@ from app.models.account import Account
 from app.models.api_key import APIKey
 from app.models.auto_reply import AutoReplyLog, AutoReplyRule
 from app.models.broadcast import Broadcast
+from app.models.folder import Folder
 from app.models.group_search import GroupJoinLog, GroupSearchResult
 from app.models.guide_hub import GuideHubMessage
 from app.models.join_queue import JoinQueueConfig, JoinQueueItem
@@ -21,6 +22,7 @@ __all__ = [
     "AutoReplyLog",
     "AutoReplyRule",
     "Broadcast",
+    "Folder",
     "FollowUpRule",
     "GroupJoinLog",
     "GroupSearchResult",
