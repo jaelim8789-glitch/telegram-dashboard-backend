@@ -28,7 +28,10 @@ from app.api.delivery_analytics import router as delivery_analytics_router
 from app.api.features import router as features_router
 from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
+from app.api.campaign import router as campaign_router
 from app.api.join_queue import router as join_queue_router
+from app.api.team import router as team_router
+from app.api.webhook_settings import router as webhook_settings_router
 from app.api.deps import require_api_key_or_admin
 from app.api.channel_hub import router as channel_hub_router
 from app.api.folder import router as folder_router
@@ -36,6 +39,7 @@ from app.api.group_search import router as group_search_router
 from app.api.groups import router as groups_router
 from app.api.link_inspector import router as link_inspector_router
 from app.api.logs import router as logs_router
+from app.api.message_template import router as message_template_router
 from app.api.reply_macro import router as reply_macro_router
 from app.api.scheduler import router as scheduler_router
 from app.api.telegram_auth import router as telegram_auth_router
@@ -177,6 +181,10 @@ app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
 app.include_router(ai_assist_router, dependencies=_auth_required)
 app.include_router(join_queue_router, dependencies=_auth_required)
+app.include_router(message_template_router, dependencies=_auth_required)
+app.include_router(campaign_router, dependencies=_auth_required)
+app.include_router(team_router, dependencies=_auth_required)
+app.include_router(webhook_settings_router, dependencies=_auth_required)
 
 
 @app.get("/health")
