@@ -276,11 +276,6 @@ async def test_batch_retry_skips_non_failed(client, db_session):
     await db_session.commit()
 
     payload = {"broadcast_ids": [broadcast.id]}
-    # Override identity to admin
-    from app.api.deps import get_current_identity, Identity
-    from app.main import app
-    import copy
-
     res = await client.post("/api/broadcast/batch-retry", json=payload)
     assert res.status_code == 200
     body = res.json()
