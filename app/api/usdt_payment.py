@@ -12,7 +12,6 @@ which queries Trongrid directly — client-supplied tx data is NOT trusted here.
 Plan definitions sourced from canonical app.core.plans.
 """
 
-import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -26,11 +25,10 @@ from app.core.plans import (
     validate_plan_id,
 )
 from app.core.rate_limiter import check_rate_limit, get_client_ip
-from app.crud import user as user_crud
 from app.database import async_session_maker, get_db
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
-from app.models.user import User
+from app.services import purchase_service
 from app.services.usage_tracker import apply_plan_limits
 
 router = APIRouter(prefix="/api/payment", tags=["payment"])
@@ -116,43 +114,13 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
     prices = plan_def["prices_usdt"]
     billing = "monthly" if "monthly" in prices else "quarterly"
     price = prices[billing]
-    payment_ref = f"TM-{secrets.token_hex(4).upper()}"
+    payment_ref = purchase_service.generate_payment_ref()
 
     async with async_session_maker() as db:
-        from sqlalchemy import select
-
-        result = await db.execute(select(Tenant).where(Tenant.phone == phone))
-        tenant = result.scalar_one_or_none()
-
-        if not tenant:
-            tenant = Tenant(
-                phone=phone or f"pending-{payment_ref}",
-                plan=plan,
-                subscription_status="pending",
-                payment_ref=payment_ref,
-            )
-            db.add(tenant)
-        else:
-            if tenant.subscription_status == "active":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="이미 활성화된 요금제가 있습니다. 추가 결제가 필요하시면 고객지원으로 문의해주세요.",
-                )
-            tenant.plan = plan
-            tenant.subscription_status = "pending"
-            tenant.payment_ref = payment_ref
-
-        # When phone is provided, ensure a User record exists so the paid user
-        # has a verified/recoverable identity (can log in via phone later).
-        if phone:
-            user = await user_crud.get_user_by_phone(db, phone)
-            if user is None:
-                user = User(phone=phone)
-                db.add(user)
-                await db.flush()
-                logger.info("user_created_for_paid_signup", phone=phone, tenant_plan=plan)
-
-        await db.commit()
+        try:
+            await purchase_service.upsert_pending_tenant(db, plan=plan, payment_ref=payment_ref, phone=phone)
+        except purchase_service.PurchaseConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     if not phone:
         logger.warning("paid_signup_without_phone", payment_ref=payment_ref, plan=plan)

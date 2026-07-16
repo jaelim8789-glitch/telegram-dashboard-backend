@@ -177,6 +177,10 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
         await db.commit()
 
         logger.info("usdt_payment_confirmed", tenant_id=tenant_id, plan=tenant.plan, tx_hash=tx_hash)
+
+        from app.services.usdt_watcher import notify_payment_activated
+        await notify_payment_activated(tenant.phone, tenant.plan, tenant.billing_period_end, raw_key)
+
         return {
             "success": True,
             "message": f"USDT 입금 확인 완료! {tenant.plan.capitalize()} 요금제가 활성화되었습니다.",

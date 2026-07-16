@@ -32,8 +32,10 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.logging import get_logger
 from app.core.security import generate_user_api_key, hash_api_key
+from app.core.telegram_identity import tg_identifier
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.telegram_membership import MembershipCheckUnavailable, is_channel_member
@@ -89,11 +91,6 @@ def _set_in_flight(telegram_user_id: int, value: bool) -> None:
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _tg_identifier(telegram_user_id: int) -> str:
-    """Canonical phone-equivalent identifier for a Telegram-only user."""
-    return f"tg_{telegram_user_id}"
 
 
 def _is_trial_valid(tenant: Tenant) -> bool:
@@ -157,7 +154,7 @@ async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult
     never sufficient on its own; this only ever reuses eligibility state a
     prior payment/free-trial/verification flow already produced.
     """
-    identifier = _tg_identifier(telegram_user_id)
+    identifier = tg_identifier(telegram_user_id)
 
     # ── 2. Verify a securely linked TeleMon account already exists ──────
     # A User with this exact identifier can only exist if this Telegram
@@ -243,7 +240,7 @@ async def _do_handle(db: AsyncSession, telegram_user_id: int) -> BotApiKeyResult
             detail=(
                 "API 키가 이미 발급되었습니다.\n"
                 "보안상 원본 키는 다시 표시할 수 없습니다. 이전에 발급받은 키를 사용해주세요.\n"
-                "키를 잃어버리셨다면 고객지원(@telemon_support)으로 문의해주세요."
+                f"키를 잃어버리셨다면 고객지원({settings.telegram_support_username})으로 문의해주세요."
             ),
         )
 
