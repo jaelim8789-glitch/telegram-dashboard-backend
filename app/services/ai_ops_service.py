@@ -5,7 +5,8 @@ analytics via the existing app.services.delivery_analytics functions (same
 data source the "운영 분석" dashboard and the on-demand /api/ai/analyze-delivery
 endpoint use), and stores an AI-generated report via ai_analysis_service. This
 module never takes any action (no account pause, no plan change, nothing) —
-it only writes a row for an operator to read later via GET /api/ai/ops-reports.
+it only writes a row for an operator to read later via GET /api/ai/ops-reports
+(or trigger on demand via POST /api/ai/ops-reports/generate).
 """
 
 import json
@@ -15,6 +16,7 @@ from app.api.deps import Identity
 from app.core.logging import get_logger
 from app.crud.ai_ops_report import create_report
 from app.database import async_session_maker
+from app.models.ai_ops_report import AiOpsReport
 from app.services.ai_analysis_service import DELIVERY_SYSTEM_PROMPT, analyze_text_report
 from app.services.delivery_analytics import get_account_performance, get_failure_breakdown, get_summary
 
@@ -26,27 +28,58 @@ _REPORT_WINDOW_DAYS = 7
 # /api/ai/ops-reports (this data spans every tenant, not just one).
 _ADMIN_IDENTITY = Identity(kind="admin")
 
+# Guards against the daily scheduled run and the manual
+# POST /ops-reports/generate trigger overlapping — same _in_flight-style
+# process-local guard used elsewhere (e.g. bot_api_key_service).
+_generating = False
 
-async def generate_and_store_ops_report() -> None:
-    summary = await get_summary(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
-    failures = await get_failure_breakdown(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
-    accounts = await get_account_performance(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
 
-    user_prompt = "\n".join(
-        [
-            f"[요약] {json.dumps(asdict(summary), ensure_ascii=False)}",
-            f"[실패 분석] {json.dumps([asdict(f) for f in failures], ensure_ascii=False)}",
-            f"[계정 성과] {json.dumps([asdict(a) for a in accounts], ensure_ascii=False)}",
-            f"[분석 기간] 최근 {_REPORT_WINDOW_DAYS}일",
-        ]
-    )
+async def generate_and_store_ops_report() -> AiOpsReport | None:
+    """Returns the created report, or None if generation was skipped/failed
+    (already in progress, data gathering failed, or DeepSeek call failed) —
+    callers should treat None as "no report this time", not raise."""
+    global _generating
+    if _generating:
+        logger.info("ai_ops_report_generation_skipped", reason="already_in_progress")
+        return None
 
-    report, anomalies = await analyze_text_report(DELIVERY_SYSTEM_PROMPT, user_prompt)
-    if report is None:
-        logger.warning("ai_ops_report_generation_skipped", reason="deepseek_call_failed")
-        return
+    _generating = True
+    try:
+        try:
+            summary = await get_summary(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
+            failures = await get_failure_breakdown(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
+            accounts = await get_account_performance(_ADMIN_IDENTITY, days=_REPORT_WINDOW_DAYS)
+        except Exception as exc:  # noqa: BLE001 — isolate this job from crashing the scheduler tick
+            logger.error("ai_ops_report_data_gathering_failed", error=str(exc))
+            return None
 
-    async with async_session_maker() as db:
-        await create_report(db, report=report, anomalies_json=json.dumps(anomalies, ensure_ascii=False))
+        user_prompt = "\n".join(
+            [
+                f"[요약] {json.dumps(asdict(summary), ensure_ascii=False)}",
+                f"[실패 분석] {json.dumps([asdict(f) for f in failures], ensure_ascii=False)}",
+                f"[계정 성과] {json.dumps([asdict(a) for a in accounts], ensure_ascii=False)}",
+                f"[분석 기간] 최근 {_REPORT_WINDOW_DAYS}일",
+            ]
+        )
 
-    logger.info("ai_ops_report_generated", anomaly_count=len(anomalies))
+        try:
+            report, anomalies = await analyze_text_report(DELIVERY_SYSTEM_PROMPT, user_prompt)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("ai_ops_report_analysis_failed", error=str(exc))
+            return None
+
+        if report is None:
+            logger.warning("ai_ops_report_generation_skipped", reason="deepseek_call_failed")
+            return None
+
+        try:
+            async with async_session_maker() as db:
+                row = await create_report(db, report=report, anomalies_json=json.dumps(anomalies, ensure_ascii=False))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("ai_ops_report_storage_failed", error=str(exc))
+            return None
+
+        logger.info("ai_ops_report_generated", anomaly_count=len(anomalies))
+        return row
+    finally:
+        _generating = False

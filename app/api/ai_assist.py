@@ -13,17 +13,21 @@ create-broadcast / send flows itself.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import Identity, get_current_identity, require_admin
+from app.crud.ai_broadcast_draft import create_draft, list_recent_drafts
 from app.crud.ai_ops_report import list_recent_reports
 from app.database import get_db
 from app.services.ai_analysis_service import DELIVERY_SYSTEM_PROMPT, analyze_text_report
 from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.ai_reply_service import generate_reply_suggestion
+from app.services.lead_capture import get_lead_count, get_leads
 
 router = APIRouter(prefix="/api/ai", tags=["ai-assist"])
 
@@ -72,7 +76,8 @@ class GenerateBroadcastRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000, description="발송 목적/내용 요청")
     candidate_recipients: list[BroadcastRecipientCandidate] = Field(
         default_factory=list,
-        description="후보 발송 대상 목록 (프론트에서 이미 보유한 그룹/리드 목록). AI는 이 목록 안에서만 추천함.",
+        max_length=200,
+        description="후보 발송 대상 목록 (프론트에서 이미 보유한 그룹/리드 목록, 최대 200개). AI는 이 목록 안에서만 추천함.",
     )
 
 
@@ -82,10 +87,20 @@ class GenerateBroadcastResponse(BaseModel):
     reasoning: str = ""
 
 
+class AiBroadcastDraftRead(BaseModel):
+    id: str
+    prompt: str
+    message: str
+    recommended_chat_ids: list[str]
+    reasoning: str
+    created_at: str
+
+
 class AnalyzeCustomersRequest(BaseModel):
-    summary: str = Field(..., description="고객/리드 요약 데이터 (JSON text)")
-    segments: str = Field("", description="세그먼트/태그 분포 데이터 (JSON text)")
-    days: int = Field(30, ge=1, le=365, description="분석 기간(일)")
+    tenant_id: str | None = Field(
+        default=None, description="분석할 tenant. 관리자는 필수로 지정, 일반 사용자는 본인 tenant로 강제 고정됨."
+    )
+    days: int = Field(30, ge=1, le=365, description="분석 기간(일) — 최근 상호작용 기준 활성/휴면 분류에 사용")
 
 
 class AnalyzeCustomersResponse(BaseModel):
@@ -184,7 +199,9 @@ async def api_suggest_reply(payload: SuggestReplyRequest) -> SuggestReplyRespons
 
 
 @router.post("/generate-broadcast", response_model=GenerateBroadcastResponse)
-async def api_generate_broadcast(payload: GenerateBroadcastRequest) -> GenerateBroadcastResponse:
+async def api_generate_broadcast(
+    payload: GenerateBroadcastRequest, db: AsyncSession = Depends(get_db)
+) -> GenerateBroadcastResponse:
     """Draft a broadcast message and, if candidate recipients were given,
     recommend which of *those exact* candidates fit the request.
 
@@ -192,6 +209,8 @@ async def api_generate_broadcast(payload: GenerateBroadcastRequest) -> GenerateB
     (never asked to invent chat ids) so this stays grounded in real accessible
     groups/leads. Never calls create_broadcast itself — the frontend takes
     `message` + `recommended_chat_ids` into the existing broadcast flow.
+    Every call (including a malformed-JSON fallback) is recorded to
+    ai_broadcast_drafts for later review — see GET /broadcast-drafts.
     """
     candidates_text = (
         "\n".join(f"- {c.chat_id}: {c.name}" for c in payload.candidate_recipients)
@@ -233,13 +252,78 @@ async def api_generate_broadcast(payload: GenerateBroadcastRequest) -> GenerateB
         recommended = []
         reasoning = ""
 
+    await create_draft(db, prompt=payload.prompt, message=message, recommended_chat_ids=recommended, reasoning=reasoning)
+
     return GenerateBroadcastResponse(message=message, recommended_chat_ids=recommended, reasoning=reasoning)
 
 
+@router.get("/broadcast-drafts", response_model=list[AiBroadcastDraftRead], dependencies=[Depends(require_admin)])
+async def api_list_broadcast_drafts(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """List recent AI Broadcast generations (history/audit only — admin-only
+    since this router has no per-tenant scoping, same reasoning as ops-reports)."""
+    drafts = await list_recent_drafts(db, limit=limit)
+    return [
+        AiBroadcastDraftRead(
+            id=d.id,
+            prompt=d.prompt,
+            message=d.message,
+            recommended_chat_ids=json.loads(d.recommended_chat_ids_json or "[]"),
+            reasoning=d.reasoning,
+            created_at=d.created_at.isoformat(),
+        )
+        for d in drafts
+    ]
+
+
+def _resolve_customer_analysis_tenant_id(payload: AnalyzeCustomersRequest, identity: Identity) -> str:
+    """Non-admin callers are always scoped to their own tenant, regardless of
+    what tenant_id they pass — fail-closed, same policy as
+    require_account_tenant_access elsewhere. Admins must specify one
+    explicitly (no whole-platform lead aggregate in this endpoint — that's
+    what GET /ops-reports is for)."""
+    if identity.kind == "admin":
+        if not payload.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="관리자는 tenant_id를 지정해야 합니다."
+            )
+        return payload.tenant_id
+
+    if not identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="연동된 tenant가 없습니다.")
+    return identity.tenant_id
+
+
 @router.post("/analyze-customers", response_model=AnalyzeCustomersResponse)
-async def api_analyze_customers(payload: AnalyzeCustomersRequest) -> AnalyzeCustomersResponse:
-    """Analyze customer/lead data and return a natural-language report plus
-    notable insights (segment opportunities, churn risk, engagement drops)."""
+async def api_analyze_customers(
+    payload: AnalyzeCustomersRequest, identity: Identity = Depends(get_current_identity)
+) -> AnalyzeCustomersResponse:
+    """Analyze this tenant's actual Lead/CRM data (queried directly, the same
+    "reuse the real data source" pattern app.services.ai_ops_service uses for
+    delivery_analytics) and return a natural-language report plus notable
+    insights (segment opportunities, churn risk, engagement drops)."""
+    tenant_id = _resolve_customer_analysis_tenant_id(payload, identity)
+
+    leads = await get_leads(tenant_id, limit=200)
+    total = await get_lead_count(tenant_id)
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=payload.days)
+    active_in_window = sum(1 for lead in leads if lead.last_interaction and lead.last_interaction >= cutoff)
+    stale_beyond_window = sum(1 for lead in leads if lead.last_interaction and lead.last_interaction < cutoff)
+    engaged_3plus = sum(1 for lead in leads if (lead.total_messages or 0) >= 3)
+
+    summary = {
+        "total_leads": total,
+        "sampled": len(leads),
+        "active_in_window": active_in_window,
+        "stale_beyond_window": stale_beyond_window,
+        "engaged_3plus_messages": engaged_3plus,
+    }
+    sample_lines = [
+        f"- {lead.telegram_username or lead.first_name or lead.telegram_user_id}: "
+        f"{lead.total_messages or 0}건, 마지막 응답 {lead.last_interaction or '없음'}"
+        for lead in leads[:30]
+    ]
+
     system_prompt = (
         "너는 TeleMon 서비스의 AI 고객 분석가야. "
         "고객/리드 데이터를 보고 운영자에게 의미 있는 인사이트를 제공해줘.\n\n"
@@ -252,12 +336,15 @@ async def api_analyze_customers(payload: AnalyzeCustomersRequest) -> AnalyzeCust
         "- 구체적인 수치를 포함\n"
         "- 운영자가 바로 조치할 수 있는 액션 아이템 위주로"
     )
-    data_lines = [f"[고객 요약] {payload.summary}"]
-    if payload.segments:
-        data_lines.append(f"[세그먼트] {payload.segments}")
-    data_lines.append(f"[분석 기간] 최근 {payload.days}일")
+    user_prompt = "\n".join(
+        [
+            f"[고객 요약] {json.dumps(summary, ensure_ascii=False)}",
+            f"[샘플 (최대 30건)]\n" + "\n".join(sample_lines) if sample_lines else "[샘플] (리드 없음)",
+            f"[분석 기간] 최근 {payload.days}일",
+        ]
+    )
 
-    report, insights = await analyze_text_report(system_prompt, "\n".join(data_lines))
+    report, insights = await analyze_text_report(system_prompt, user_prompt)
     if report is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -286,3 +373,27 @@ async def api_list_ops_reports(limit: int = 20, db: AsyncSession = Depends(get_d
         )
         for r in reports
     ]
+
+
+@router.post("/ops-reports/generate", response_model=AiOpsReportRead, dependencies=[Depends(require_admin)])
+async def api_generate_ops_report_now():
+    """Manually generate an AI ops report right now, instead of waiting for
+    the daily scheduled job (app.services.ai_ops_service.generate_and_store_ops_report).
+
+    Still report-only — this triggers the exact same function the scheduler
+    calls; nothing about calling it manually changes what it does. A shared
+    in-progress guard means this returns 409 instead of double-running if the
+    scheduled job happens to be executing at the same moment.
+    """
+    report = await generate_and_store_ops_report()
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="리포트 생성에 실패했거나 이미 다른 생성 작업이 진행 중입니다. 잠시 후 다시 시도해주세요.",
+        )
+    return AiOpsReportRead(
+        id=report.id,
+        report=report.report,
+        anomalies=json.loads(report.anomalies_json or "[]"),
+        created_at=report.created_at.isoformat(),
+    )

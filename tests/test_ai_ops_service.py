@@ -54,13 +54,43 @@ async def test_generate_and_store_ops_report_persists_report(db_session, monkeyp
     )
     monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", fake_deepseek)
 
-    await generate_and_store_ops_report()
+    returned = await generate_and_store_ops_report()
 
     result = await db_session.execute(select(AiOpsReport))
     rows = result.scalars().all()
     assert len(rows) == 1
     assert "안정적" in rows[0].report
     assert "flood_wait" in rows[0].anomalies_json
+    assert returned is not None
+    assert returned.id == rows[0].id
+
+
+@pytest.mark.asyncio
+async def test_generate_and_store_ops_report_returns_none_and_skips_storage_on_data_gathering_failure(
+    db_session, monkeypatch
+):
+    monkeypatch.setattr(ai_ops_service_module, "get_summary", AsyncMock(side_effect=RuntimeError("db down")))
+    monkeypatch.setattr(ai_ops_service_module, "async_session_maker", lambda: db_session_cm(db_session))
+
+    returned = await generate_and_store_ops_report()
+
+    assert returned is None
+    result = await db_session.execute(select(AiOpsReport))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_generate_and_store_ops_report_skips_when_already_in_progress(db_session, monkeypatch):
+    _patch_gatherers(monkeypatch)
+    monkeypatch.setattr(ai_ops_service_module, "async_session_maker", lambda: db_session_cm(db_session))
+    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", AsyncMock(return_value="리포트"))
+    monkeypatch.setattr(ai_ops_service_module, "_generating", True)
+
+    returned = await generate_and_store_ops_report()
+
+    assert returned is None
+    result = await db_session.execute(select(AiOpsReport))
+    assert result.scalars().all() == []
 
 
 @pytest.mark.asyncio
