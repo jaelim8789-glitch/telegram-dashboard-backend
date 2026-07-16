@@ -16,11 +16,14 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import (
     PLAN_CATALOG,
+    get_plan,
     is_deprecated_plan,
 )
+from app.core.telegram_identity import parse_tg_identifier
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
+from app.services.telegram_notify import send_telegram_message
 from app.services.usage_tracker import apply_plan_limits
 
 logger = get_logger(__name__)
@@ -216,7 +219,29 @@ async def process_incoming_tx(tx: dict) -> dict:
         await db.commit()
 
         logger.info("usdt_payment_auto_processed", tenant_id=tenant.id, plan=plan_name, tx_id=tx_id)
+        await notify_payment_activated(tenant.phone, plan_name, tenant.billing_period_end, raw_key)
         return {"status": "activated", "tenant_id": tenant.id, "plan": plan_name, "billing": billing, "api_key": raw_key}
+
+
+async def notify_payment_activated(tenant_phone: str, plan_name: str, billing_period_end, raw_key: str) -> None:
+    """Best-effort push to the paying user, when their tenant identity is a
+    Telegram-native `tg_<id>` one (i.e. the purchase was bot-initiated, or the
+    web purchase used that identity). Silently does nothing for phone-based
+    tenants — there's no known chat id to push to."""
+    chat_id = parse_tg_identifier(tenant_phone)
+    if chat_id is None:
+        return
+
+    plan_def = get_plan(plan_name)
+    display_name = plan_def["name"] if plan_def else plan_name
+    expires = billing_period_end.strftime("%Y-%m-%d") if billing_period_end else "-"
+
+    text = (
+        f"✅ 결제가 확인되었습니다! {display_name} 플랜이 활성화되었습니다 ({expires}까지).\n\n"
+        f"API 키:\n```\n{raw_key}\n```\n\n"
+        f"⚠️ 이 키는 다시 표시되지 않습니다. 지금 안전한 곳에 저장해주세요."
+    )
+    await send_telegram_message(chat_id, text, parse_mode="Markdown")
 
 
 # ─── Scheduled Checker ──────────────────────────────────────────────

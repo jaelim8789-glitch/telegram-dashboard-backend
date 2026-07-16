@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     usdt_wallet_address: str = ""
     usdt_network: str = "TRC20"
 
+    # Bot-facing support contact and announcement text (Telegram ops menu).
+    # Both are plain config — no admin UI/DB model yet; update via env var + redeploy.
+    telegram_support_username: str = "@telemon_support"
+    bot_announcement_text: str = ""
+
     # Frontend URL for cross-domain redirects and payment success links.
     frontend_url: str = "http://localhost:3000"
 

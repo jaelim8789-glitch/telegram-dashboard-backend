@@ -3,25 +3,151 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from app.config import settings
 from app.core.logging import get_logger
+from app.core.plans import PLAN_CATALOG
 from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
+from app.models.tenant import PaymentRecord
+from app.services import bot_account_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
+from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
 
 logger = get_logger(__name__)
 
 _application: Application | None = None
 
+_SUBSCRIPTION_STATUS_LABELS = {
+    "active": "활성",
+    "pending": "결제 대기중",
+    "inactive": "비활성",
+    "expired": "만료됨",
+    "canceled": "취소됨",
+}
+
+_PAYMENT_STATUS_LABELS = {
+    "completed": "완료 ✅",
+    "pending": "대기중",
+    "unmatched": "미확인",
+    "failed": "실패",
+}
+
 
 def _main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Top-level bot menu — includes the self-service API key button."""
+    """Top-level bot menu — the full self-service ops menu."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🔑 API 키 받기", callback_data="apikey:get")],
+            [InlineKeyboardButton("🔑 내 API 키", callback_data="apikey:get")],
+            [
+                InlineKeyboardButton("💳 내 플랜/만료일", callback_data="plan:info"),
+                InlineKeyboardButton("👤 계정 상태", callback_data="account:status"),
+            ],
+            [
+                InlineKeyboardButton("💰 결제(업그레이드)", callback_data="pay:menu"),
+                InlineKeyboardButton("🔄 갱신", callback_data="renew:start"),
+            ],
+            [InlineKeyboardButton("📜 구매내역", callback_data="purchase:history")],
             [InlineKeyboardButton("🤖 자동 응답 관리", callback_data="autoreply_menu")],
+            [
+                InlineKeyboardButton("🆘 고객센터", callback_data="support:info"),
+                InlineKeyboardButton("📢 공지", callback_data="notice:info"),
+            ],
+            [InlineKeyboardButton("🤖 AI Chat (준비중)", callback_data="aichat:soon")],
         ]
     )
+
+
+def _back_to_main_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")]])
+
+
+def _pay_menu_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for plan_id, plan_def in PLAN_CATALOG.items():
+        if plan_id == "free":
+            continue
+        billing = "monthly" if "monthly" in plan_def["prices_usdt"] else "quarterly"
+        price = plan_def["prices_usdt"][billing]
+        label = f"{plan_def['name']} — ${price} ({'월' if billing == 'monthly' else '분기'})"
+        rows.append([InlineKeyboardButton(label, callback_data=f"pay:select:{plan_id}")])
+    rows.append([InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _pending_check_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔄 다시 확인", callback_data="pay:check")],
+            [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+        ]
+    )
+
+
+def _plan_info_text(snapshot: AccountSnapshot) -> str:
+    if not snapshot.linked:
+        return (
+            "💳 아직 요금제 정보가 없습니다.\n"
+            "'💰 결제(업그레이드)' 메뉴에서 요금제를 구매하거나, 공식 채널 가입 후 무료체험을 시작해주세요."
+        )
+    lines = [
+        f"💳 현재 요금제: {snapshot.plan_name}",
+        f"상태: {_SUBSCRIPTION_STATUS_LABELS.get(snapshot.subscription_status, snapshot.subscription_status)}",
+    ]
+    if snapshot.trial_expires_at:
+        lines.append(f"무료체험 만료일: {snapshot.trial_expires_at.strftime('%Y-%m-%d %H:%M')}")
+    if snapshot.billing_period_end:
+        lines.append(f"결제 만료일: {snapshot.billing_period_end.strftime('%Y-%m-%d')}")
+    return "\n".join(lines)
+
+
+def _account_status_text(snapshot: AccountSnapshot) -> str:
+    if not snapshot.linked:
+        return "👤 연동된 TeleMon 계정이 없습니다.\n결제 또는 무료체험을 시작하면 이 텔레그램 계정으로 연동됩니다."
+    lines = [
+        "👤 계정 상태",
+        f"요금제: {snapshot.plan_name} ({_SUBSCRIPTION_STATUS_LABELS.get(snapshot.subscription_status, snapshot.subscription_status)})",
+        f"API 키 발급: {'✅ 발급됨' if snapshot.has_api_key else '❌ 미발급'}",
+    ]
+    if snapshot.max_accounts is not None:
+        lines.append(f"최대 계정 수: {snapshot.max_accounts}개")
+    if snapshot.monthly_message_limit is not None:
+        lines.append(f"월 메시지 한도: {snapshot.monthly_message_limit:,}건")
+    return "\n".join(lines)
+
+
+def _invoice_text(result: BotPurchaseResult) -> str:
+    billing_label = "월간" if result.billing == "monthly" else "분기"
+    return (
+        f"💰 {result.plan_name} 요금제 ({billing_label}) 결제 안내\n\n"
+        f"1. 아래 주소로 **{result.amount_usdt} USDT(TRC20)**를 보내주세요.\n"
+        f"`{result.wallet_address}`\n\n"
+        f"2. 송금 메모(memo)에 반드시 아래 코드를 입력하세요.\n"
+        f"`{result.payment_ref}`\n\n"
+        f"3. 입금이 확인되면 자동으로 요금제가 활성화되고, 이 채팅으로 API 키가 전송됩니다.\n"
+        f"⏳ 평균 처리 시간: 5~10분"
+    )
+
+
+def _claim_text(result: ClaimResult) -> str:
+    if result.status == "claimed":
+        return (
+            "✅ API 키가 발급되었습니다! 🎉\n\n"
+            f"```\n{result.api_key}\n```\n\n"
+            "⚠️ 이 키는 다시 표시되지 않습니다. 지금 안전한 곳에 저장해주세요."
+        )
+    return result.detail
+
+
+def _history_text(records: list[PaymentRecord]) -> str:
+    if not records:
+        return "📜 구매 내역이 없습니다."
+    lines = ["📜 구매 내역"]
+    for record in records:
+        date = record.created_at.strftime("%Y-%m-%d") if record.created_at else "-"
+        amount = (record.amount_usdt or 0) / 100
+        status_label = _PAYMENT_STATUS_LABELS.get(record.status, record.status)
+        lines.append(f"• {date} | {record.plan or '-'} | ${amount:.2f} | {status_label}")
+    return "\n".join(lines)
 
 
 def _keyboard(accounts) -> InlineKeyboardMarkup:
@@ -133,6 +259,163 @@ async def apikey_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+def _effective_telegram_user_id(update: Update) -> int | None:
+    return update.effective_user.id if update.effective_user else None
+
+
+async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "💳 내 플랜/만료일" — read-only plan/expiry snapshot."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        snapshot = await bot_account_service.get_account_snapshot(db, telegram_user_id)
+    await query.edit_message_text(_plan_info_text(snapshot), reply_markup=_back_to_main_keyboard())
+
+
+async def account_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "👤 계정 상태" — read-only account/key-issuance snapshot."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        snapshot = await bot_account_service.get_account_snapshot(db, telegram_user_id)
+    await query.edit_message_text(_account_status_text(snapshot), reply_markup=_back_to_main_keyboard())
+
+
+async def _reply_purchase_result(query, result: BotPurchaseResult) -> None:
+    if result.status == "ok":
+        markup = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("✅ 입금 확인하기", callback_data="pay:check")],
+                [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+            ]
+        )
+        await query.edit_message_text(_invoice_text(result), parse_mode="Markdown", reply_markup=markup)
+        return
+    await query.edit_message_text(f"⚠️ {result.detail}", reply_markup=_back_to_main_keyboard())
+
+
+async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle every "pay:*" button — plan selection menu, a chosen plan (invoice),
+    and the "입금 확인하기" manual check/claim. All eligibility, plan validation,
+    rate-limiting, and DB mutation lives in app.services.bot_account_service.
+    """
+    query = update.callback_query
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "menu":
+        await query.answer()
+        await query.edit_message_text("💰 결제할 요금제를 선택해주세요.", reply_markup=_pay_menu_keyboard())
+        return
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.answer()
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    if action == "select":
+        plan = parts[2] if len(parts) > 2 else ""
+        await query.answer()
+        async with async_session_maker() as db:
+            result = await bot_account_service.start_purchase(db, telegram_user_id, plan)
+        await _reply_purchase_result(query, result)
+        return
+
+    if action == "check":
+        await query.answer()
+        async with async_session_maker() as db:
+            claim = await bot_account_service.check_and_claim(db, telegram_user_id)
+        markup = _pending_check_keyboard() if claim.status == "pending" else _back_to_main_keyboard()
+        parse_mode = "Markdown" if claim.status == "claimed" else None
+        await query.edit_message_text(_claim_text(claim), parse_mode=parse_mode, reply_markup=markup)
+        return
+
+    await query.answer()
+    await query.edit_message_text("⚠️ 알 수 없는 요청입니다.", reply_markup=_main_menu_keyboard())
+
+
+async def renew_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "🔄 갱신" — repurchase the tenant's current plan, skipping selection."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        result = await bot_account_service.start_renew(db, telegram_user_id)
+
+    if result.status == "no_prior_plan":
+        await query.edit_message_text(f"ℹ️ {result.detail}", reply_markup=_pay_menu_keyboard())
+        return
+    await _reply_purchase_result(query, result)
+
+
+async def purchase_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "📜 구매내역"."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        records = await bot_account_service.list_purchase_history(db, telegram_user_id)
+    await query.edit_message_text(_history_text(records), reply_markup=_back_to_main_keyboard())
+
+
+async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "🆘 고객센터" — static contact info."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        f"🆘 고객센터\n\n문의사항은 {settings.telegram_support_username}(으)로 연락해주세요.",
+        reply_markup=_back_to_main_keyboard(),
+    )
+
+
+async def notice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "📢 공지" — a single config-driven announcement (no admin UI yet)."""
+    query = update.callback_query
+    await query.answer()
+    text = settings.bot_announcement_text or "등록된 공지가 없습니다."
+    await query.edit_message_text(f"📢 공지\n\n{text}", reply_markup=_back_to_main_keyboard())
+
+
+async def aichat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "🤖 AI Chat (준비중)" — placeholder slot for a future DeepSeek chat menu."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🚧 AI Chat 기능은 준비 중입니다. 곧 만나보실 수 있어요!",
+        reply_markup=_back_to_main_keyboard(),
+    )
+
+
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "◀ 메인 메뉴" — return to the top-level menu from any submenu."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("안녕하세요! 아래 메뉴에서 원하는 기능을 선택해주세요.", reply_markup=_main_menu_keyboard())
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /start (bare) and the deep-link form /start <token> used by the
     free-trial official-channel verification flow (see app/api/telegram_verify.py).
@@ -178,6 +461,15 @@ async def start_bot() -> None:
     application.add_handler(CommandHandler("autoreply", autoreply_command))
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^autoreply"))
     application.add_handler(CallbackQueryHandler(apikey_callback, pattern=r"^apikey:"))
+    application.add_handler(CallbackQueryHandler(plan_callback, pattern=r"^plan:"))
+    application.add_handler(CallbackQueryHandler(account_status_callback, pattern=r"^account:"))
+    application.add_handler(CallbackQueryHandler(pay_callback, pattern=r"^pay:"))
+    application.add_handler(CallbackQueryHandler(renew_callback, pattern=r"^renew:"))
+    application.add_handler(CallbackQueryHandler(purchase_history_callback, pattern=r"^purchase:"))
+    application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^support:"))
+    application.add_handler(CallbackQueryHandler(notice_callback, pattern=r"^notice:"))
+    application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))
+    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=r"^menu:main$"))
     application.add_handler(CommandHandler("start", start_command))
 
     # Non-blocking startup (vs. the usual Application.run_polling(), which blocks forever)
