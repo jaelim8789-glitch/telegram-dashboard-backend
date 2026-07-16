@@ -1,7 +1,8 @@
 from app.models.audit_log import AdminAuditLog
 from app.models.account import Account
+from app.models.ai_ops_report import AiOpsReport
 from app.models.api_key import APIKey
-from app.models.auto_reply import AutoReplyLog, AutoReplyRule
+from app.models.auto_reply import AutoReplyLog, AutoReplyRule, AutoReplySuggestion
 from app.models.broadcast import Broadcast
 from app.models.folder import Folder
 from app.models.group_search import GroupJoinLog, GroupSearchResult
@@ -18,9 +19,11 @@ from app.models.user import PhoneVerification, User
 __all__ = [
     "Account",
     "AdminAuditLog",
+    "AiOpsReport",
     "APIKey",
     "AutoReplyLog",
     "AutoReplyRule",
+    "AutoReplySuggestion",
     "Broadcast",
     "Folder",
     "FollowUpRule",

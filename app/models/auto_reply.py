@@ -27,6 +27,24 @@ class AutoReplyRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class AutoReplySuggestion(Base):
+    """An AI-drafted reply for a message that didn't match any keyword/exact
+    AutoReplyRule. Suggestion-only — never sent automatically. Only created
+    when Account.ai_fallback_reply_enabled is True (opt-in, default off)."""
+
+    __tablename__ = "auto_reply_suggestions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    chat_id: Mapped[str] = mapped_column(String(100))
+    user_id: Mapped[str] = mapped_column(String(100))
+    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    trigger_message: Mapped[str] = mapped_column(Text)
+    suggested_reply: Mapped[str] = mapped_column(Text)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
 class AutoReplyLog(Base):
     __tablename__ = "auto_reply_logs"
 

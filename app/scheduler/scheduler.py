@@ -19,6 +19,7 @@ from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
+from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.billing import downgrade_expired_tenants
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
@@ -217,6 +218,13 @@ def start_scheduler() -> None:
         process_all_accounts,
         IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
         id="process_join_queue",
+        replace_existing=True,
+    )
+    # AI 운영 자동화 — report-only, no actions taken (see ai_ops_service docstring).
+    scheduler.add_job(
+        generate_and_store_ops_report,
+        IntervalTrigger(hours=24),
+        id="generate_ai_ops_report",
         replace_existing=True,
     )
     scheduler.start()

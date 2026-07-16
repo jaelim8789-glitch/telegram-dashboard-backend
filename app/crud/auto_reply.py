@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.auto_reply import AutoReplyLog, AutoReplyRule
+from app.models.auto_reply import AutoReplyLog, AutoReplyRule, AutoReplySuggestion
 from app.schemas.auto_reply import AutoReplyRuleCreate, AutoReplyRuleUpdate
 
 
@@ -98,6 +98,31 @@ async def get_last_successful_reply_time(db: AsyncSession, rule_id: str, user_id
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def list_suggestions(
+    db: AsyncSession, account_id: str, *, reviewed: bool | None = None
+) -> list[AutoReplySuggestion]:
+    query = (
+        select(AutoReplySuggestion)
+        .where(AutoReplySuggestion.account_id == account_id)
+        .order_by(AutoReplySuggestion.created_at.desc())
+    )
+    if reviewed is not None:
+        query = query.where(AutoReplySuggestion.reviewed.is_(reviewed))
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+async def get_suggestion(db: AsyncSession, suggestion_id: str) -> AutoReplySuggestion | None:
+    return await db.get(AutoReplySuggestion, suggestion_id)
+
+
+async def mark_suggestion_reviewed(db: AsyncSession, suggestion: AutoReplySuggestion) -> AutoReplySuggestion:
+    suggestion.reviewed = True
+    await db.commit()
+    await db.refresh(suggestion)
+    return suggestion
 
 
 async def count_successful_replies_today(db: AsyncSession, rule_id: str) -> int:

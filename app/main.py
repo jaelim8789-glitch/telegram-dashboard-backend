@@ -20,6 +20,7 @@ from sqlalchemy import text
 from app.api.account_health import router as account_health_router
 from app.api.accounts import router as accounts_router
 from app.api.admin import router as admin_router
+from app.api.ai_assist import router as ai_assist_router
 from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
 from app.api.billing import router as billing_router
@@ -174,6 +175,7 @@ app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)
 app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
+app.include_router(ai_assist_router, dependencies=_auth_required)
 app.include_router(join_queue_router, dependencies=_auth_required)
 
 

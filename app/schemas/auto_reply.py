@@ -73,3 +73,26 @@ class AutoReplyLogRead(BaseModel):
     reply_sent: str
     status: AutoReplyLogStatus
     created_at: datetime
+
+
+class AiFallbackToggleRequest(BaseModel):
+    enabled: bool
+
+
+class AiFallbackToggleResponse(BaseModel):
+    account_id: str
+    ai_fallback_reply_enabled: bool
+
+
+class AutoReplySuggestionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    chat_id: str
+    user_id: str
+    user_name: str | None
+    trigger_message: str
+    suggested_reply: str
+    reviewed: bool
+    created_at: datetime

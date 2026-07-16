@@ -43,6 +43,75 @@ async def test_create_rule_for_missing_account_returns_404(client):
 
 
 @pytest.mark.asyncio
+async def test_toggle_ai_fallback_defaults_off_and_can_be_enabled(client, db_session):
+    account = await _make_account(db_session)
+    assert account.ai_fallback_reply_enabled is False
+
+    response = await client.patch(f"/api/accounts/{account.id}/auto-reply/ai-fallback", json={"enabled": True})
+
+    assert response.status_code == 200
+    assert response.json()["ai_fallback_reply_enabled"] is True
+    await db_session.refresh(account)
+    assert account.ai_fallback_reply_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_read_suggestions_empty_by_default(client, db_session):
+    account = await _make_account(db_session)
+
+    response = await client.get(f"/api/accounts/{account.id}/auto-reply/suggestions")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_review_suggestion_marks_reviewed(client, db_session):
+    from app.models.auto_reply import AutoReplySuggestion
+
+    account = await _make_account(db_session)
+    suggestion = AutoReplySuggestion(
+        account_id=account.id,
+        chat_id="c1",
+        user_id="u1",
+        user_name="tester",
+        trigger_message="안녕하세요",
+        suggested_reply="네 안녕하세요!",
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    await db_session.refresh(suggestion)
+
+    response = await client.post(f"/api/accounts/{account.id}/auto-reply/suggestions/{suggestion.id}/reviewed")
+
+    assert response.status_code == 200
+    assert response.json()["reviewed"] is True
+
+
+@pytest.mark.asyncio
+async def test_review_suggestion_for_other_account_returns_404(client, db_session):
+    from app.models.auto_reply import AutoReplySuggestion
+
+    account = await _make_account(db_session, phone="+821055556666")
+    other_account = await _make_account(db_session, phone="+821077778888")
+    suggestion = AutoReplySuggestion(
+        account_id=other_account.id,
+        chat_id="c1",
+        user_id="u1",
+        user_name=None,
+        trigger_message="안녕하세요",
+        suggested_reply="네 안녕하세요!",
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    await db_session.refresh(suggestion)
+
+    response = await client.post(f"/api/accounts/{account.id}/auto-reply/suggestions/{suggestion.id}/reviewed")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_read_settings_bundles_master_switch_and_rules(client, db_session):
     account = await _make_account(db_session)
     await client.post(f"/api/accounts/{account.id}/auto-reply", json=_rule_payload())

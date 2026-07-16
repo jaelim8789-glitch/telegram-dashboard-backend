@@ -9,6 +9,7 @@ from app.models.auto_reply import AutoReplyLog, AutoReplyRule
 from app.schemas.account import AccountCreate
 from app.schemas.auto_reply import AutoReplyRuleCreate
 from app.services.auto_reply_service import _handle_incoming_message, _matches
+import app.services.ai_reply_service as ai_reply_service_module
 
 
 def _fake_event(text: str, *, out: bool = False, sender_id: int = 111, chat_id: int = 222, username="tester"):
@@ -161,6 +162,63 @@ async def test_handle_incoming_message_daily_limit_blocks_new_user_once_reached(
     rate_limited = [log for log in logs if log.status == "rate_limited"]
     assert len(rate_limited) == 1
     assert rate_limited[0].user_id == "111"
+
+
+@pytest.mark.asyncio
+async def test_handle_incoming_message_ai_fallback_off_by_default_no_deepseek_call(db_session, monkeypatch):
+    """Preserves existing behavior: without opting in, a non-matching message
+    still does nothing at all — no suggestion, no DeepSeek call."""
+    account = await _make_account(db_session)
+    await _make_rule(db_session, account.id)
+    fake_deepseek = AsyncMock(return_value="이 답장 어떠세요?")
+    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+
+    event = _fake_event("안녕하세요")
+    await _handle_incoming_message(event, account.id)
+
+    event.reply.assert_not_called()
+    fake_deepseek.assert_not_called()
+    from app.crud import auto_reply as _auto_reply_crud
+
+    assert await _auto_reply_crud.list_suggestions(db_session, account.id) == []
+
+
+@pytest.mark.asyncio
+async def test_handle_incoming_message_ai_fallback_records_suggestion_when_enabled(db_session, monkeypatch):
+    account = await _make_account(db_session)
+    account.ai_fallback_reply_enabled = True
+    await db_session.commit()
+    await _make_rule(db_session, account.id)
+    fake_deepseek = AsyncMock(return_value="문의 주셔서 감사합니다! 곧 답변드릴게요.")
+    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+
+    event = _fake_event("안녕하세요", sender_id=321, chat_id=654)
+    await _handle_incoming_message(event, account.id)
+
+    event.reply.assert_not_called()  # suggestion-only — never auto-sent
+    fake_deepseek.assert_awaited_once()
+    suggestions = await auto_reply_crud.list_suggestions(db_session, account.id)
+    assert len(suggestions) == 1
+    assert suggestions[0].suggested_reply == "문의 주셔서 감사합니다! 곧 답변드릴게요."
+    assert suggestions[0].reviewed is False
+    assert suggestions[0].chat_id == "654"
+    assert suggestions[0].user_id == "321"
+
+
+@pytest.mark.asyncio
+async def test_handle_incoming_message_ai_fallback_deepseek_failure_records_nothing(db_session, monkeypatch):
+    account = await _make_account(db_session)
+    account.ai_fallback_reply_enabled = True
+    await db_session.commit()
+    await _make_rule(db_session, account.id)
+    fake_deepseek = AsyncMock(return_value=None)
+    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+
+    event = _fake_event("안녕하세요")
+    await _handle_incoming_message(event, account.id)
+
+    event.reply.assert_not_called()
+    assert await auto_reply_crud.list_suggestions(db_session, account.id) == []
 
 
 @pytest.mark.asyncio

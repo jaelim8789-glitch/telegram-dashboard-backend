@@ -7,11 +7,14 @@ from app.crud import account as account_crud
 from app.crud import auto_reply as auto_reply_crud
 from app.database import get_db
 from app.schemas.auto_reply import (
+    AiFallbackToggleRequest,
+    AiFallbackToggleResponse,
     AutoReplyLogRead,
     AutoReplyRuleCreate,
     AutoReplyRuleRead,
     AutoReplyRuleUpdate,
     AutoReplySettingsRead,
+    AutoReplySuggestionRead,
     AutoReplyToggleRequest,
     AutoReplyToggleResponse,
 )
@@ -117,3 +120,47 @@ async def read_logs(
     await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     return await auto_reply_crud.list_logs(db, account_id, rule_id=rule_id, status=status_filter)
+
+
+@router.patch("/ai-fallback", response_model=AiFallbackToggleResponse)
+async def toggle_ai_fallback(
+    account_id: str,
+    payload: AiFallbackToggleRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Opt in/out of AI-drafted reply suggestions for messages no rule matches.
+    Suggestion-only — toggling this never sends anything automatically."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    account.ai_fallback_reply_enabled = payload.enabled
+    await db.commit()
+    logger.info("auto_reply_ai_fallback_toggled", account_id=account_id, enabled=payload.enabled)
+    return AiFallbackToggleResponse(account_id=account_id, ai_fallback_reply_enabled=payload.enabled)
+
+
+@router.get("/suggestions", response_model=list[AutoReplySuggestionRead])
+async def read_suggestions(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    reviewed: bool | None = None,
+):
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    return await auto_reply_crud.list_suggestions(db, account_id, reviewed=reviewed)
+
+
+@router.post("/suggestions/{suggestion_id}/reviewed", response_model=AutoReplySuggestionRead)
+async def review_suggestion(
+    account_id: str,
+    suggestion_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    suggestion = await auto_reply_crud.get_suggestion(db, suggestion_id)
+    if suggestion is None or suggestion.account_id != account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="제안을 찾을 수 없습니다.")
+    return await auto_reply_crud.mark_suggestion_reviewed(db, suggestion)

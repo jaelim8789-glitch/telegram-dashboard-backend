@@ -7,6 +7,7 @@ from app.crud import account as account_crud
 from app.crud import auto_reply as auto_reply_crud
 from app.database import async_session_maker
 from app.models.auto_reply import AutoReplyRule
+from app.services.ai_reply_service import record_auto_reply_suggestion
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 from app.services.telethon_pool import pool
 
@@ -42,6 +43,18 @@ async def _handle_incoming_message(event, account_id: str) -> None:
         rules = await auto_reply_crud.list_active_rules(db, account_id)
         matched = next((rule for rule in rules if _matches(rule, text)), None)
         if matched is None:
+            # Opt-in AI fallback (default off — see Account.ai_fallback_reply_enabled):
+            # draft a suggestion for operator review. Never sent automatically.
+            if account.ai_fallback_reply_enabled:
+                fallback_sender = await event.get_sender()
+                await record_auto_reply_suggestion(
+                    db,
+                    account_id=account_id,
+                    chat_id=str(event.chat_id),
+                    user_id=str(event.sender_id),
+                    user_name=getattr(fallback_sender, "username", None) or getattr(fallback_sender, "first_name", None),
+                    trigger_message=text,
+                )
             return
 
         sender = await event.get_sender()
