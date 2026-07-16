@@ -1,0 +1,147 @@
+upstream frontend {
+    server frontend:3000;
+}
+
+upstream backend {
+    server backend:8000;
+}
+
+# ─── Production: telemon.online (public marketing site) ──────────────────────
+# Cloudflare Full (Strict): Cloudflare terminates TLS at the edge and connects
+# to this server via HTTP on port 80. No TLS certificate is required on the
+# origin — Cloudflare validates the origin's TLS only in Strict mode, but Full
+# (Strict) works with HTTP-only origins behind the Cloudflare proxy (DNS proxied,
+# orange cloud). Do NOT expose port 80 directly to the internet without Cloudflare.
+server {
+    listen 80;
+    server_name telemon.online;
+
+    client_max_body_size 15M;
+
+    # Health check
+    location = /health {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # API calls from signup/payment public pages
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Public Next.js frontend (landing page at /, plus /signup, /pricing, etc.)
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+# ─── Production: app.telemon.online (authenticated dashboard) ────────────────
+server {
+    listen 80;
+    server_name app.telemon.online;
+
+    client_max_body_size 15M;
+
+    # Health check
+    location = /health {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # API calls from dashboard
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Dashboard frontend (/app/, /admin/, /signup, /pricing, etc.)
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+# ─── Production: api.telemon.online (backend only, optional) ─────────────────
+# Note: This server block is OPTIONAL and only needed if you want to expose
+# the FastAPI backend directly for external API clients. The standard architecture
+# uses same-origin nginx proxy: /api/ → backend on both telemon.online and
+# app.telemon.online. Most deployments do NOT need this block.
+server {
+    listen 80;
+    server_name api.telemon.online;
+
+    client_max_body_size 15M;
+
+    location / {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# ─── Local development / docker-compose (no server_name — catches all) ──────
+server {
+    listen 80 default_server;
+
+    client_max_body_size 15M;
+
+    location = /health {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/(docs|redoc|openapi\.json) {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+    }
+
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
