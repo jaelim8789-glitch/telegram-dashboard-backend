@@ -31,7 +31,8 @@ async def execute_reply_macro(macro_id: str) -> None:
     """Execute a single Reply Macro using the canonical delivery pipeline.
 
     Called either manually (via API) or by the scheduler at the macro's interval/fixed time.
-    Enforces max_sends_per_day before sending.
+    Enforces max_sends_per_day before sending.  Always replies to the latest message
+    in each target chat (mirrors broadcast_processor.py "reply" delivery_mode logic).
     """
     async with async_session_maker() as db:
         macro = await macro_crud.get_macro(db, macro_id)
@@ -64,6 +65,29 @@ async def execute_reply_macro(macro_id: str) -> None:
         logger.warning("reply_macro_skipped", macro_id=macro_id, reason="no_targets")
         return
 
+    # Fetch latest messages from each target to reply to them
+    # (mirrors broadcast_processor.py "reply" delivery_mode logic)
+    reply_to_map: dict[str, int] | None = None
+    try:
+        client = await get_authorized_client(account)
+        reply_to_map = {}
+        for recipient in target_chats:
+            try:
+                cleaned = recipient.lstrip("-")
+                target = int(recipient) if cleaned.isdigit() else recipient
+                messages = await client.get_messages(target, limit=1)
+                if messages:
+                    reply_to_map[recipient] = messages[0].id
+            except Exception as exc:
+                logger.warning(
+                    "reply_macro_fetch_failed",
+                    recipient=recipient,
+                    error=str(exc),
+                )
+    except AccountNotAuthenticatedError:
+        logger.warning("reply_macro_skipped_auth", macro_id=macro_id)
+        return
+
     # Use canonical delivery pipeline
     request = DeliveryRequest(
         account_id=macro.account_id,
@@ -72,6 +96,7 @@ async def execute_reply_macro(macro_id: str) -> None:
         media_path=macro.media_path,
         source="reply_macro",
         source_id=macro.id,
+        reply_to_map=reply_to_map,
     )
 
     results = await deliver_message(request)
