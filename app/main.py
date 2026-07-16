@@ -19,6 +19,7 @@ from sqlalchemy import text
 
 from app.api.account_health import router as account_health_router
 from app.api.accounts import router as accounts_router
+from app.api.batch import router as batch_router
 from app.api.admin import router as admin_router
 from app.api.ai_assist import router as ai_assist_router
 from app.api.auth import router as auth_router
@@ -29,6 +30,8 @@ from app.api.features import router as features_router
 from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
 from app.api.campaign import router as campaign_router
+from app.api.search import router as search_router
+from app.api.schedule import router as schedule_router
 from app.api.join_queue import router as join_queue_router
 from app.api.team import router as team_router
 from app.api.webhook_settings import router as webhook_settings_router
@@ -43,6 +46,7 @@ from app.api.message_template import router as message_template_router
 from app.api.reply_macro import router as reply_macro_router
 from app.api.scheduler import router as scheduler_router
 from app.api.telegram_auth import router as telegram_auth_router
+from app.api.preview import router as preview_router
 from app.api.telegram_verify import router as telegram_verify_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.config import settings
@@ -183,7 +187,11 @@ app.include_router(ai_assist_router, dependencies=_auth_required)
 app.include_router(join_queue_router, dependencies=_auth_required)
 app.include_router(message_template_router, dependencies=_auth_required)
 app.include_router(campaign_router, dependencies=_auth_required)
+app.include_router(schedule_router, dependencies=_auth_required)
+app.include_router(preview_router, dependencies=_auth_required)
 app.include_router(team_router, dependencies=_auth_required)
+app.include_router(search_router, dependencies=_auth_required)
+app.include_router(batch_router, dependencies=_auth_required)
 app.include_router(webhook_settings_router, dependencies=_auth_required)
 
 

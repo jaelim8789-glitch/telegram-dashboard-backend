@@ -55,6 +55,52 @@ async def list_groups(account: Account) -> list[dict]:
     return groups
 
 
+async def list_group_members(account: Account, group_id: str) -> list:
+    """Get all members/participants of a Telegram group or channel.
+
+    For small groups (<200 members), uses GetParticipantsRequest for complete
+    listing. For large groups/supergroups, this fetches up to 10,000 members.
+    Returns a list of Telethon User objects.
+    Raises on permission errors or if the account cannot access the group.
+    """
+    from telethon.tl.functions.channels import GetParticipantsRequest
+    from telethon.tl.types import ChannelParticipantsSearch
+
+    client = await get_authorized_client(account)
+    entity = await client.get_entity(int(group_id))
+
+    all_participants: list = []
+    offset = 0
+    limit = 200
+
+    while True:
+        try:
+            participants = await client(GetParticipantsRequest(
+                channel=entity,
+                filter=ChannelParticipantsSearch(""),
+                offset=offset,
+                limit=limit,
+                hash=0,
+            ))
+        except Exception:
+            # Fall back to simple participant fetch for basic groups
+            try:
+                participants = await client.get_participants(entity)
+                return list(participants)
+            except Exception as exc:
+                logger.warning("list_group_members_failed", group_id=group_id, error=str(exc))
+                raise
+
+        if not participants.users:
+            break
+        all_participants.extend(participants.users)
+        if len(participants.users) < limit:
+            break
+        offset += limit
+
+    return all_participants
+
+
 def _filter_title(f: DialogFilter) -> str:
     title = f.title
     # Telegram layer >=166 wraps DialogFilter.title in TextWithEntities; older

@@ -30,6 +30,13 @@ if "ENVIRONMENT" not in os.environ:
     os.environ["ENVIRONMENT"] = "development"
 os.environ["DEBUG"] = "true"
 os.environ["SMS_PROVIDER"] = "console"
+# Set required env vars with test-friendly defaults
+if "ENCRYPTION_KEY" not in os.environ:
+    os.environ["ENCRYPTION_KEY"] = "test-key-12345678901234567890123456789012"
+if "TELEGRAM_API_ID" not in os.environ:
+    os.environ["TELEGRAM_API_ID"] = "12345"
+if "TELEGRAM_API_HASH" not in os.environ:
+    os.environ["TELEGRAM_API_HASH"] = "test_hash_abcdef"
 # Ensure channel-verification gate is disabled by default for unrelated tests
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["TELEGRAM_OFFICIAL_CHANNEL_ID"] = ""

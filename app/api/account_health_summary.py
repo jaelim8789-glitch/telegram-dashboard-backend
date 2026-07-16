@@ -1,62 +1,73 @@
-"""Account Health API — tenant-isolated health monitoring with operational summary."""
+"""Health trend history — aggregated daily snapshots for visualization."""
 
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, case
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity
-from app.database import async_session_maker, get_db
+from app.database import async_session_maker
 from app.models.account import Account
 from app.models.message_log import MessageLog
-from app.services.account_health import get_account_health, HealthSummary, AccountHealthItem
+from sqlalchemy import func, select, case
+from app.services.account_health import get_account_health
 
 router = APIRouter(prefix="/api/account-health", tags=["account-health"])
 
 
-@router.get("")
-async def api_account_health(
-    account_id: str | None = None,
-    identity: Identity = Depends(get_current_identity),
-):
-    """Get detailed account health status for all authorized accounts.
-
-    Derives health from Account model fields (status, session_data) and
-    recent MessageLog delivery outcomes. Tenant-isolated.
-    """
-    result = await get_account_health(identity, account_id=account_id)
-    return result
-
-
 @router.get("/summary")
-async def get_account_health_summary(
-    db: AsyncSession = Depends(get_db),
+async def api_health_summary(
     identity: Identity = Depends(get_current_identity),
 ):
-    """Return aggregate account health statistics."""
-    from sqlalchemy import case as case_
+    """Get aggregated health summary with counts per state."""
+    items = await get_account_health(identity)
+    total = len(items)
+    counts = {}
+    for item in items:
+        s = item.status
+        counts[s] = counts.get(s, 0) + 1
+    
+    total_success = sum(i.recent_success_count for i in items)
+    total_failure = sum(i.recent_failure_count for i in items)
+    total_attempts = total_success + total_failure
+    overall_rate = (total_success / total_attempts * 100) if total_attempts > 0 else 0
 
-    tenant_condition = []
-    if identity.kind != "admin" and identity.tenant_id:
-        tenant_condition.append(Account.tenant_id == identity.tenant_id)
+    # Compute health scores (0-100)
+    health_scores = []
+    for item in items:
+        score = 100
+        # Deduct for issues
+        if item.status == "banned":
+            score -= 80
+        elif item.status == "unauthorized":
+            score -= 60
+        elif item.status == "not_configured":
+            score -= 70
+        elif item.status == "rate_limited":
+            score -= 30
+        elif item.status == "error":
+            score -= 40
+        # Failure rate penalty
+        total_i = item.recent_success_count + item.recent_failure_count
+        if total_i > 0:
+            fail_rate = item.recent_failure_count / total_i
+            score -= fail_rate * 50
+        health_scores.append({
+            "account_id": item.account_id,
+            "score": max(0, score),
+        })
 
-    query = select(
-        func.count(Account.id).label("total"),
-        func.sum(case_((Account.status == "active", 1), else_=0)).label("active"),
-        func.sum(case_((Account.status == "inactive", 1), else_=0)).label("inactive"),
-        func.sum(case_((Account.status == "banned", 1), else_=0)).label("banned"),
-        func.sum(case_((Account.last_error.isnot(None), 1), else_=0)).label("has_errors"),
-    ).where(*tenant_condition)
+    avg_score = sum(h["score"] for h in health_scores) / len(health_scores) if health_scores else 0
 
-    result = await db.execute(query)
-    row = result.one()
     return {
-        "total": row.total or 0,
-        "active": row.active or 0,
-        "inactive": row.inactive or 0,
-        "banned": row.banned or 0,
-        "has_errors": row.has_errors or 0,
+        "total": total,
+        "counts": counts,
+        "healthy_count": counts.get("healthy", 0),
+        "unhealthy_count": total - counts.get("healthy", 0),
+        "overall_success_rate": round(overall_rate, 1),
+        "total_success": total_success,
+        "total_failure": total_failure,
+        "average_health_score": round(avg_score, 0),
+        "health_scores": health_scores,
     }
 
 
@@ -65,10 +76,12 @@ async def api_health_trend(
     days: int = Query(default=14, le=90, ge=1),
     identity: Identity = Depends(get_current_identity),
 ):
-    """Get health trend data over time (daily success/failure snapshots)."""
+    """Get health trend data over time (daily snapshots)."""
+    from datetime import date as date_type
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
-
+    
     async with async_session_maker() as db:
+        # Get accounts for this identity
         if identity.kind == "admin":
             query = select(Account)
         elif identity.tenant_id:
@@ -80,6 +93,7 @@ async def api_health_trend(
         accounts = list(result.scalars().all())
         account_ids = [a.id for a in accounts]
 
+    # Build daily trend from MessageLog
     async with async_session_maker() as db:
         trend_q = select(
             func.date(MessageLog.created_at).label("day"),
@@ -105,6 +119,7 @@ async def api_health_trend(
             daily_data[day_str]["failed"] += row.total - row.successful
             daily_data[day_str]["accounts"].add(row.account_id)
 
+        # Fill missing days
         trend = []
         for i in range(days):
             d = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
@@ -112,8 +127,11 @@ async def api_health_trend(
                 dd = daily_data[d]
                 rate = round((dd["successful"] / dd["total"] * 100), 1) if dd["total"] > 0 else 0
                 trend.append({
-                    "date": d, "total": dd["total"], "successful": dd["successful"],
-                    "failed": dd["failed"], "success_rate": rate,
+                    "date": d,
+                    "total": dd["total"],
+                    "successful": dd["successful"],
+                    "failed": dd["failed"],
+                    "success_rate": rate,
                     "active_accounts": len(dd["accounts"]),
                 })
             else:

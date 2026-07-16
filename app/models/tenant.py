@@ -52,6 +52,9 @@ class Tenant(Base):
     # Telegram Stars wallet (for add-on purchases)
     stars_balance: Mapped[int] = mapped_column(Integer, default=0)
     
+    # Webhook URLs (JSON array of strings)
+    webhook_urls: Mapped[str] = mapped_column(Text, default="[]")
+
     # Features enabled
     can_broadcast: Mapped[bool] = mapped_column(Boolean, default=True)
     can_schedule: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -45,6 +45,20 @@ class Broadcast(Base):
     # Per-recipient pacing override in seconds for delivery_mode "normal" (null = default 60s cooldown pacing).
     delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # ── Campaign linkage ────────────────────────────────────────────
+    # Links this broadcast to a campaign for aggregation/grouping.
+    campaign_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True, default=None, index=True
+    )
+
+    # ── Send-to-Group fields ────────────────────────────────────────
+    # When set, these group chat IDs are resolved to member/chat IDs at dispatch time
+    # instead of using `recipients` directly. Recipients in this mode are the resolved
+    # member list from all specified groups.
+    group_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
+    # Whether group resolution has been performed. Set to True after resolution.
+    groups_resolved: Mapped[bool] = mapped_column(SA_Boolean, default=False, server_default="0")
+
     # ── Inline keyboard buttons ─────────────────────────────────────
     # JSON array: [{"label": "...", "url": "..."}, ...]
     # These are rendered as URL inline buttons on the Telegram message.

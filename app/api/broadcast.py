@@ -12,7 +12,18 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
-from app.schemas.broadcast import BroadcastChildrenRead, BroadcastCreate, BroadcastRead, RECURRING_INTERVAL_VALUES, DeliveryMode
+from app.schemas.broadcast import (
+    BroadcastChildrenRead,
+    BroadcastCreate,
+    BroadcastRead,
+    BroadcastSendGroupRequest,
+    BatchRetryRequest,
+    BatchRetryResult,
+    BroadcastEstimateRequest,
+    BroadcastEstimateResponse,
+    RECURRING_INTERVAL_VALUES,
+    DeliveryMode,
+)
 from app.services.broadcast_processor import process_broadcast
 from app.services.failure_intel import classify_failure
 from app.services.media import save_broadcast_media
@@ -65,6 +76,12 @@ async def create_broadcast(
     inline_buttons: Annotated[
         str | None, Form(description="JSON array of inline buttons, e.g. [{\"label\":\"홈페이지\",\"url\":\"https://...\"}]")
     ] = None,
+    group_ids: Annotated[
+        str | None, Form(description="JSON array of group chat IDs to resolve recipients from, e.g. [\"-100123\"]")
+    ] = None,
+    campaign_id: Annotated[
+        str | None, Form(description="Campaign ID to link this broadcast to")
+    ] = None,
     image: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
@@ -73,9 +90,23 @@ async def create_broadcast(
     await require_broadcast_capacity(db, identity)
 
     try:
-        recipients_list = json.loads(recipients)
+        recipients_list = json.loads(recipients) if recipients else []
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="recipients는 JSON 배열이어야 합니다.")
+
+    # Parse group_ids
+    parsed_group_ids: list[str] | None = None
+    if group_ids is not None and group_ids.strip():
+        try:
+            parsed_list = json.loads(group_ids.strip())
+            if not isinstance(parsed_list, list):
+                raise ValueError("group_ids must be a JSON array")
+            parsed_group_ids = [str(g) for g in parsed_list]
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"group_ids 형식이 올바르지 않습니다: {exc}",
+            )
 
     # Parse recurring_interval_minutes
     recurring_val: int | None = None
@@ -145,6 +176,13 @@ async def create_broadcast(
                 detail=f"inline_buttons 형식이 올바르지 않습니다: {exc}",
             )
 
+    # Validate: need at least recipients or group_ids
+    if not recipients_list and not parsed_group_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="recipients 또는 group_ids 중 하나는 필수입니다.",
+        )
+
     try:
         payload = BroadcastCreate(
             account_id=account_id,
@@ -156,6 +194,8 @@ async def create_broadcast(
             reply_to_msg_id=parsed_reply_to_id,
             delay_seconds=parsed_delay_seconds,
             inline_buttons=parsed_inline_buttons,
+            group_ids=parsed_group_ids,
+            campaign_id=campaign_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
@@ -186,6 +226,136 @@ async def create_broadcast(
         background_tasks.add_task(process_broadcast, broadcast.id)
 
     return broadcast
+
+
+# ── Send-to-Group endpoint ─────────────────────────────────────────
+
+
+@router.post("/send-group", response_model=BroadcastRead, status_code=status.HTTP_202_ACCEPTED)
+async def send_to_group(
+    payload: BroadcastSendGroupRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Send a broadcast to all members of one or more Telegram groups.
+
+    Group member lists are resolved at dispatch time (not creation time),
+    ensuring fresh recipient lists. The resolved member IDs are stored in
+    ``recipients`` after resolution.
+    """
+    await require_account_tenant_access(payload.account_id, db, identity)
+    await require_broadcast_capacity(db, identity)
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    now = broadcast_crud.utcnow_naive()
+    scheduled_for = _to_naive_utc(payload.scheduled_at) if payload.scheduled_at else None
+    is_immediate = scheduled_for is None or scheduled_for <= now
+
+    if is_immediate:
+        wait_seconds = await broadcast_crud.seconds_until_next_allowed_broadcast(db, payload.account_id)
+        if wait_seconds > 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"발송 제한: {int(wait_seconds) + 1}초 후 다시 시도해주세요 (계정당 1분에 1회).",
+            )
+
+    try:
+        create_payload = BroadcastCreate(
+            account_id=payload.account_id,
+            message=payload.message,
+            recipients=[],
+            scheduled_at=payload.scheduled_at,
+            delivery_mode=payload.delivery_mode,
+            delay_seconds=payload.delay_seconds,
+            inline_buttons=payload.inline_buttons,
+            group_ids=payload.group_ids,
+            campaign_id=payload.campaign_id,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
+
+    broadcast = await broadcast_crud.create_broadcast(
+        db, create_payload, media_path=None, scheduled_at=None if is_immediate else scheduled_for
+    )
+
+    if is_immediate:
+        background_tasks.add_task(process_broadcast, broadcast.id)
+
+    return broadcast
+
+
+# ── Broadcast estimate ─────────────────────────────────────────────
+
+
+@router.post("/estimate", response_model=BroadcastEstimateResponse)
+async def estimate_broadcast_delivery(
+    payload: BroadcastEstimateRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Estimate how long a broadcast will take to deliver.
+
+    Accounts for delivery mode, inter-message delay, and the 1-minute
+    per-account rate limit. Returns estimated time in seconds and a
+    human-readable string.
+    """
+    await require_account_tenant_access(payload.account_id, db, identity)
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    n = payload.recipient_count
+
+    if payload.delivery_mode == "bulk":
+        # Bulk: 0.3s per recipient
+        per_recipient = 0.3
+    elif payload.delivery_mode == "reply":
+        per_recipient = 1.0
+    elif payload.delay_seconds is not None:
+        per_recipient = float(payload.delay_seconds)
+    else:
+        per_recipient = 60.0  # Normal mode: 1 per minute due to rate limit
+
+    # First message can be sent immediately; subsequent ones have delays
+    total_seconds = int((n - 1) * per_recipient) if n > 1 else 1
+    total_seconds = max(total_seconds, 1)
+
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+
+    if minutes > 0:
+        readable = f"약 {minutes}분 {seconds}초 ({total_seconds}초)"
+    else:
+        readable = f"약 {seconds}초"
+
+    return BroadcastEstimateResponse(
+        estimated_seconds=total_seconds,
+        estimated_minutes=minutes,
+        readable=readable,
+    )
+
+
+# ── Batch retry ────────────────────────────────────────────────────
+
+
+@router.post("/batch-retry", response_model=BatchRetryResult)
+async def batch_retry_broadcasts(
+    payload: BatchRetryRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Retry multiple failed broadcasts at once.
+
+    Accepts a list of broadcast IDs and retries each one if it's in "failed"
+    status and has not exceeded the retry limit. Returns per-ID results.
+    """
+    results = await broadcast_crud.batch_retry_broadcasts(db, payload.broadcast_ids, identity)
+    return BatchRetryResult(results=results)
 
 
 @router.post("/{broadcast_id}/retry", response_model=BroadcastRead)
@@ -236,8 +406,6 @@ async def retry_broadcast(
         )
 
     updated = await broadcast_crud.retry_broadcast(db, broadcast_id)
-    # retry_broadcast should succeed since we already checked status and retry_count,
-    # but guard against race conditions.
     if updated is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -263,7 +431,6 @@ async def read_recurring_broadcasts(
     return _enrich_broadcast_list(await broadcast_crud.list_recurring_broadcasts(db, identity=identity))
 
 
-@router.get("/{broadcast_id}", response_model=BroadcastRead)
 @router.get("/{broadcast_id}", response_model=BroadcastRead)
 async def read_broadcast(
     broadcast_id: str,
@@ -324,7 +491,6 @@ async def cancel_broadcast(
     if broadcast is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="발송 작업을 찾을 수 없습니다.")
 
-    # Verify the broadcast's account belongs to the caller's tenant
     await require_account_tenant_access(broadcast.account_id, db, identity)
 
     if broadcast.recurring_interval_minutes is None:

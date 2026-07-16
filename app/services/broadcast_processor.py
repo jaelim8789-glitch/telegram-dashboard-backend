@@ -7,9 +7,30 @@ from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import async_session_maker
 from app.services.delivery import DeliveryRequest, deliver_message
-from app.services.telegram_actions import get_authorized_client
+from app.services.telegram_actions import get_authorized_client, list_group_members
 
 logger = get_logger(__name__)
+
+
+async def resolve_group_ids_to_recipients(account, group_ids: list[str]) -> list[str]:
+    """Resolve Telegram group chat IDs to member user IDs for broadcast sending.
+
+    For each group, fetches the participant list and returns all member chat IDs
+    as strings. Groups the account cannot access are silently skipped with a warning.
+    """
+    all_members: set[str] = set()
+    for gid in group_ids:
+        try:
+            members = await list_group_members(account, gid)
+            for member in members:
+                member_id = str(member.id)
+                all_members.add(member_id)
+            logger.info("group_resolved", group_id=gid, member_count=len(members))
+        except Exception as exc:
+            logger.warning("group_resolve_failed", group_id=gid, error=str(exc))
+            # Skip groups that can't be resolved — continue with others
+            continue
+    return list(all_members)
 
 
 async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False) -> None:
@@ -42,6 +63,29 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                 logger.warning("broadcast_failed_rate_limited", broadcast_id=broadcast_id, account_id=account.id)
                 return
 
+        # ── Send-to-Group resolution ──────────────────────────────────────
+        group_ids = getattr(broadcast, "group_ids", None)
+        if group_ids and not broadcast.groups_resolved:
+            # Resolve group members to recipient list
+            resolved = await resolve_group_ids_to_recipients(account, group_ids)
+            if not resolved:
+                await broadcast_crud.update_broadcast_status(
+                    db, broadcast, status="failed",
+                    error_message="그룹에서 발송 대상을 찾을 수 없습니다. 그룹 접근 권한을 확인해주세요.",
+                )
+                logger.error("broadcast_failed_no_group_members", broadcast_id=broadcast_id, group_ids=group_ids)
+                return
+            broadcast.recipients = resolved
+            broadcast.groups_resolved = True
+            await db.commit()
+            await db.refresh(broadcast)
+            logger.info(
+                "broadcast_groups_resolved",
+                broadcast_id=broadcast_id,
+                group_ids=group_ids,
+                resolved_count=len(resolved),
+            )
+
         is_recurring_parent = (
             broadcast.recurring_interval_minutes is not None
             and broadcast.next_scheduled_at is not None
@@ -49,10 +93,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
         delivery_mode = getattr(broadcast, "delivery_mode", "normal")
 
-        # A retry, a send-now redispatch, or a re-run after a timeout must never
-        # re-send to a recipient who already has a successful message_log row for
-        # this broadcast — otherwise a recipient that succeeded before the retry
-        # (or before the outer timeout fired) gets the message a second time.
         all_recipients_local = broadcast.recipients
         already_succeeded = await broadcast_crud.get_succeeded_recipients(db, broadcast_id)
         recipients_local = (
@@ -61,7 +101,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         )
 
         if already_succeeded and not recipients_local:
-            # Every recipient already has a recorded success — nothing left to send.
             await broadcast_crud.update_broadcast_status(db, broadcast, status="sent")
             logger.info(
                 "broadcast_already_fully_delivered",
@@ -84,10 +123,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         parent_id = broadcast.id if is_recurring_parent else broadcast.parent_broadcast_id
 
     if delivery_mode == "cycle":
-        # Cycle mode: split recipients into batches, one batch per cycle.
-        # Each batch is sent with 1-minute cooldown between batches.
-        # The scheduler handles the timing via recurring_interval_minutes.
-        # For a one-shot cycle send, we just send all with normal pacing.
         async with async_session_maker() as db:
             broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
             if broadcast is not None:
@@ -97,8 +132,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         return
 
     if delivery_mode == "bulk":
-        # Bulk mode: send all recipients immediately with minimal delay (0.3s).
-        # Higher risk of Telegram rate limits / account flags.
         timeout = min(timeout, 600)
 
     reply_to_map: dict[str, int] | None = None
@@ -163,10 +196,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         async with async_session_maker() as db:
             broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
             if broadcast is not None:
-                # The outer wait_for was cancelled mid-delivery, but individual
-                # sends already completed are persisted in message_logs — check
-                # those instead of blanket-failing a broadcast that mostly went
-                # through (matches the any_success/all_success handling below).
                 any_success, all_success, succeeded_count = await broadcast_crud.summarize_message_log_outcomes(
                     db, broadcast_id, total
                 )
@@ -191,9 +220,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         raise
 
     all_success = all(r.status.value == "success" for r in results)
-    # already_succeeded recipients were excluded from this attempt entirely, so a
-    # broadcast with earlier-recorded successes must not be reported as a total
-    # failure just because everything *attempted this round* failed.
     any_success = any(r.status.value == "success" for r in results) or bool(already_succeeded)
     errors = [r.error_message for r in results if r.error_message]
 
@@ -219,12 +245,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
 
 async def process_recurring_parent(parent_broadcast_id: str) -> None:
-    """Handles a recurring parent broadcast being due.
-
-    Creates a child broadcast record and dispatches it using the
-    standard process_broadcast pipeline. After the child completes,
-    the parent's next_scheduled_at is advanced.
-    """
     from datetime import datetime, timezone
 
     async with async_session_maker() as db:
@@ -233,23 +253,16 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
             logger.warning("recurring_parent_not_found", parent_id=parent_broadcast_id)
             return
 
-        # Double-check: still active?
         if parent.status == "cancelled" or parent.is_recurring_paused:
             logger.info("recurring_parent_skipped", parent_id=parent_broadcast_id, status=parent.status)
             return
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Create child broadcast record for history
         child = await broadcast_crud.create_recurring_child_broadcast(db, parent, now)
         child_id = child.id
         account_id = parent.account_id
 
-    # CRITICAL: Advance next_scheduled_at BEFORE dispatching the child.
-    # If the process crashes after child creation but before rescheduling,
-    # the parent's next_scheduled_at stays in the past and the next tick
-    # would create a SECOND child — duplicate execution.  Advancing here
-    # ensures at-most-one child per tick, even on crash.
     async with async_session_maker() as db:
         parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_broadcast_id)
         if parent is not None:
@@ -266,5 +279,4 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
         account_id=account_id,
     )
 
-    # Process the child broadcast (skip rate limit since it's a scheduler dispatch)
     await process_broadcast(child_id, skip_rate_limit=True)
