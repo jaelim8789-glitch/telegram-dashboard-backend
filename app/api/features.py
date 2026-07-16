@@ -11,7 +11,8 @@ from app.api.deps import get_current_identity, require_tenant_access
 from app.core.logging import get_logger
 from app.database import get_db, async_session_maker
 from app.models.account import Account
-from app.models.message_template import FollowUpRule, MessageTemplate, TeamMember
+from app.models.message_template import FollowUpRule, MessageTemplate
+from app.models.team import TeamMember
 from app.models.tenant import UsageRecord
 
 router = APIRouter(prefix="/api/features", tags=["features"])

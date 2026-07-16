@@ -48,16 +48,3 @@ class FollowUpRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-
-class TeamMember(Base):
-    """다중 사용자(팀) 기능"""
-    
-    __tablename__ = "team_members"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
-    username: Mapped[str] = mapped_column(String(100))
-    role: Mapped[str] = mapped_column(String(20), default="operator")  # admin, operator, viewer
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

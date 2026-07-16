@@ -10,8 +10,9 @@ from app.models.group_search import GroupJoinLog, GroupSearchResult
 from app.models.guide_hub import GuideHubMessage
 from app.models.join_queue import JoinQueueConfig, JoinQueueItem
 from app.models.message_log import MessageLog
-from app.models.message_template import FollowUpRule, MessageTemplate, TeamMember
+from app.models.message_template import FollowUpRule, MessageTemplate
 from app.models.reply_macro import ReplyMacro, ReplyMacroLog
+from app.models.team import TeamMember
 from app.models.telegram_verification import TelegramChannelVerification
 from app.models.session import UserSession
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord

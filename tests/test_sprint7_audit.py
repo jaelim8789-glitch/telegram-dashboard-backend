@@ -78,7 +78,8 @@ def test_tenant_isolation_matrix():
     from app.models.reply_macro import ReplyMacro
     from app.models.broadcast import Broadcast
     from app.models.group_search import GroupSearchResult
-    from app.models.message_template import MessageTemplate, FollowUpRule, TeamMember
+    from app.models.message_template import MessageTemplate, FollowUpRule
+    from app.models.team import TeamMember
     from app.models.tenant import UsageRecord, Lead
 
     assert hasattr(MessageTemplate, "tenant_id")
