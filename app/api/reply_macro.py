@@ -47,6 +47,7 @@ async def create_macro(
     fixed_time: Annotated[str | None, Form()] = None,
     max_sends_per_day: Annotated[int, Form()] = 10,
     is_active: Annotated[bool, Form()] = True,
+    reply_to_message_id: Annotated[int | None, Form()] = None,
     file: Annotated[UploadFile | None, File()] = None,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
@@ -69,6 +70,7 @@ async def create_macro(
             fixed_time=fixed_time or None,
             max_sends_per_day=max_sends_per_day,
             is_active=is_active,
+            reply_to_message_id=reply_to_message_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())

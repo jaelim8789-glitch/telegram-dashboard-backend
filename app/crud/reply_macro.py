@@ -28,6 +28,7 @@ async def create_macro(
         fixed_time=data.fixed_time,
         max_sends_per_day=data.max_sends_per_day,
         is_active=data.is_active,
+        reply_to_message_id=getattr(data, 'reply_to_message_id', None),
         media_path=media_path,
     )
     db.add(macro)
@@ -82,6 +83,8 @@ async def get_macro(db: AsyncSession, macro_id: str) -> ReplyMacro | None:
 
 async def update_macro(db: AsyncSession, macro: ReplyMacro, data: ReplyMacroUpdate) -> ReplyMacro:
     update_data = data.model_dump(exclude_unset=True)
+    if "reply_to_message_id" in update_data and update_data["reply_to_message_id"] is None:
+        update_data["reply_to_message_id"] = None
     if "target_chats" in update_data and isinstance(update_data["target_chats"], list):
         update_data["target_chats"] = json.dumps(update_data["target_chats"])
     for field, value in update_data.items():

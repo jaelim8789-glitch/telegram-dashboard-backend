@@ -46,6 +46,9 @@ class ReplyMacro(Base):
 
     # Daily limit: max sends per day across all targets
     max_sends_per_day: Mapped[int] = mapped_column(Integer, default=10)
+    
+    # reply_to_message_id: optional fixed message ID to reply to
+    reply_to_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Last sent timestamp (to enforce interval)
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

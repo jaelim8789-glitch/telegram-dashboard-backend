@@ -65,28 +65,41 @@ async def execute_reply_macro(macro_id: str) -> None:
         logger.warning("reply_macro_skipped", macro_id=macro_id, reason="no_targets")
         return
 
-    # Fetch latest messages from each target to reply to them
-    # (mirrors broadcast_processor.py "reply" delivery_mode logic)
-    reply_to_map: dict[str, int] | None = None
+    # Check if macro has a stored reply_to_message_id
+    macro_reply_to_id = getattr(macro, 'reply_to_message_id', None)
+    
+    reply_to_map = None
     try:
         client = await get_authorized_client(account)
-        reply_to_map = {}
-        for recipient in target_chats:
-            try:
-                cleaned = recipient.lstrip("-")
-                target = int(recipient) if cleaned.isdigit() else recipient
-                messages = await client.get_messages(target, limit=1)
-                if messages:
-                    reply_to_map[recipient] = messages[0].id
-            except Exception as exc:
-                logger.warning(
-                    "reply_macro_fetch_failed",
-                    recipient=recipient,
-                    error=str(exc),
-                )
+        
+        if macro_reply_to_id is not None:
+            logger.info("reply_macro: using stored reply_to_message_id=%s for all targets", macro_reply_to_id)
+            reply_to_map = {r: macro_reply_to_id for r in target_chats}
+        else:
+            # Fetch latest messages from each target to reply to them
+            # (mirrors broadcast_processor.py "reply" delivery_mode logic)
+            reply_to_map = {}
+            for recipient in target_chats:
+                try:
+                    cleaned = recipient.lstrip("-")
+                    target = int(recipient) if cleaned.isdigit() else recipient
+                    messages = await client.get_messages(target, limit=1)
+                    if messages:
+                        reply_to_map[recipient] = messages[0].id
+                        logger.info("reply_macro: fetched latest msg_id=%s for target=%s", messages[0].id, recipient)
+                    else:
+                        logger.warning("reply_macro: no messages found for target=%s", recipient)
+                except Exception as exc:
+                    logger.warning(
+                        "reply_macro_fetch_failed",
+                        recipient=recipient,
+                        error=str(exc),
+                    )
     except AccountNotAuthenticatedError:
         logger.warning("reply_macro_skipped_auth", macro_id=macro_id)
         return
+    
+    logger.info("reply_macro: reply_to_map=%s", reply_to_map)
 
     # Use canonical delivery pipeline
     request = DeliveryRequest(

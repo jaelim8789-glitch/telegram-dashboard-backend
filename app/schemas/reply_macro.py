@@ -14,6 +14,7 @@ class ReplyMacroCreate(BaseModel):
     fixed_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$", description="HH:MM format")
     max_sends_per_day: int = Field(default=10, ge=1)
     is_active: bool = True
+    reply_to_message_id: int | None = None
 
 
 class ReplyMacroUpdate(BaseModel):
@@ -25,6 +26,7 @@ class ReplyMacroUpdate(BaseModel):
     fixed_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     max_sends_per_day: int | None = Field(default=None, ge=1)
     is_active: bool | None = None
+    reply_to_message_id: int | None = None
 
 
 class ReplyMacroRead(BaseModel):
@@ -38,6 +40,7 @@ class ReplyMacroRead(BaseModel):
     message_content: str
     media_path: str | None
     schedule_type: str
+    reply_to_message_id: int | None = None
     interval_hours: int
     fixed_time: str | None
     max_sends_per_day: int
