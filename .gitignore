@@ -13,3 +13,16 @@ htmlcov/
 .ruff_cache/
 
 test_telemon.db
+nul  
+.kilo/  
+.next/  
+data/  
+dist/  
+e2e/  
+node_modules/  
+sessions/  
+test-results/  
+*.db  
+tsconfig.tsbuildinfo  
+next-env.d.ts  
+telegram-dashboard-backend/  
