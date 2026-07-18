@@ -23,6 +23,7 @@ from app.api.batch import router as batch_router
 from app.api.admin import router as admin_router
 from app.api.ai_assist import router as ai_assist_router
 from app.api.ai_copilot import router as ai_copilot_router
+from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
 from app.api.billing import router as billing_router
@@ -186,6 +187,7 @@ app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
 app.include_router(ai_assist_router, dependencies=_auth_required)
 app.include_router(ai_copilot_router, dependencies=_auth_required)
+app.include_router(ai_router, dependencies=_auth_required)
 app.include_router(join_queue_router, dependencies=_auth_required)
 app.include_router(message_template_router, dependencies=_auth_required)
 app.include_router(campaign_router, dependencies=_auth_required)
