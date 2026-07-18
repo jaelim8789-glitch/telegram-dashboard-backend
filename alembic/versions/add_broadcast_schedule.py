@@ -1,9 +1,12 @@
 """add broadcast schedule tables and validation columns
 
 Revision ID: add_broadcast_schedule
-Revises: merge_session_and_inline_buttons
+Revises: create_campaigns_table
 Create Date: 2026-07-17 04:06:00.000000
 
+Re-parented onto create_campaigns_table (was: merge_session_and_inline_buttons
+directly) — this migration's create_table has a FK to campaigns.id, but no
+migration ever created that table until create_campaigns_table was added.
 """
 from typing import Sequence, Union
 
@@ -12,7 +15,7 @@ import sqlalchemy as sa
 
 
 revision: str = "add_broadcast_schedule"
-down_revision: Union[str, Sequence[str], None] = "merge_session_and_inline_buttons"
+down_revision: Union[str, Sequence[str], None] = "create_campaigns_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
