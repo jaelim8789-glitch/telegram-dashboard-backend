@@ -19,10 +19,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "reply_macros",
-        sa.Column("reply_to_message_id", sa.Integer(), nullable=True),
-    )
+    # Idempotent: on at least one deployed environment this column was already
+    # added out-of-band (ahead of this migration being written), which made a
+    # straight add_column() crash the whole upgrade chain with
+    # DuplicateColumnError and take the backend down. Guard against that
+    # drift instead of assuming a clean prior state.
+    conn = op.get_bind()
+    existing_columns = {col["name"] for col in sa.inspect(conn).get_columns("reply_macros")}
+    if "reply_to_message_id" not in existing_columns:
+        op.add_column(
+            "reply_macros",
+            sa.Column("reply_to_message_id", sa.Integer(), nullable=True),
+        )
 
 
 def downgrade() -> None:
