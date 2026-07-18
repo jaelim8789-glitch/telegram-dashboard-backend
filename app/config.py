@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     # How many past turns (user+assistant pairs) to include as context for DeepSeek.
     ai_chat_history_turns: int = 10
 
+    # Graphiti 장기 메모리 (off by default). Set graphiti_enabled=true and fill
+    # the connection fields to activate temporal context graph memory for AI features.
+    graphiti_enabled: bool = False
+    graphiti_uri: str = ""
+    graphiti_user: str = ""
+    graphiti_password: str = ""
+    graphiti_group_id: str = "default"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("database_url")

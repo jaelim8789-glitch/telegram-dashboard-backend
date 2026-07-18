@@ -128,6 +128,47 @@ def _build_tenant_context(tenant_id: str | None) -> str:
     return "\n".join(parts)
 
 
+_memory_provider = None
+
+
+def _get_memory_provider():
+    global _memory_provider
+    if _memory_provider is None:
+        from app.services.ai_memory import get_ai_memory_provider
+
+        _memory_provider = get_ai_memory_provider()
+    return _memory_provider
+
+
+async def _get_memory_context(tenant_id: str, query: str, limit: int = 3) -> str:
+    provider = _get_memory_provider()
+    if provider is None:
+        return ""
+    try:
+        memories = await provider.search(tenant_id, query, limit=limit)
+        if not memories:
+            return ""
+        lines = ["[과거 AI 대화/인사이트]"]
+        for m in memories:
+            fact = m.get("fact") or m.get("task") or ""
+            if fact:
+                lines.append(f"- {fact}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+async def _store_memory(tenant_id: str, user_message: str, assistant_reply: str) -> None:
+    provider = _get_memory_provider()
+    if provider is None:
+        return
+    try:
+        episode = f"User: {user_message}\nAssistant: {assistant_reply}"
+        await provider.add_episode(tenant_id, episode, {"type": "copilot_chat"})
+    except Exception:
+        pass
+
+
 async def _gather_context_data(
     db: AsyncSession,
     identity: Identity,
@@ -211,12 +252,17 @@ async def copilot_chat(
         db, identity, days=payload.context.days, focus=payload.context.focus
     )
 
+    tenant_id = identity.tenant_id or "anonymous"
+    memory_context = await _get_memory_context(tenant_id, payload.message, limit=3)
+
     system_prompt = _SYSTEM_COPILOT_PROMPT + (
         "\n\n[현재 TeleMon 운영 컨텍스트]\n"
         f"{context_text}"
         if context_text
         else "\n\n(컨텍스트 데이터 없음 — 일반적인 조언 제공)"
     )
+    if memory_context:
+        system_prompt += f"\n\n{memory_context}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -229,6 +275,8 @@ async def copilot_chat(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI Copilot 응답 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
         )
+
+    await _store_memory(tenant_id, payload.message, reply)
 
     return CopilotChatResponse(
         reply=reply.strip(),
@@ -257,12 +305,18 @@ async def one_click_action(
     tenant_id = payload.tenant_id or identity.tenant_id
     details: list[dict] = []
     all_ok = True
+    memory_ctx = ""
 
     try:
         context_text, sources = await _gather_context_data(db, identity, days=days, focus=None)
     except Exception as exc:
         context_text = f"(컨텍스트 수집 실패: {exc})"
         sources = []
+
+    if tenant_id:
+        memory_ctx = await _get_memory_context(tenant_id, payload.action, limit=3)
+        if memory_ctx:
+            context_text = f"{memory_ctx}\n\n{context_text}" if context_text else memory_ctx
 
     if payload.action == "health_check":
         system_prompt = (
@@ -455,6 +509,9 @@ async def get_recommendations(
     """
     context_text, sources = await _gather_context_data(db, identity, days=days, focus=None)
 
+    tenant_id = identity.tenant_id or "anonymous"
+    memory_context = await _get_memory_context(tenant_id, "recommendations", limit=3)
+
     system_prompt = (
         "너는 TeleMon AI 추천 엔진이야. 운영 데이터를 분석해서 "
         "우선순위가 매겨진 추천 항목들을 제공해줘.\n\n"
@@ -547,6 +604,9 @@ async def smart_send_time(
     """
     context_text, sources = await _gather_context_data(db, identity, days=30, focus="delivery")
 
+    tenant_id = identity.tenant_id or "anonymous"
+    memory_context = await _get_memory_context(tenant_id, "smart send time", limit=3)
+
     system_prompt = (
         "너는 TeleMon 발송 시간 최적화 전문가야. "
         "전달 데이터와 일반적인 텔레그램 마케팅 모범 사례를 바탕으로 "
@@ -567,6 +627,8 @@ async def smart_send_time(
         "- 한국어로 reasoning 작성"
     )
     user_prompt = f"[전달 데이터 - 최근 30일]\n{context_text}" if context_text else "(전달 데이터 없음 — 일반적인 패턴 기반 추천)"
+    if memory_context:
+        user_prompt = f"{memory_context}\n\n{user_prompt}"
 
     messages = [
         {"role": "system", "content": system_prompt},
