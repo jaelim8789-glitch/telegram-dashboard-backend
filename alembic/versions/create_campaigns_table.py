@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.create_table(
         "campaigns",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), index=True, nullable=False),
+        sa.Column("tenant_id", sa.String(36), nullable=False),
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("description", sa.Text, nullable=True),
         sa.Column("status", sa.String(20), nullable=False, server_default="draft"),
@@ -40,6 +40,10 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime, nullable=True),
         sa.Column("completed_at", sa.DateTime, nullable=True),
     )
+    # Columns are NOT declared index=True above (that would make create_table
+    # auto-generate these same indexes and collide with the explicit calls
+    # below - verified against DuplicateTableError while testing this
+    # migration).
     op.create_index("ix_campaigns_tenant_id", "campaigns", ["tenant_id"])
     op.create_index("ix_campaigns_status", "campaigns", ["status"])
 
