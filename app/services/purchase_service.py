@@ -28,6 +28,30 @@ def generate_payment_ref() -> str:
     return f"TM-{secrets.token_hex(4).upper()}"
 
 
+# telegram_user_id -> referral_code, set by the bot's /start ref_<code> deep
+# link before any Tenant exists yet for that user. Consumed the moment a
+# Tenant is actually created below. Process-local (single polling instance),
+# same pattern as telegram_bot_service._active_ai_chat_users.
+_pending_referrals: dict[int, str] = {}
+
+
+def set_pending_referral(telegram_user_id: int, referral_code: str) -> None:
+    _pending_referrals[telegram_user_id] = referral_code
+
+
+def _pop_pending_referral(telegram_user_id: int) -> str | None:
+    return _pending_referrals.pop(telegram_user_id, None)
+
+
+def _telegram_user_id_from_phone(phone: str) -> int | None:
+    if not phone.startswith("tg_"):
+        return None
+    try:
+        return int(phone[len("tg_"):])
+    except ValueError:
+        return None
+
+
 async def upsert_pending_tenant(
     db: AsyncSession,
     plan: str,
@@ -51,11 +75,23 @@ async def upsert_pending_tenant(
     tenant = result.scalar_one_or_none()
 
     if tenant is None:
+        referred_by = None
+        tg_id = _telegram_user_id_from_phone(phone) if phone else None
+        if tg_id is not None:
+            referral_code = _pop_pending_referral(tg_id)
+            if referral_code:
+                referrer = (
+                    await db.execute(select(Tenant).where(Tenant.referral_code == referral_code))
+                ).scalar_one_or_none()
+                if referrer is not None:
+                    referred_by = referrer.id
+
         tenant = Tenant(
             phone=phone or f"pending-{payment_ref}",
             plan=plan,
             subscription_status="pending",
             payment_ref=payment_ref,
+            referred_by=referred_by,
         )
         db.add(tenant)
     else:

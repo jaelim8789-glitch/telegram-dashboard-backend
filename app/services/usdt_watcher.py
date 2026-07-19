@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 
 USDT_WALLET_ADDRESS = settings.usdt_wallet_address
 USDT_NETWORK = settings.usdt_network
+REFERRAL_COMMISSION_RATE = 0.10
 
 # TRC20 USDT contract address on Tron mainnet
 USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
@@ -193,6 +194,24 @@ async def process_incoming_tx(tx: dict) -> dict:
         days = 90 if billing == "quarterly" else 30
         tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
         await apply_plan_limits(db, tenant, plan_name)
+
+        # Referral commission — first real payment only (referral_rewarded guards
+        # against a renewal re-triggering this). Same payment method as the
+        # referred tenant paid with: USDT commission credited to the referrer's
+        # ledger (referral_earnings, cents) — no on-chain transfer, payout is
+        # manual/offline against that ledger.
+        if tenant.referred_by and not tenant.referral_rewarded:
+            referrer = await db.get(Tenant, tenant.referred_by)
+            if referrer is not None:
+                commission_cents = int(amount_cents * REFERRAL_COMMISSION_RATE)
+                referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
+                tenant.referral_rewarded = True
+                logger.info(
+                    "referral_commission_credited",
+                    referrer_tenant_id=referrer.id,
+                    referred_tenant_id=tenant.id,
+                    commission_cents=commission_cents,
+                )
 
         raw_key = f"sk-{secrets.token_urlsafe(32)}"
         api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True, tenant_id=tenant.id)

@@ -8,7 +8,7 @@ from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.models.tenant import PaymentRecord
-from app.services import ai_chat_service, bot_account_service
+from app.services import ai_chat_service, bot_account_service, purchase_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
@@ -53,6 +53,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("📜 구매내역", callback_data="purchase:history")],
             [InlineKeyboardButton("✅ 출석체크", callback_data="checkin:do")],
+            [InlineKeyboardButton("🎁 추천인 프로그램", callback_data="referral:info")],
             [InlineKeyboardButton("🤖 자동 응답 관리", callback_data="autoreply_menu")],
             [
                 InlineKeyboardButton("🆘 고객센터", callback_data="support:info"),
@@ -420,6 +421,43 @@ async def checkin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.edit_message_text("\n".join(lines), reply_markup=_back_to_main_keyboard())
 
 
+async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "🎁 추천인 프로그램" — show the user's code, share link, and earnings."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        tenant = await bot_account_service.get_referral_info(db, telegram_user_id)
+
+    if tenant is None:
+        await query.edit_message_text(
+            "🎁 추천인 프로그램은 요금제를 시작한 후 이용할 수 있습니다.\n"
+            "먼저 무료체험 또는 요금제를 시작해주세요.",
+            reply_markup=_back_to_main_keyboard(),
+        )
+        return
+
+    bot_username = settings.telegram_bot_username
+    link = f"https://t.me/{bot_username}?start=ref_{tenant.referral_code}" if bot_username else None
+    lines = [
+        "🎁 추천인 프로그램",
+        f"내 추천코드: `{tenant.referral_code}`",
+    ]
+    if link:
+        lines.append(f"공유 링크: {link}")
+    lines.append(f"\n누적 보상: ${tenant.referral_earnings / 100:.2f}")
+    lines.append("친구가 이 링크로 가입 후 첫 결제를 완료하면 보상이 지급됩니다.")
+
+    await query.edit_message_text(
+        "\n".join(lines), parse_mode="Markdown", reply_markup=_back_to_main_keyboard()
+    )
+
+
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle "🆘 고객센터" — static contact info."""
     query = update.callback_query
@@ -539,6 +577,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if telegram_user_id is None:
         return
 
+    if token.startswith("ref_"):
+        purchase_service.set_pending_referral(telegram_user_id, token[len("ref_"):])
+        await update.message.reply_text(
+            "🎁 추천 링크로 오셨네요! 요금제를 시작하시면 추천인에게 보상이 지급됩니다.\n\n"
+            "안녕하세요! TeleMon 봇입니다.\n아래 메뉴에서 원하는 기능을 선택해주세요.",
+            reply_markup=_main_menu_keyboard(),
+        )
+        return
+
     async with async_session_maker() as db:
         linked = await verification_crud.link_telegram_user(db, token, telegram_user_id)
 
@@ -570,6 +617,7 @@ async def start_bot() -> None:
     application.add_handler(CallbackQueryHandler(renew_callback, pattern=r"^renew:"))
     application.add_handler(CallbackQueryHandler(purchase_history_callback, pattern=r"^purchase:"))
     application.add_handler(CallbackQueryHandler(checkin_callback, pattern=r"^checkin:"))
+    application.add_handler(CallbackQueryHandler(referral_callback, pattern=r"^referral:"))
     application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^support:"))
     application.add_handler(CallbackQueryHandler(notice_callback, pattern=r"^notice:"))
     application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))

@@ -174,6 +174,10 @@ async def do_checkin(db: AsyncSession, telegram_user_id: int) -> CheckinResult:
     )
 
 
+async def get_referral_info(db: AsyncSession, telegram_user_id: int) -> Tenant | None:
+    return await _resolve_tenant(db, telegram_user_id)
+
+
 async def get_checkin_leaderboard(db: AsyncSession, limit: int = 10) -> list[tuple[int, int]]:
     """Top streaks, no PII — just (rank, streak_days) pairs."""
     result = await db.execute(
