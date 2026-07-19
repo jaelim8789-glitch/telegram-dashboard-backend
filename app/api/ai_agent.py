@@ -16,21 +16,33 @@ logger = get_logger(__name__)
 
 TOOL_PER_TOKEN = 3
 MSG_PER_TOKEN = 1
+EXP_PER_MSG = 10
+EXP_PER_LEVEL = 100
+GOOD_QUESTION_BONUS = 25
+GOOD_QUESTION_MARKER = "[GOOD_QUESTION]"
 
 ROLE_PROMPTS = {
-    "마케팅": "당신은 마케팅 전문가입니다. 효과적인 마케팅 전략과 카피를 제안하고, 실제 텔레그램 발송까지 실행할 수 있습니다.",
-    "웹검색": "당신은 웹 검색 및 정보 분석 전문가입니다. 정확한 정보를 제공하고 필요한 데이터를 수집합니다.",
-    "코딩": "당신은 소프트웨어 개발 전문가입니다. 코드 작성, 디버깅, 아키텍처 조언을 제공합니다.",
-    "스케줄러": "당신은 일정 관리 및 작업 자동화 전문가입니다. 반복 업무를 자동화하는 방법을 제안합니다.",
-    "자유": "당신은 사용자의 개인 AI 비서입니다. 친절하고 전문적으로 모든 작업을 도와줍니다.",
+    "marketing": "당신은 마케팅 전문가입니다. 효과적인 마케팅 전략과 카피를 제안하고, 실제 텔레그램 발송까지 실행할 수 있습니다.",
+    "web_search": "당신은 웹 검색 및 정보 분석 전문가입니다. 정확한 정보를 제공하고 필요한 데이터를 수집합니다.",
+    "coding": "당신은 소프트웨어 개발 전문가입니다. 코드 작성, 디버깅, 아키텍처 조언을 제공합니다.",
+    "scheduler": "당신은 일정 관리 및 작업 자동화 전문가입니다. 반복 업무를 자동화하는 방법을 제안합니다.",
+    "custom": "당신은 사용자의 개인 AI 비서입니다. 친절하고 전문적으로 모든 작업을 도와줍니다.",
 }
 
 
 def _build_system_prompt(agent: AiAgent) -> str:
-    base = ROLE_PROMPTS.get(agent.role, ROLE_PROMPTS["자유"])
+    base = ROLE_PROMPTS.get(agent.role, ROLE_PROMPTS["custom"])
     if agent.system_prompt:
         base += f"\n\n{agent.system_prompt}"
-    base += "\n\n응답에는 필요한 경우 실행 버튼을 포함할 수 있습니다. 버튼은 다음과 같은 형식으로 표시합니다: [📨 발송] [📅 예약] [🔍 검색] [📊 분석] [⚙️ 설정]"
+    base += (
+        "\n\n응답에는 필요한 경우 실행 버튼을 포함할 수 있습니다. 버튼은 다음과 같은 형식으로 표시합니다: "
+        "[📨 발송] [📅 예약] [🔍 검색] [📊 분석] [⚙️ 설정]\n\n"
+        "상황 인지형 예약 제안: 사용자의 요청이 특정 시간에 메시지를 보내거나 반복 작업을 필요로 하면, "
+        "응답에 [📅 예약] 버튼을 포함해 예약 기능을 제안하세요. 실행은 사용자가 버튼을 눌러야 합니다.\n\n"
+        "사용자 품질 마커: 사용자의 질문이 매우 구체적이고 깊이 있는 통찰을 요구하는 좋은 질문이라면, "
+        "응답의 맨 끝에 " + GOOD_QUESTION_MARKER + " 마커를 한 줄로 추가하세요. 이 마커는 사용자에게는 표시되지 않습니다. "
+        "단순한 인사나 짧은 질문에는 절대 추가하지 마세요."
+    )
     return base
 
 
@@ -66,7 +78,8 @@ async def create_agent(
     return {
         "id": agent.id, "name": agent.name, "role": agent.role,
         "system_prompt": agent.system_prompt, "is_template": agent.is_template,
-        "total_messages": agent.total_messages, "created_at": agent.created_at.isoformat(),
+        "total_messages": agent.total_messages, "level": agent.level, "exp": agent.exp,
+        "created_at": agent.created_at.isoformat(),
     }
 
 
@@ -81,7 +94,8 @@ async def list_agents(
     )
     return [
         {"id": a.id, "name": a.name, "role": a.role, "is_template": a.is_template,
-         "total_messages": a.total_messages, "created_at": a.created_at.isoformat()}
+         "total_messages": a.total_messages, "level": a.level, "exp": a.exp,
+         "created_at": a.created_at.isoformat()}
         for a in result.scalars().all()
     ]
 
@@ -133,7 +147,7 @@ async def create_chat(
 ):
     """새 채팅방 생성"""
     agent = await db.get(AiAgent, agent_id)
-    if agent is None:
+    if agent is None or agent.owner_id != identity.tenant_id:
         raise HTTPException(status_code=404, detail="Agent를 찾을 수 없습니다.")
     chat = AiChat(agent_id=agent_id, tenant_id=identity.tenant_id, title=body.get("title", ""))
     db.add(chat)
@@ -168,7 +182,8 @@ async def get_messages(
     return [
         {"id": m.id, "role": m.role, "content": m.content,
          "tool_name": m.tool_name, "tool_button_label": m.tool_button_label,
-         "tool_payload": m.tool_payload, "created_at": m.created_at.isoformat()}
+         "tool_payload": m.tool_payload, "tokens_used": m.tokens_used,
+         "created_at": m.created_at.isoformat()}
         for m in result.scalars().all()
     ]
 
@@ -197,7 +212,7 @@ async def send_message(
     from app.core.plans import get_plan_limits
     from app.models.tenant import Tenant
     tenant = await db.get(Tenant, identity.tenant_id)
-    limit = get_plan_limits(tenant.plan_id if tenant else "free").get("monthly_ai_chat_limit", 0)
+    limit = get_plan_limits(tenant.plan if tenant else "free").get("monthly_ai_chat_limit", 0)
     if limit > 0 and used + MSG_PER_TOKEN > limit:
         raise HTTPException(status_code=429, detail="월간 AI 채팅 한도를 초과했습니다.")
 
@@ -222,13 +237,35 @@ async def send_message(
         answer = "죄송합니다. 응답 생성에 실패했습니다."
 
     # AI 응답 저장
-    db.add(AiMessage(chat_id=chat_id, role="agent", content=answer, tokens_used=tokens))
+    cleaned_answer = answer
+    good_question = False
+    if answer.endswith(GOOD_QUESTION_MARKER):
+        cleaned_answer = answer[: -len(GOOD_QUESTION_MARKER)].rstrip()
+        good_question = True
+
+    db.add(AiMessage(chat_id=chat_id, role="agent", content=cleaned_answer, tokens_used=tokens))
+
+    # EXP 적립
+    old_level = agent.level
+    exp_gained = EXP_PER_MSG + (tokens // 10)
+    if good_question:
+        exp_gained += GOOD_QUESTION_BONUS
+    agent.exp += exp_gained
     agent.total_messages += 1
+    while agent.exp >= EXP_PER_LEVEL * agent.level:
+        agent.exp -= EXP_PER_LEVEL * agent.level
+        agent.level += 1
+    level_up = agent.level > old_level
+
     await db.commit()
 
     await record_usage(identity.tenant_id, "ai_chat", MSG_PER_TOKEN)
 
-    return {"role": "agent", "content": answer, "tokens_used": tokens}
+    return {
+        "role": "agent", "content": cleaned_answer, "tokens_used": tokens,
+        "exp_gained": exp_gained, "level_up": level_up,
+        "new_level": agent.level, "exp": agent.exp,
+    }
 
 
 @router.post("/chats/{chat_id}/message/stream")
@@ -272,12 +309,37 @@ async def send_message_stream(
         # 전체 응답 DB 저장
         from app.database import async_session_maker
         async with async_session_maker() as s:
-            s.add(AiMessage(chat_id=chat_id, role="agent", content=full, tokens_used=len(full) // 4))
-            agent.total_messages += 1
+            agent_ref = await s.get(AiAgent, chat.agent_id)
+            cleaned = full
+            good_question = False
+            if full.rstrip().endswith(GOOD_QUESTION_MARKER):
+                cleaned = full.rstrip()[: -len(GOOD_QUESTION_MARKER)].rstrip()
+                good_question = True
+
+            tokens_used = len(cleaned) // 4
+            s.add(AiMessage(chat_id=chat_id, role="agent", content=cleaned, tokens_used=tokens_used))
+
+            old_level = agent_ref.level
+            exp_gained = EXP_PER_MSG + (tokens_used // 10)
+            if good_question:
+                exp_gained += GOOD_QUESTION_BONUS
+            agent_ref.exp += exp_gained
+            agent_ref.total_messages += 1
+            while agent_ref.exp >= EXP_PER_LEVEL * agent_ref.level:
+                agent_ref.exp -= EXP_PER_LEVEL * agent_ref.level
+                agent_ref.level += 1
+            level_up = agent_ref.level > old_level
+
             await s.commit()
             await record_usage(identity.tenant_id, "ai_chat", MSG_PER_TOKEN)
 
-        yield json.dumps({"done": True}) + "\n"
+            yield json.dumps({
+                "done": True,
+                "exp_gained": exp_gained,
+                "level_up": level_up,
+                "new_level": agent_ref.level,
+                "exp": agent_ref.exp,
+            }) + "\n"
 
     return StreamingResponse(
         _stream(),
@@ -298,6 +360,9 @@ async def execute_tool(
     msg = await db.get(AiMessage, message_id)
     if msg is None or msg.role != "agent":
         raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
+    chat = await db.get(AiChat, msg.chat_id)
+    if chat is None or chat.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
     if not msg.tool_name:
         raise HTTPException(status_code=400, detail="실행할 Tool이 없습니다.")
 
@@ -306,7 +371,7 @@ async def execute_tool(
     from app.core.plans import get_plan_limits
     from app.models.tenant import Tenant
     tenant = await db.get(Tenant, identity.tenant_id)
-    limit = get_plan_limits(tenant.plan_id if tenant else "free").get("monthly_ai_chat_limit", 0)
+    limit = get_plan_limits(tenant.plan if tenant else "free").get("monthly_ai_chat_limit", 0)
     if limit > 0 and used + TOOL_PER_TOKEN > limit:
         raise HTTPException(status_code=429, detail="월간 AI 채팅 한도를 초과했습니다.")
     await record_usage(identity.tenant_id, "ai_chat", TOOL_PER_TOKEN)
