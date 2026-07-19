@@ -256,6 +256,60 @@ def _get_item_benefit(item: str) -> str:
     return benefits.get(item, "구매가 완료되었습니다.")
 
 
+# ─── Telegram Stars Top-up (native XTR payment) ───────────────────────
+# Fixed packages offered in the bot. 1:1 — the Stars a user pays through
+# Telegram's own payment sheet (currency="XTR") are credited to their
+# internal stars_balance ledger at face value; the ledger just represents
+# "Stars already handed to us", spendable on the STARS_PRICES add-ons above.
+
+STARS_TOPUP_PACKAGES = [100, 500, 1000, 2000]
+
+
+async def credit_stars_from_telegram_payment(
+    tenant_id: str,
+    stars_amount: int,
+    telegram_payment_charge_id: str,
+) -> dict:
+    """Credit stars_balance after a real Telegram Stars payment succeeds.
+
+    Idempotent on telegram_payment_charge_id — Telegram can redeliver the
+    successful_payment update on retry, so a duplicate charge id is a no-op
+    rather than a double credit.
+    """
+    from sqlalchemy import select
+
+    from app.models.tenant import StarsPaymentRecord
+
+    async with async_session_maker() as db:
+        existing = await db.execute(
+            select(StarsPaymentRecord).where(
+                StarsPaymentRecord.telegram_payment_charge_id == telegram_payment_charge_id
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            return {"success": True, "already_processed": True}
+
+        tenant = await db.get(Tenant, tenant_id)
+        if not tenant:
+            return {"success": False, "error": "사용자를 찾을 수 없습니다."}
+
+        tenant.stars_balance = (tenant.stars_balance or 0) + stars_amount
+        db.add(StarsPaymentRecord(
+            tenant_id=tenant_id,
+            telegram_payment_charge_id=telegram_payment_charge_id,
+            stars_amount=stars_amount,
+        ))
+        await db.commit()
+
+        logger.info(
+            "stars_topup_credited",
+            tenant_id=tenant_id,
+            stars_amount=stars_amount,
+            charge_id=telegram_payment_charge_id,
+        )
+        return {"success": True, "stars_balance": tenant.stars_balance}
+
+
 # ─── Add-on Listing ──────────────────────────────────────────────────
 
 

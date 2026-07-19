@@ -1,5 +1,13 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    PreCheckoutQueryHandler,
+    filters,
+)
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -8,7 +16,7 @@ from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.models.tenant import PaymentRecord
-from app.services import ai_chat_service, bot_account_service, purchase_service
+from app.services import ai_chat_service, billing, bot_account_service, purchase_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
@@ -54,6 +62,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📜 구매내역", callback_data="purchase:history")],
             [InlineKeyboardButton("✅ 출석체크", callback_data="checkin:do")],
             [InlineKeyboardButton("🎁 추천인 프로그램", callback_data="referral:info")],
+            [InlineKeyboardButton("⭐ Stars 충전", callback_data="starstopup:menu")],
             [InlineKeyboardButton("🤖 자동 응답 관리", callback_data="autoreply_menu")],
             [
                 InlineKeyboardButton("🆘 고객센터", callback_data="support:info"),
@@ -458,6 +467,138 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+_STARS_TOPUP_PAYLOAD_PREFIX = "stars_topup:"
+
+
+def _stars_topup_menu_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(f"⭐ {amount:,}", callback_data=f"starstopup:buy:{amount}")]
+        for amount in billing.STARS_TOPUP_PACKAGES
+    ]
+    rows.append([InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def starstopup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "⭐ Stars 충전" — real Telegram Stars (XTR) purchase via the
+    native Telegram payment sheet, credited 1:1 to the internal stars_balance
+    ledger. "starstopup:menu" shows package buttons, "starstopup:buy:<amount>"
+    sends the actual invoice."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        tenant = await bot_account_service.get_referral_info(db, telegram_user_id)
+
+    if tenant is None:
+        await query.edit_message_text(
+            "⭐ Stars 충전은 요금제를 시작한 후 이용할 수 있습니다.\n"
+            "먼저 무료체험 또는 요금제를 시작해주세요.",
+            reply_markup=_back_to_main_keyboard(),
+        )
+        return
+
+    data = query.data
+    if data == "starstopup:menu":
+        await query.edit_message_text(
+            "⭐ Stars 충전\n\n"
+            f"현재 보유: {tenant.stars_balance or 0}⭐\n"
+            "충전할 수량을 선택해주세요. 결제는 텔레그램 자체 Stars 결제 화면에서 진행됩니다.",
+            reply_markup=_stars_topup_menu_keyboard(),
+        )
+        return
+
+    # starstopup:buy:<amount>
+    try:
+        amount = int(data.rsplit(":", 1)[-1])
+    except ValueError:
+        amount = 0
+    if amount not in billing.STARS_TOPUP_PACKAGES:
+        await query.edit_message_text("⚠️ 유효하지 않은 충전 옵션입니다.", reply_markup=_back_to_main_keyboard())
+        return
+
+    await context.bot.send_invoice(
+        chat_id=update.effective_chat.id,
+        title=f"TeleMon Stars {amount:,}개",
+        description=f"TeleMon 내 결제(부가기능 구매 등)에 사용할 수 있는 Stars {amount:,}개를 충전합니다.",
+        payload=f"{_STARS_TOPUP_PAYLOAD_PREFIX}{amount}",
+        currency="XTR",
+        prices=[LabeledPrice(f"{amount:,} Stars", amount)],
+        provider_token="",
+    )
+    await query.edit_message_text(
+        f"🧾 {amount:,}⭐ 결제 요청을 보냈습니다. 아래 메시지에서 결제를 완료해주세요.",
+        reply_markup=_back_to_main_keyboard(),
+    )
+
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Answer Telegram's pre-checkout query — required within 10s of the user
+    tapping pay, or the payment sheet shows an error. Re-validates the payload
+    and tenant here since this is the last checkpoint before real money moves."""
+    pcq = update.pre_checkout_query
+    payload = pcq.invoice_payload or ""
+
+    if not payload.startswith(_STARS_TOPUP_PAYLOAD_PREFIX):
+        await pcq.answer(ok=False, error_message="알 수 없는 결제 요청입니다.")
+        return
+
+    try:
+        amount = int(payload[len(_STARS_TOPUP_PAYLOAD_PREFIX):])
+    except ValueError:
+        amount = 0
+
+    if amount not in billing.STARS_TOPUP_PACKAGES or pcq.total_amount != amount:
+        await pcq.answer(ok=False, error_message="유효하지 않은 결제 금액입니다.")
+        return
+
+    async with async_session_maker() as db:
+        tenant = await bot_account_service.get_referral_info(db, pcq.from_user.id)
+    if tenant is None:
+        await pcq.answer(ok=False, error_message="계정을 확인할 수 없습니다. 먼저 요금제를 시작해주세요.")
+        return
+
+    await pcq.answer(ok=True)
+
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle Telegram's successful_payment message — the money has already
+    moved at this point, this just credits stars_balance (idempotently, see
+    billing.credit_stars_from_telegram_payment)."""
+    payment = update.message.successful_payment
+    payload = payment.invoice_payload or ""
+    if not payload.startswith(_STARS_TOPUP_PAYLOAD_PREFIX):
+        return
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        return
+
+    async with async_session_maker() as db:
+        tenant = await bot_account_service.get_referral_info(db, telegram_user_id)
+    if tenant is None:
+        logger.error("stars_topup_no_tenant", telegram_user_id=telegram_user_id, charge_id=payment.telegram_payment_charge_id)
+        return
+
+    result = await billing.credit_stars_from_telegram_payment(
+        tenant.id, payment.total_amount, payment.telegram_payment_charge_id
+    )
+    if not result.get("success"):
+        logger.error("stars_topup_credit_failed", tenant_id=tenant.id, error=result.get("error"))
+        return
+
+    balance = result.get("stars_balance", (tenant.stars_balance or 0) + payment.total_amount)
+    await update.message.reply_text(
+        f"✅ {payment.total_amount:,}⭐ 충전이 완료되었습니다! 현재 보유: {balance:,}⭐",
+        reply_markup=_back_to_main_keyboard(),
+    )
+
+
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle "🆘 고객센터" — static contact info."""
     query = update.callback_query
@@ -618,6 +759,9 @@ async def start_bot() -> None:
     application.add_handler(CallbackQueryHandler(purchase_history_callback, pattern=r"^purchase:"))
     application.add_handler(CallbackQueryHandler(checkin_callback, pattern=r"^checkin:"))
     application.add_handler(CallbackQueryHandler(referral_callback, pattern=r"^referral:"))
+    application.add_handler(CallbackQueryHandler(starstopup_callback, pattern=r"^starstopup:"))
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^support:"))
     application.add_handler(CallbackQueryHandler(notice_callback, pattern=r"^notice:"))
     application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))
