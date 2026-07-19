@@ -263,15 +263,6 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
         child_id = child.id
         account_id = parent.account_id
 
-    async with async_session_maker() as db:
-        parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_broadcast_id)
-        if parent is not None:
-            logger.info(
-                "recurring_parent_prescheduled",
-                parent_id=parent_broadcast_id,
-                next_scheduled_at=str(parent.next_scheduled_at),
-            )
-
     logger.info(
         "recurring_child_created",
         parent_id=parent_broadcast_id,
@@ -280,3 +271,12 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
     )
 
     await process_broadcast(child_id, skip_rate_limit=True)
+
+    async with async_session_maker() as db:
+        parent = await broadcast_crud.reschedule_recurring_broadcast(db, parent_broadcast_id)
+        if parent is not None:
+            logger.info(
+                "recurring_parent_prescheduled",
+                parent_id=parent_broadcast_id,
+                next_scheduled_at=str(parent.next_scheduled_at),
+            )
