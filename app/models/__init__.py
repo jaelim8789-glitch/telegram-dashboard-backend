@@ -18,6 +18,7 @@ from app.models.team import TeamMember
 from app.models.telegram_verification import TelegramChannelVerification
 from app.models.session import UserSession
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
+from app.models.employee import Employee, EmployeeMessage
 from app.models.user import PhoneVerification, User
 
 __all__ = [
@@ -57,4 +58,6 @@ __all__ = [
     "UsageRecord",
     "User",
     "BroadcastScheduleEntry",
+    "Employee",
+    "EmployeeMessage",
 ]
