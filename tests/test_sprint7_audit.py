@@ -175,27 +175,6 @@ def test_tx_id_uniqueness():
 # Phase 4 — Scheduler Audit
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_reply_macro_max_sends_enforced():
-    """
-    Verify execute_reply_macro now checks max_sends_per_day.
-    """
-    from app.services.reply_macro_service import execute_reply_macro
-    import inspect
-    source = inspect.getsource(execute_reply_macro)
-    assert "max_sends_per_day" in source, "max_sends_per_day must be checked in the service"
-
-
-def test_scheduler_dispatch_has_no_lock():
-    """
-    dispatch_due_reply_macros runs every 30 seconds with no locking.
-    This is a known risk — macros could double-fire if execution spans ticks.
-    """
-    from app.scheduler.scheduler import dispatch_due_reply_macros
-    import inspect
-    source = inspect.getsource(dispatch_due_reply_macros)
-    assert "asyncio.Lock" not in source, "No concurrency lock — macros could double-fire"
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # Phase 6 — API Serialization Audit
 # ═══════════════════════════════════════════════════════════════════════

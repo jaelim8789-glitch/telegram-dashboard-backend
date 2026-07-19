@@ -19,12 +19,6 @@ class ReplyMacro(Base):
     message_content: Mapped[str] = mapped_column(Text)
     media_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    schedule_type: Mapped[str] = mapped_column(String(20), default="interval")
-    interval_hours: Mapped[int] = mapped_column(Integer, default=24)
-    fixed_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
-    max_sends_per_day: Mapped[int] = mapped_column(Integer, default=10)
-    reply_to_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     used_targets: Mapped[str] = mapped_column(Text, default="[]")
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

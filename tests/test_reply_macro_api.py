@@ -24,10 +24,6 @@ def _macro_form(target_chats=None, name="테스트 매크로", message_content="
         "name": name,
         "target_chats": json.dumps(target_chats or ["-100111"]),
         "message_content": message_content,
-        "schedule_type": "interval",
-        "interval_hours": "24",
-        "fixed_time": "",
-        "max_sends_per_day": "10",
         "is_active": "true",
     }
 

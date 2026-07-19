@@ -33,7 +33,6 @@ async def get_scheduler_status(
             DISPATCH_INTERVAL_SECONDS,
             _running_broadcasts,
             _running_recurring,
-            _running_macros,
             scheduler,
         )
     except ImportError:
@@ -62,7 +61,6 @@ async def get_scheduler_status(
         "due_broadcasts_count": len(due),
         "running_broadcasts_count": len(_running_broadcasts),
         "running_recurring_count": len(_running_recurring),
-        "running_reply_macros_count": len(_running_macros),
         "scheduler_running": scheduler.running,
     }
 
@@ -71,7 +69,7 @@ async def get_scheduler_status(
 async def pause_scheduler_job(job_id: str):
     """Pause a scheduler job by ID (admin only).
 
-    Jobs: dispatch_due_broadcasts, dispatch_due_reply_macros,
+    Jobs: dispatch_due_broadcasts,
     check_usdt_payments, downgrade_expired_tenants, process_join_queue.
     """
     try:
