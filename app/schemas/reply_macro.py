@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ReplyMacroCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     target_chats: list[str] = Field(min_length=1, description="채팅방/그룹 ID 목록")
     message_content: str = Field(min_length=1, max_length=4096, description="홍보 메시지 내용")
 
@@ -51,3 +52,18 @@ class ReplyMacroRead(BaseModel):
         if isinstance(value, list):
             return value
         return []
+
+
+class ReplyMacroLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    macro_id: str
+    account_id: str
+    target_chat_id: str
+    replied_user_id: str | None
+    replied_msg_id: int | None
+    message_sent: str
+    status: str
+    error_message: str | None
+    created_at: datetime

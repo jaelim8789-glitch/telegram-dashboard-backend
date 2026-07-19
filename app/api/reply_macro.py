@@ -8,7 +8,7 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import reply_macro as macro_crud
 from app.database import get_db
-from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroRead
+from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroRead, ReplyMacroLogRead
 from app.services.media import save_broadcast_media
 from app.services.random_reply_service import execute_random_reply
 
@@ -21,6 +21,18 @@ async def _get_account_or_404(account_id: str, db: AsyncSession):
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
     return account
+
+
+@router.get("", response_model=list[ReplyMacroRead])
+async def list_macros(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """계정의 답장 매크로 목록 조회."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    return await macro_crud.list_macros(db, account_id)
 
 
 @router.post("", response_model=ReplyMacroRead, status_code=status.HTTP_201_CREATED)

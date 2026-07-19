@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,13 +9,35 @@ from app.models.reply_macro import ReplyMacro, ReplyMacroLog
 # ─── MACRO CRUD ───────────────────────────────────────────────────────
 
 async def create_macro(
-    db: AsyncSession, account_id: str, name: str, target_chats: list[str], message_content: str, media_path: str | None = None
+    db: AsyncSession,
+    account_id: str,
+    target_chats: list[str] | object | None = None,
+    message_content: str | None = None,
+    *,
+    name: str = "macro",
+    media_path: str | None = None,
+    macro_data: object = None,
 ) -> ReplyMacro:
+    if macro_data is not None:
+        data = macro_data
+    elif not isinstance(target_chats, list):
+        data = target_chats
+        target_chats = None
+        message_content = None
+    else:
+        data = None
+
+    if data is not None:
+        target_chats = data.target_chats
+        message_content = data.message_content
+        name = getattr(data, "name", name)
+        media_path = getattr(data, "media_path", media_path)
+
     macro = ReplyMacro(
         account_id=account_id,
         name=name,
-        target_chats=json.dumps(target_chats),
-        message_content=message_content,
+        target_chats=json.dumps(target_chats or []),
+        message_content=message_content or "",
         media_path=media_path,
     )
     db.add(macro)
@@ -105,3 +128,38 @@ async def list_logs(
         query = query.where(ReplyMacroLog.status == status)
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+async def list_active_macros_due(db: AsyncSession) -> list[ReplyMacro]:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = await db.execute(
+        select(ReplyMacro).where(
+            ReplyMacro.is_active == True,  # noqa: E712
+            ReplyMacro.last_sent_at.is_(None) | (ReplyMacro.last_sent_at <= now),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def claim_macro_dispatch(db: AsyncSession, macro_id: str, observed_last_sent_at: datetime | None) -> bool:
+    result = await db.execute(
+        select(ReplyMacro).where(
+            ReplyMacro.id == macro_id,
+            ReplyMacro.is_active == True,  # noqa: E712
+        ).with_for_update()
+    )
+    macro = result.scalar_one_or_none()
+    if macro is None:
+        return False
+    if macro.last_sent_at != observed_last_sent_at:
+        return False
+    macro.last_sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    return True
+
+
+async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> ReplyMacro:
+    macro.last_sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(macro)
+    return macro
