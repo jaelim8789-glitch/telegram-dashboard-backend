@@ -11,9 +11,10 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import reply_macro as macro_crud
 from app.database import get_db
-from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroLogRead, ReplyMacroRead, ReplyMacroUpdate
+from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroLogRead, ReplyMacroRead, ReplyMacroUpdate, RandomReplyResult
 from app.services.media import save_broadcast_media
 from app.services.reply_macro_service import execute_reply_macro
+from app.services.random_reply_service import execute_random_reply
 
 router = APIRouter(prefix="/api/accounts/{account_id}/reply-macros", tags=["reply-macros"])
 logger = get_logger(__name__)
@@ -53,13 +54,6 @@ async def create_macro(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    # NOTE: this endpoint accepts multipart/form-data ONLY, not a JSON body.
-    # File uploads (UploadFile/File()) force the whole request into multipart
-    # encoding, and FastAPI cannot deserialize a Pydantic model directly from
-    # form fields — so every field must be its own Form(). Do not collapse
-    # these back into a single `payload: ReplyMacroCreate` body param; that
-    # combination makes FastAPI require a "payload" wrapper key that no real
-    # client (JSON or multipart) can satisfy, and every create request 422s.
     await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
 
@@ -155,6 +149,26 @@ async def execute_macro_now(
     return {"status": "accepted", "macro_id": macro.id}
 
 
+@router.post("/{macro_id}/random-reply")
+async def execute_random_reply_endpoint(
+    account_id: str,
+    macro_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """랜덤 답장 실행: 대상 채팅방 최근 메시지 중 무작위 1명에게 Reply로 홍보글 전송 (중복 제외)."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_macro(db, macro_id)
+    if macro is None or macro.account_id != account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="답장매크로를 찾을 수 없습니다.")
+    if macro.schedule_type != "random_reply":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이 매크로는 random_reply 타입이 아닙니다.")
+    result = await execute_random_reply(macro.id)
+    logger.info("random_reply_executed", account_id=account_id, macro_id=macro.id, result=result)
+    return result
+
+
 @router.get("/{macro_id}/logs", response_model=list[ReplyMacroLogRead])
 async def read_macro_logs(
     account_id: str,
@@ -169,3 +183,19 @@ async def read_macro_logs(
     if macro is None or macro.account_id != account_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="답장매크로를 찾을 수 없습니다.")
     return await macro_crud.list_logs(db, account_id, macro_id=macro_id, status=status_filter)
+
+
+@router.get("/{macro_id}/used-targets")
+async def read_used_targets(
+    account_id: str,
+    macro_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """이 매크로에서 이미 답장한 대상 목록 조회."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_macro(db, macro_id)
+    if macro is None or macro.account_id != account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="답장매크로를 찾을 수 없습니다.")
+    return await macro_crud.get_used_targets(macro)

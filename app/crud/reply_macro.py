@@ -12,9 +12,6 @@ def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ─── MACRO CRUD ───────────────────────────────────────────────────────
-
-
 async def create_macro(
     db: AsyncSession, account_id: str, data: ReplyMacroCreate, *, media_path: str | None = None
 ) -> ReplyMacro:
@@ -47,7 +44,7 @@ async def list_macros(db: AsyncSession, account_id: str) -> list[ReplyMacro]:
 
 
 async def list_active_macros_due(db: AsyncSession) -> list[ReplyMacro]:
-    """Find all active macros that are due to be sent now."""
+    """Find all active macros that are due to be sent now (interval/fixed only)."""
     now = utcnow_naive()
     macros: list[ReplyMacro] = []
 
@@ -57,8 +54,9 @@ async def list_active_macros_due(db: AsyncSession) -> list[ReplyMacro]:
     all_active = list(result.scalars().all())
 
     for macro in all_active:
+        if macro.schedule_type == "random_reply":
+            continue  # random_reply is triggered manually, not by scheduler
         if macro.schedule_type == "interval":
-            # Interval mode: send if enough time has passed since last send
             if macro.last_sent_at is None:
                 macros.append(macro)
             else:
@@ -66,11 +64,9 @@ async def list_active_macros_due(db: AsyncSession) -> list[ReplyMacro]:
                 if elapsed >= timedelta(hours=macro.interval_hours):
                     macros.append(macro)
         elif macro.schedule_type == "fixed":
-            # Fixed mode: send if current time matches fixed_time
             if macro.fixed_time:
                 current_time = now.strftime("%H:%M")
                 if current_time == macro.fixed_time:
-                    # Only send once per day at that time
                     if macro.last_sent_at is None or macro.last_sent_at.date() < now.date():
                         macros.append(macro)
 
@@ -100,33 +96,12 @@ async def delete_macro(db: AsyncSession, macro: ReplyMacro) -> None:
 
 
 async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> None:
-    """Mark macro as sent using atomic last_sent_at claim.
-    
-    This serves as the idempotency mechanism:
-    - scheduler calls claim_macro_dispatch() before executing
-    - if another tick or worker already claimed this macro, it skips
-    - on restart, already-claimed macros won't re-execute
-    """
     macro.last_sent_at = utcnow_naive()
     await db.commit()
 
 
 async def claim_macro_dispatch(db: AsyncSession, macro_id: str, expected_last_sent_at: datetime | None) -> bool:
-    """
-    Atomically claim a macro for this dispatch tick using a WHERE-conditioned UPDATE.
-    Only succeeds if the macro is active AND its last_sent_at still matches
-    ``expected_last_sent_at`` (the value observed when list_active_macros_due
-    decided this macro was due). This is truly atomic at the database level and
-    works correctly in both SQLite and PostgreSQL.
-
-    The WHERE clause must pin the previous last_sent_at value, not just
-    is_active: a bare `is_active == True` condition matches on every call
-    regardless of prior claims, so two concurrent ticks/workers (or the same
-    macro appearing twice within one tick) would both "win" and dispatch the
-    macro twice.
-    """
     now = utcnow_naive()
-
     query = update(ReplyMacro).where(
         ReplyMacro.id == macro_id,
         ReplyMacro.is_active.is_(True),
@@ -135,16 +110,30 @@ async def claim_macro_dispatch(db: AsyncSession, macro_id: str, expected_last_se
         query = query.where(ReplyMacro.last_sent_at.is_(None))
     else:
         query = query.where(ReplyMacro.last_sent_at == expected_last_sent_at)
-
     result = await db.execute(query.values(last_sent_at=now))
     await db.commit()
-
-    # Check if any row was actually updated
     return result.rowcount > 0
 
 
-# ─── LOG CRUD ─────────────────────────────────────────────────────────
+# ─── Random Reply Helpers ───────────────────────────────────────────────
 
+async def get_used_targets(macro: ReplyMacro) -> list[dict]:
+    """Return list of {chat_id, user_id} already replied to."""
+    try:
+        return json.loads(macro.used_targets) if macro.used_targets else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+async def add_used_target(db: AsyncSession, macro: ReplyMacro, chat_id: str, user_id: str) -> None:
+    """Add a target to the used list and persist."""
+    used = await get_used_targets(macro)
+    used.append({"chat_id": chat_id, "user_id": user_id})
+    macro.used_targets = json.dumps(used)
+    await db.commit()
+
+
+# ─── LOG CRUD ─────────────────────────────────────────────────────────
 
 async def create_log(
     db: AsyncSession,
@@ -155,11 +144,15 @@ async def create_log(
     message_sent: str,
     status: str,
     error_message: str | None = None,
+    replied_user_id: str | None = None,
+    replied_msg_id: int | None = None,
 ) -> ReplyMacroLog:
     log = ReplyMacroLog(
         macro_id=macro_id,
         account_id=account_id,
         target_chat_id=target_chat_id,
+        replied_user_id=replied_user_id,
+        replied_msg_id=replied_msg_id,
         message_sent=message_sent,
         status=status,
         error_message=error_message,
