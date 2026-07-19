@@ -363,3 +363,57 @@ async def downgrade_expired_tenants() -> dict:
             logger.info("free_trial_expired", tenant_id=tenant.id)
 
     return {"downgraded": len(downgraded), "tenant_ids": downgraded}
+
+
+async def notify_expiring_trials() -> dict:
+    """Scheduled job: send a D-1 re-engagement DM to free-trial tenants whose
+    trial expires within the next 24 hours, with an upgrade CTA.
+
+    Only reaches tenants with a resolvable Telegram chat id (bot-originated
+    `tg_<id>` identity) — silently skipped for phone-based tenants, same
+    constraint as usdt_watcher.notify_payment_activated. Guarded by
+    trial_expiry_notified so a tenant is only ever DMed once per trial.
+    """
+    from sqlalchemy import select
+
+    from app.core.telegram_identity import parse_tg_identifier
+    from app.services.telegram_notify import send_telegram_message
+
+    now = utcnow_naive()
+    window_end = now + timedelta(hours=24)
+    notified: list[str] = []
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(Tenant).where(
+                Tenant.plan == "free",
+                Tenant.subscription_status == "active",
+                Tenant.trial_expiry_notified.is_(False),
+                Tenant.trial_expires_at.is_not(None),
+                Tenant.trial_expires_at >= now,
+                Tenant.trial_expires_at < window_end,
+            )
+        )
+        tenants = result.scalars().all()
+
+        for tenant in tenants:
+            chat_id = parse_tg_identifier(tenant.phone)
+            if chat_id is None:
+                tenant.trial_expiry_notified = True
+                continue
+
+            text = (
+                "⏰ 무료 체험이 내일 종료됩니다!\n\n"
+                "체험이 끝나면 발송/자동응답 기능이 제한돼요. "
+                "지금 업그레이드하고 끊김 없이 계속 사용해보세요.\n\n"
+                "메뉴에서 \"요금제\"를 눌러 업그레이드할 수 있습니다."
+            )
+            sent = await send_telegram_message(chat_id, text)
+            tenant.trial_expiry_notified = True
+            if sent:
+                notified.append(tenant.id)
+                logger.info("trial_expiry_notified", tenant_id=tenant.id)
+
+        await db.commit()
+
+    return {"notified": len(notified), "tenant_ids": notified}

@@ -19,7 +19,7 @@ from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
 from app.services.ai_ops_service import generate_and_store_ops_report
-from app.services.billing import downgrade_expired_tenants
+from app.services.billing import downgrade_expired_tenants, notify_expiring_trials
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
 from app.services.random_reply_service import execute_random_reply
@@ -190,6 +190,13 @@ def start_scheduler() -> None:
         downgrade_expired_tenants,
         IntervalTrigger(minutes=30),
         id="downgrade_expired_tenants",
+        replace_existing=True,
+    )
+    # 체험 만료 D-1 재참여 DM — 매 시간 체크, 대상자에게 1회만 발송(trial_expiry_notified 가드).
+    scheduler.add_job(
+        notify_expiring_trials,
+        IntervalTrigger(hours=1),
+        id="notify_expiring_trials",
         replace_existing=True,
     )
     # Smart Join Queue — tick every DISPATCH_INTERVAL_SECONDS

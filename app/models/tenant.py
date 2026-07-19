@@ -72,6 +72,10 @@ class Tenant(Base):
     checkin_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_checkin_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Set once a D-1 trial-expiry reminder DM has been sent, so the daily
+    # scheduler tick doesn't re-send it every run within that window.
+    trial_expiry_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
