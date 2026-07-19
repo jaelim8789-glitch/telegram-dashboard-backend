@@ -1,9 +1,13 @@
 """add AI Reply v2 tables (personas, conversations, suggestions_v2)
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: d180f2643056
 Revises: add_ai_platform_tables
 Create Date: 2026-07-19 08:20:00.000000
 
+Renamed from a1b2c3d4e5f6, which collided with the pre-existing
+a1b2c3d4e5f6_add_tenant_id_to_accounts.py (an unrelated, already-applied
+migration from earlier in the chain) - Alembic refused to run with a
+duplicate revision ID present ("Multiple head revisions").
 """
 from typing import Sequence, Union
 
@@ -13,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a1b2c3d4e5f6'
+revision: str = 'd180f2643056'
 down_revision: Union[str, None] = 'add_ai_platform_tables'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
