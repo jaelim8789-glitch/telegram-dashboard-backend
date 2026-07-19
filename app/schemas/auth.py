@@ -37,17 +37,6 @@ class LoginWithApiKeyResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class TelegramLoginRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=50)
-    code: str = Field(min_length=1, max_length=10)
-
-
-class TelegramLoginResponse(BaseModel):
-    access_token: str
-    session_token: str | None = None
-    token_type: str = "bearer"
-
-
 class MeResponse(BaseModel):
     role: Literal["admin", "user", "api_key"]
     phone: str | None = None
