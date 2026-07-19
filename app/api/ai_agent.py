@@ -301,10 +301,14 @@ async def send_message_stream(
 
     async def _stream():
         full = ""
-        async for chunk in _call_deepseek_stream(messages, max_tokens=2000):
+        real_tokens = 0
+        async for chunk, usage in _call_deepseek_stream(messages, max_tokens=2000):
             if chunk:
                 full += chunk
                 yield json.dumps({"token": chunk}) + "\n"
+            # 실제 usage 청크(마지막)에서 온 토큰 수를 우선 사용
+            if usage:
+                real_tokens = usage
 
         # 전체 응답 DB 저장
         from app.database import async_session_maker
@@ -316,7 +320,8 @@ async def send_message_stream(
                 cleaned = full.rstrip()[: -len(GOOD_QUESTION_MARKER)].rstrip()
                 good_question = True
 
-            tokens_used = len(cleaned) // 4
+            # 실제 토큰 수가 있으면 우선, 없으면 문자 길이 추정으로 폴백
+            tokens_used = real_tokens if real_tokens > 0 else len(cleaned) // 4
             s.add(AiMessage(chat_id=chat_id, role="agent", content=cleaned, tokens_used=tokens_used))
 
             old_level = agent_ref.level
@@ -339,6 +344,7 @@ async def send_message_stream(
                 "level_up": level_up,
                 "new_level": agent_ref.level,
                 "exp": agent_ref.exp,
+                "tokens_used": tokens_used,
             }) + "\n"
 
     return StreamingResponse(

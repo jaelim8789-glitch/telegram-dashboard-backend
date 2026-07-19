@@ -110,7 +110,7 @@ async def ask_ai_stream(conversation_id: str, tenant_id: str, question: str):
     history.extend({"role": m.role, "content": m.content} for m in msgs)
 
     full = ""
-    async for chunk in _call_deepseek_stream(history, max_tokens=2000):
+    async for chunk, _usage in _call_deepseek_stream(history, max_tokens=2000):
         if chunk:
             full += chunk
             yield json.dumps({"token": chunk}) + "\n"

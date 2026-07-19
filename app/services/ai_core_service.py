@@ -119,7 +119,12 @@ async def _call_deepseek_stream(
     max_tokens: int = _MAX_TOKENS,
     model: str | None = None,
 ):
-    """SSE 스트리밍 버전: async generator가 토큰을 하나씩 yield."""
+    """SSE 스트리밍 버전: async generator가 (content, usage_total_tokens) tuple을 yield.
+
+    마지막 청크는 content="" 이고 usage_total_tokens에 실제 토큰 수를 담아
+    전달된다 (stream_options.include_usage=True). content-only 호출부와 호환되도록
+    content 문자열과 함께 정수를 yield한다.
+    """
     if not settings.deepseek_api_key:
         logger.warning("deepseek_api_key not configured")
         return
@@ -134,6 +139,7 @@ async def _call_deepseek_stream(
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "stream": True,
+                    "stream_options": {"include_usage": True},
                 },
             ) as resp:
                 async for line in resp.aiter_lines():
@@ -144,15 +150,20 @@ async def _call_deepseek_stream(
                         break
                     try:
                         chunk = json.loads(payload)
+                        # Usage chunk: choices is empty, usage present at stream end.
+                        if not chunk.get("choices") and "usage" in chunk:
+                            total = chunk["usage"].get("total_tokens", 0) or 0
+                            yield ("", total)
+                            continue
                         delta = chunk.get("choices", [{}])[0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
-                            yield content
+                            yield (content, 0)
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
     except Exception as exc:
         logger.error("ai_deepseek_stream_error", error=str(exc))
-        yield None
+        yield (None, 0)
 
 
 # ─── Graphiti Memory Integration ──────────────────────────────────────────
@@ -228,7 +239,7 @@ async def check_ai_quota(
     # Get plan limits for this feature
     result = await db.execute(
         select(AiPlanLimit).where(
-            AiPlanLimit.plan == _get_tenant_plan(db, tenant_id),
+            AiPlanLimit.plan == await _get_tenant_plan(db, tenant_id),
             AiPlanLimit.feature == feature,
         )
     )
@@ -333,11 +344,19 @@ async def get_ai_usage_summary(
     }
 
 
-def _get_tenant_plan(db: AsyncSession, tenant_id: str) -> str:
-    """Get the plan name for a tenant. Defaults to 'free'."""
-    # This is a simplified lookup — in production, query the tenant's plan
-    # from the licenses or tenants table
-    return "free"
+async def _get_tenant_plan(db: AsyncSession, tenant_id: str) -> str:
+    """Get the plan name for a tenant from the Tenant table.
+
+    Previously hard-coded to "free", which silently capped paid (pro/team)
+    tenants at the free AI quota. Now resolves the real plan so paid limits
+    apply. Falls back to "free" only when the tenant row is missing.
+    """
+    from app.models.tenant import Tenant
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None or not getattr(tenant, "plan", ""):
+        return "free"
+    return tenant.plan
 
 
 # ─── System Prompt Templates ──────────────────────────────────────────────
@@ -388,15 +407,10 @@ AI_OPERATIONS_REPORT_PROMPT = (
 )
 
 
-# ─── Lazy imports to avoid circular dependencies ──────────────────────────
+# ─── Model bindings ────────────────────────────────────────────────────────
 
-# These are imported here to keep the module self-contained
-# The actual model classes are defined in app/models/
-
-class AiPlanLimit:
-    """Placeholder — actual model is in app/models/ai.py"""
-    pass
-
-class AiUsageRecord:
-    """Placeholder — actual model is in app/models/ai.py"""
-    pass
+# Resolve the real models (previously stubbed as placeholder classes, which
+# made check_ai_quota/record_ai_usage query non-existent tables). Kept at
+# module load — app.models.ai only depends on app.database.Base, so there is
+# no circular-import risk.
+from app.models.ai import AiPlanLimit, AiUsageRecord  # noqa: E402
