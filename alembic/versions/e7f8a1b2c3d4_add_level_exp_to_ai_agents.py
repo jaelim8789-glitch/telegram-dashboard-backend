@@ -19,17 +19,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Idempotent: 2b68d1568159 (create_ai_agents_chats_messages_tables) already
-    # creates ai_agents with level/exp columns on any DB that ran migrations in
-    # order. This revision only still exists because a later merge migration
-    # (drop_reply_macro_schedule) references it as one of several heads it
-    # unifies — recreated here as a no-op-if-already-present safeguard rather
-    # than removing it, so `alembic upgrade head` doesn't KeyError on the
-    # missing revision.
-    op.execute("ALTER TABLE ai_agents ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1")
-    op.execute("ALTER TABLE ai_agents ADD COLUMN IF NOT EXISTS exp INTEGER NOT NULL DEFAULT 0")
+    # True no-op. 2b68d1568159 (create_ai_agents_chats_messages_tables) is what
+    # actually creates ai_agents, already including level/exp — but that
+    # migration sits on a parallel branch merged in later by
+    # drop_reply_macro_schedule, so ai_agents does not necessarily exist yet
+    # when this revision runs (ALTER TABLE here raised UndefinedTableError in
+    # production). This revision only still exists because that merge
+    # migration references its id as one of several heads it unifies; it does
+    # not need to do anything itself.
+    pass
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE ai_agents DROP COLUMN IF EXISTS exp")
-    op.execute("ALTER TABLE ai_agents DROP COLUMN IF EXISTS level")
+    pass
