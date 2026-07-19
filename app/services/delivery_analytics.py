@@ -49,6 +49,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import FunctionElement
 
 from app.api.deps import Identity
+from app.services.failure_intel import classify_failure
 
 
 # ─── DB compatibility ─────────────────────────────────────────────────
@@ -166,6 +167,10 @@ class FailureIntelligenceItem:
     percentage: float = 0.0
     affected_accounts: int = 0
     latest_occurrence: str | None = None
+    category: str = ""
+    retryable: str = ""
+    recovery_action: str = ""
+    summary: str = ""
 
 
 # ─── Logical delivery response types (Sprint 17) ─────────────────────
@@ -722,18 +727,20 @@ async def get_failure_intelligence(
 
         items = []
         for row in result.all():
-            # PostgreSQL's SUM() window function returns numeric (Decimal), not
-            # int, even summing a COUNT() — Decimal * float raises TypeError.
-            # This only ever counts rows, so int() is always exact.
             count = int(row.count or 0)
             total_failures = int(row.total_failures or 0)
             percentage = round((count / total_failures * 100.0), 1) if total_failures > 0 else 0.0
+            intel = classify_failure("failed", "", delivery_status_value=row.status)
             items.append(FailureIntelligenceItem(
                 status=row.status,
                 count=count,
                 percentage=percentage,
                 affected_accounts=row.affected_accounts or 0,
                 latest_occurrence=row.latest_occurrence.isoformat() if row.latest_occurrence else None,
+                category=intel["category"] if intel else "",
+                retryable=intel["retryable"] if intel else "",
+                recovery_action=intel["recovery_action"] if intel else "",
+                summary=intel["summary"] if intel else "",
             ))
         return items
 

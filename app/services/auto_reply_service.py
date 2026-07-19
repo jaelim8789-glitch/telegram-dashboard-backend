@@ -1,4 +1,6 @@
 from datetime import timedelta
+from time import time
+import asyncio
 
 from telethon import TelegramClient, events
 
@@ -13,10 +15,11 @@ from app.services.telethon_pool import pool
 
 logger = get_logger(__name__)
 
-# One registered Telethon event callback per account_id, so it can be removed again when
-# auto-reply is turned off (Telethon has no "handler for this account" lookup of its own —
-# add_event_handler/remove_event_handler both take the exact callback object).
 _handlers: dict[str, callable] = {}
+_recent_messages: dict[str, float] = {}
+_MESSAGE_DEDUP_TTL = 60
+_VERIFICATION_INTERVAL = 300
+_verification_task = None
 
 
 def _matches(rule: AutoReplyRule, text: str) -> bool:
@@ -29,35 +32,54 @@ def _matches(rule: AutoReplyRule, text: str) -> bool:
 
 async def _handle_incoming_message(event, account_id: str) -> None:
     if event.out:
-        return  # our own sent messages (including auto-replies themselves) — never react to these
+        return
 
     text = event.raw_text or ""
     if not text:
         return
+
+    event_id = getattr(event, "id", None)
+    if event_id is not None:
+        msg_key = f"{account_id}:{event.chat_id}:{event_id}"
+        now = time()
+        if msg_key in _recent_messages and now - _recent_messages[msg_key] < _MESSAGE_DEDUP_TTL:
+            return
+        _recent_messages[msg_key] = now
 
     async with async_session_maker() as db:
         account = await account_crud.get_account(db, account_id)
         if account is None or not account.auto_reply_enabled:
             return
 
+        client = pool.peek_client(account_id)
+        if client is None or not client.is_connected():
+            logger.warning("auto_reply_skip_disconnected", account_id=account_id)
+            return
+
         rules = await auto_reply_crud.list_active_rules(db, account_id)
         matched = next((rule for rule in rules if _matches(rule, text)), None)
         if matched is None:
-            # Opt-in AI fallback (default off — see Account.ai_fallback_reply_enabled):
-            # draft a suggestion for operator review. Never sent automatically.
             if account.ai_fallback_reply_enabled:
-                fallback_sender = await event.get_sender()
-                await record_auto_reply_suggestion(
-                    db,
-                    account_id=account_id,
-                    chat_id=str(event.chat_id),
-                    user_id=str(event.sender_id),
-                    user_name=getattr(fallback_sender, "username", None) or getattr(fallback_sender, "first_name", None),
-                    trigger_message=text,
-                )
+                try:
+                    fallback_sender = await event.get_sender()
+                    await record_auto_reply_suggestion(
+                        db,
+                        account_id=account_id,
+                        chat_id=str(event.chat_id),
+                        user_id=str(event.sender_id),
+                        user_name=getattr(fallback_sender, "username", None) or getattr(fallback_sender, "first_name", None),
+                        trigger_message=text,
+                    )
+                except Exception as exc:
+                    logger.warning("auto_reply_fallback_failed", account_id=account_id, error=str(exc))
             return
 
-        sender = await event.get_sender()
+        try:
+            sender = await event.get_sender()
+        except Exception as exc:
+            logger.warning("auto_reply_get_sender_failed", account_id=account_id, error=str(exc))
+            return
+
         user_id = str(event.sender_id)
         user_name = getattr(sender, "username", None) or getattr(sender, "first_name", None)
         chat_id = str(event.chat_id)
@@ -98,7 +120,7 @@ async def _handle_incoming_message(event, account_id: str) -> None:
 
         try:
             await event.reply(matched.reply_content)
-        except Exception as exc:  # noqa: BLE001 — recorded, not swallowed
+        except Exception as exc:
             await auto_reply_crud.create_log(
                 db,
                 rule_id=matched.id,
@@ -172,9 +194,7 @@ async def disable_auto_reply(account_id: str) -> None:
 
 async def attach_all_active_listeners() -> None:
     """Called once at app startup: re-attaches listeners for every account that had
-    auto-reply turned on before the last restart (the Telethon pool itself is in-memory
-    and doesn't survive a restart, so this has to reconnect each client from its stored,
-    encrypted session before it can start listening again)."""
+    auto-reply turned on before the last restart."""
     async with async_session_maker() as db:
         accounts = await account_crud.list_accounts(db)
     for account in accounts:
@@ -186,3 +206,39 @@ async def attach_all_active_listeners() -> None:
             logger.warning("auto_reply_listener_skip_unauthenticated", account_id=account.id)
             continue
         _register(client, account.id)
+
+    global _verification_task
+    if _verification_task is None:
+        _verification_task = asyncio.create_task(_verify_listeners_loop())
+
+
+async def _verify_listeners_loop() -> None:
+    while True:
+        await asyncio.sleep(_VERIFICATION_INTERVAL)
+        await verify_listeners()
+        _cleanup_recent_messages()
+
+
+async def verify_listeners() -> None:
+    """Verify all registered listeners are still attached to live, connected clients."""
+    async with async_session_maker() as db:
+        accounts = await account_crud.list_accounts(db)
+    for account in accounts:
+        if not account.auto_reply_enabled:
+            continue
+        client = pool.peek_client(account.id)
+        if client is None or not client.is_connected():
+            try:
+                client = await get_authorized_client(account)
+            except AccountNotAuthenticatedError:
+                logger.warning("auto_reply_listener_verify_failed", account_id=account.id, reason="unauthenticated")
+                continue
+            _register(client, account.id)
+            logger.info("auto_reply_listener_re_registered", account_id=account.id)
+
+
+def _cleanup_recent_messages() -> None:
+    now = time()
+    expired = [k for k, v in _recent_messages.items() if now - v > _MESSAGE_DEDUP_TTL]
+    for k in expired:
+        del _recent_messages[k]

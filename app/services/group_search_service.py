@@ -79,7 +79,7 @@ async def search_public_groups(account: Account, keyword: str) -> list[dict]:
             seen_ids.add(chat_id)
 
             chat_type = _classify_entity(entity)
-            if chat_type is None:
+            if chat_type is None or chat_type == "channel":
                 continue
 
             resolved_results.append({
@@ -94,11 +94,17 @@ async def search_public_groups(account: Account, keyword: str) -> list[dict]:
             logger.debug("resolve_entity_failed", username=entry["username"], error=str(exc))
             continue
 
-    # --- Step 3: Save to DB ---
-    async with async_session_maker() as db:
-        await group_search_crud.save_search_results(db, account.id, keyword, resolved_results)
+    resolved_results.sort(key=lambda r: r.get("participants_count") or 0, reverse=True)
 
-    return resolved_results
+    # --- Step 3: Filter out already-joined / saved results ---
+    async with async_session_maker() as db:
+        existing = await group_search_crud.get_recent_results(db, account.id, keyword=keyword, limit=1000)
+        joined_ids = {r.chat_id for r in existing if r.is_joined}
+        filtered = [r for r in resolved_results if r["chat_id"] not in joined_ids]
+
+        await group_search_crud.save_search_results(db, account.id, keyword, filtered[:50])
+
+    return filtered[:50]
 
 
 async def join_selected_groups(account: Account, result_ids: list[str]) -> list[dict]:

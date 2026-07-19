@@ -41,6 +41,7 @@ from app.api.webhook_settings import router as webhook_settings_router
 from app.api.ai_reply_v2 import router as ai_reply_v2_router
 from app.api.ai_chat_v2 import router as ai_chat_v2_router
 from app.api.mcp_gateway import router as mcp_gateway_router
+from app.api.chat import router as chat_router
 from app.api.deps import require_api_key_or_admin
 from app.api.channel_hub import router as channel_hub_router
 from app.api.folder import router as folder_router
@@ -249,6 +250,7 @@ app.include_router(webhook_settings_router, dependencies=_auth_required)
 app.include_router(ai_reply_v2_router, dependencies=_auth_required)
 app.include_router(ai_chat_v2_router, dependencies=_auth_required)
 app.include_router(mcp_gateway_router, dependencies=_auth_required)
+app.include_router(chat_router, dependencies=_auth_required)
 
 # ── AI Platform Routers ───────────────────────────────────────────────
 app.include_router(ai_tools_router, dependencies=_auth_required)
