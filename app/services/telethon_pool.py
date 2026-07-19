@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -52,18 +53,37 @@ class TelethonClientPool:
                 api_id, api_hash = settings.telegram_credentials
                 client = TelegramClient(StringSession(session_string), api_id, api_hash)
                 self._clients[account_id] = client
-            if not client.is_connected():
+            connect_check_start = datetime.now(timezone.utc)
+            is_connected = client.is_connected()
+            connect_check_elapsed = (datetime.now(timezone.utc) - connect_check_start).total_seconds()
+            logger.info(
+                "telethon_pool_connect_check",
+                account_id=account_id,
+                is_connected=is_connected,
+                elapsed_seconds=round(connect_check_elapsed, 4),
+            )
+            if not is_connected:
                 for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+                    attempt_start = datetime.now(timezone.utc)
                     try:
                         await client.connect()
+                        attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
+                        logger.info(
+                            "telethon_reconnect_succeeded",
+                            account_id=account_id,
+                            attempt=attempt,
+                            elapsed_seconds=round(attempt_elapsed, 4),
+                        )
                         break
                     except Exception as exc:
+                        attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
                         logger.warning(
                             "telethon_reconnect_attempt",
                             account_id=account_id,
                             attempt=attempt,
                             max_attempts=self.MAX_RECONNECT_ATTEMPTS,
                             error=str(exc),
+                            elapsed_seconds=round(attempt_elapsed, 4),
                         )
                         if attempt < self.MAX_RECONNECT_ATTEMPTS:
                             await asyncio.sleep(self.RECONNECT_DELAY_SECONDS)

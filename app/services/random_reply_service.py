@@ -117,7 +117,7 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
             )
 
             try:
-                delivery_results = await deliver_message(request)
+                delivery_results = await deliver_message(request, client=client)
             except Exception as exc:
                 logger.error("random_reply_delivery_failed", macro_id=macro_id, chat_id=chat_id, error=str(exc))
                 results.append({"chat_id": chat_id, "user_id": chosen_uid, "status": "failed", "error": str(exc)})

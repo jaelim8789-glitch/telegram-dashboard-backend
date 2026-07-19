@@ -368,6 +368,7 @@ async def _deliver_with_retry(
 async def deliver_message(
     request: DeliveryRequest,
     on_status_change: Callable | None = None,
+    client: TelegramClient | None = None,
 ) -> list[DeliveryResult]:
     """Deliver a message to all recipients with retry logic.
 
@@ -382,6 +383,11 @@ async def deliver_message(
     Args:
         request: The delivery request.
         on_status_change: Optional callback for real-time status updates.
+        client: Optional pre-authorized TelegramClient. If provided, the
+            function skips get_authorized_client() and uses this client
+            directly — useful for batch callers (reply macro, random reply)
+            that already hold a live client and want to avoid per-recipient
+            pool lock acquisition.
 
     Returns:
         List of DeliveryResult, one per recipient.
@@ -437,38 +443,39 @@ async def deliver_message(
             return results
 
     # 2. Get authorized client (decrypts session, checks authorization)
-    try:
-        client = await get_authorized_client(account)
-    except AccountNotAuthenticatedError as exc:
-        # Recovery: clear the invalid session so subsequent attempts fast-fail
+    if client is None:
         try:
-            async with async_session_maker() as db:
-                account_reloaded = await account_crud.get_account(db, request.account_id)
-                if account_reloaded is not None:
-                    await account_crud.mark_account_session_invalid(db, account_reloaded)
-        except Exception as persist_err:
-            logger.warning("session_invalidation_failed", account_id=request.account_id, error=str(persist_err))
+            client = await get_authorized_client(account)
+        except AccountNotAuthenticatedError as exc:
+            # Recovery: clear the invalid session so subsequent attempts fast-fail
+            try:
+                async with async_session_maker() as db:
+                    account_reloaded = await account_crud.get_account(db, request.account_id)
+                    if account_reloaded is not None:
+                        await account_crud.mark_account_session_invalid(db, account_reloaded)
+            except Exception as persist_err:
+                logger.warning("session_invalidation_failed", account_id=request.account_id, error=str(persist_err))
 
-        for recipient in request.recipients:
-            result = DeliveryResult(
-                status=DeliveryStatus.SESSION_EXPIRED,
-                recipient=recipient,
-                error_message=str(exc),
-            )
-            await _persist_log(
-                account_id=request.account_id,
-                recipient=recipient,
-                source=request.source,
-                source_id=request.source_id,
-                status=DeliveryStatus.SESSION_EXPIRED,
-                success=False,
-                telegram_message_id=None,
-                error_message=result.error_message,
-                attempt_count=1,
-                message_content=request.message,
-            )
-            results.append(result)
-        return results
+            for recipient in request.recipients:
+                result = DeliveryResult(
+                    status=DeliveryStatus.SESSION_EXPIRED,
+                    recipient=recipient,
+                    error_message=str(exc),
+                )
+                await _persist_log(
+                    account_id=request.account_id,
+                    recipient=recipient,
+                    source=request.source,
+                    source_id=request.source_id,
+                    status=DeliveryStatus.SESSION_EXPIRED,
+                    success=False,
+                    telegram_message_id=None,
+                    error_message=result.error_message,
+                    attempt_count=1,
+                    message_content=request.message,
+                )
+                results.append(result)
+            return results
 
     # 3. Send to each recipient with retry
     _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)

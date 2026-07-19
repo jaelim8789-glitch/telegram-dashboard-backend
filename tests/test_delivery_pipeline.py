@@ -504,7 +504,59 @@ async def test_callback_failure_does_not_corrupt_delivery(mock_get_account, mock
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 9: No real network call occurs
+# Phase 9: Pre-passed client skips get_authorized_client (per-recipient reuse)
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@patch("app.services.delivery.get_authorized_client")
+@patch("app.services.delivery.account_crud.get_account")
+async def test_deliver_message_with_prepassed_client_skips_auth(mock_get_account, mock_get_client, sample_request, mock_db_session):
+    mock_account = MagicMock()
+    mock_account.id = "test-acc-1"
+    mock_get_account.return_value = mock_account
+
+    mock_client = AsyncMock()
+    mock_client.send_message.return_value.id = 123
+    mock_get_client.return_value = mock_client
+
+    results = await deliver_message(sample_request, client=mock_client)
+
+    assert len(results) == 2
+    assert all(r.status == DeliveryStatus.SUCCESS for r in results)
+    mock_get_client.assert_not_called()
+    assert mock_client.send_message.await_count == 2
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery.get_authorized_client")
+@patch("app.services.delivery.account_crud.get_account")
+async def test_deliver_message_with_prepassed_client_multi_recipient(mock_get_account, mock_get_client, mock_db_session):
+    mock_account = MagicMock()
+    mock_account.id = "acc-1"
+    mock_get_account.return_value = mock_account
+
+    mock_client = AsyncMock()
+    mock_client.send_message.return_value.id = 88
+    mock_get_client.return_value = mock_client
+
+    request = DeliveryRequest(
+        account_id="acc-1",
+        recipients=["-100111", "-100222", "-100333", "-100444", "-100555"],
+        message="bulk test",
+        source="test",
+    )
+
+    results = await deliver_message(request, client=mock_client)
+
+    assert len(results) == 5
+    assert all(r.status == DeliveryStatus.SUCCESS for r in results)
+    assert all(r.telegram_message_id == 88 for r in results)
+    mock_get_client.assert_not_called()
+    assert mock_client.send_message.await_count == 5
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 10: No real network call occurs
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_no_real_telegram_network_call():

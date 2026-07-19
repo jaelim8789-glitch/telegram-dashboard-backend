@@ -136,6 +136,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
     reply_to_map: dict[str, int] | None = None
     explicit_reply_to_id: int | None = None
+    pre_fetched_client = None
 
     if delivery_mode == "reply":
         timeout = min(timeout, 600)
@@ -154,12 +155,12 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
             async with async_session_maker() as db:
                 account = await account_crud.get_account(db, account_id_local)
             if account is not None:
-                client = await get_authorized_client(account)
+                pre_fetched_client = await get_authorized_client(account)
                 reply_to_map = {}
                 for recipient in recipients_local:
                     try:
                         target = int(recipient.lstrip("-")) if recipient.lstrip("-").isdigit() else recipient
-                        messages = await client.get_messages(target, limit=1)
+                        messages = await pre_fetched_client.get_messages(target, limit=1)
                         if messages:
                             reply_to_map[recipient] = messages[0].id
                     except Exception as exc:
@@ -188,7 +189,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
     try:
         results = await asyncio.wait_for(
-            deliver_message(request),
+            deliver_message(request, client=pre_fetched_client),
             timeout=timeout,
         )
     except asyncio.TimeoutError:

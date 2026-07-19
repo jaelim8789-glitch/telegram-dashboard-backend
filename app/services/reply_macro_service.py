@@ -86,7 +86,7 @@ async def execute_reply_macro(macro_id: str) -> dict:
             )
 
             try:
-                delivery_results = await deliver_message(request)
+                delivery_results = await deliver_message(request, client=client)
             except Exception as exc:
                 logger.error("reply_macro: delivery failed for %s: %s", chat_id, exc)
                 await macro_crud.create_log(
