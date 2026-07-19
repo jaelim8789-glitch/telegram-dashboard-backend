@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -78,10 +78,12 @@ def test_matches_exact_requires_full_match_after_strip():
 
 
 @pytest.mark.asyncio
-async def test_handle_incoming_message_sends_reply_and_logs_success(db_session):
+async def test_handle_incoming_message_sends_reply_and_logs_success(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id)
     event = _fake_event("가격이 얼마인가요?")
+
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
     await _handle_incoming_message(event, account.id)
 
@@ -117,10 +119,12 @@ async def test_handle_incoming_message_skips_when_master_switch_off(db_session):
 
 
 @pytest.mark.asyncio
-async def test_handle_incoming_message_no_keyword_match_does_nothing(db_session):
+async def test_handle_incoming_message_no_keyword_match_does_nothing(db_session, monkeypatch):
     account = await _make_account(db_session)
     await _make_rule(db_session, account.id)
     event = _fake_event("안녕하세요")
+
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
     await _handle_incoming_message(event, account.id)
 
@@ -129,12 +133,15 @@ async def test_handle_incoming_message_no_keyword_match_does_nothing(db_session)
 
 
 @pytest.mark.asyncio
-async def test_handle_incoming_message_cooldown_blocks_repeat_from_same_user(db_session):
+async def test_handle_incoming_message_cooldown_blocks_repeat_from_same_user(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id, cooldown_hours=1)
     await _seed_log(db_session, rule.id, account.id, user_id="111", status="success")
 
     event = _fake_event("가격 다시 알려주세요", sender_id=111)
+
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
+
     await _handle_incoming_message(event, account.id)
 
     event.reply.assert_not_called()
@@ -147,14 +154,15 @@ async def test_handle_incoming_message_cooldown_blocks_repeat_from_same_user(db_
 
 
 @pytest.mark.asyncio
-async def test_handle_incoming_message_daily_limit_blocks_new_user_once_reached(db_session):
+async def test_handle_incoming_message_daily_limit_blocks_new_user_once_reached(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id, max_replies_per_day=1)
-    # One successful reply already sent today, to a different user — daily limit is
-    # rule-wide, not per-user, so a brand new user (no cooldown history) still gets blocked.
     await _seed_log(db_session, rule.id, account.id, user_id="999", status="success")
 
     event = _fake_event("가격 알려주세요", sender_id=111)
+
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
+
     await _handle_incoming_message(event, account.id)
 
     event.reply.assert_not_called()
@@ -191,6 +199,7 @@ async def test_handle_incoming_message_ai_fallback_records_suggestion_when_enabl
     await _make_rule(db_session, account.id)
     fake_deepseek = AsyncMock(return_value="문의 주셔서 감사합니다! 곧 답변드릴게요.")
     monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
     event = _fake_event("안녕하세요", sender_id=321, chat_id=654)
     await _handle_incoming_message(event, account.id)
@@ -222,11 +231,13 @@ async def test_handle_incoming_message_ai_fallback_deepseek_failure_records_noth
 
 
 @pytest.mark.asyncio
-async def test_handle_incoming_message_send_failure_logs_failed_status(db_session):
+async def test_handle_incoming_message_send_failure_logs_failed_status(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id)
     event = _fake_event("가격이 얼마인가요?")
     event.reply = AsyncMock(side_effect=RuntimeError("network error"))
+
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
     await _handle_incoming_message(event, account.id)
 

@@ -51,8 +51,9 @@ async def _handle_incoming_message(event, account_id: str) -> None:
         if account is None or not account.auto_reply_enabled:
             return
 
-        client = pool.peek_client(account_id)
-        if client is None or not client.is_connected():
+        try:
+            client = await get_authorized_client(account)
+        except AccountNotAuthenticatedError:
             logger.warning("auto_reply_skip_disconnected", account_id=account_id)
             return
 
