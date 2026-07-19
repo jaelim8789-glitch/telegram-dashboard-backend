@@ -105,6 +105,16 @@ async def mark_account_banned(db: AsyncSession, account: Account) -> Account:
     return account
 
 
+async def clear_account_error(db: AsyncSession, account: Account) -> Account:
+    """User acknowledged/dismissed the last error — clear it so the health
+    badge stops showing it until a new failure actually occurs."""
+    account.last_error = None
+    account.last_error_at = None
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+
 # ── Search / Filter / Sort / Paginate ────────────────────────────────────
 
 

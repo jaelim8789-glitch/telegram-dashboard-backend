@@ -234,6 +234,20 @@ async def update_account(
     return await account_crud.update_account(db, account, payload)
 
 
+@router.post("/{account_id}/clear-error", response_model=AccountRead)
+async def clear_account_error(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """확인/삭제 — 마지막 오류 표시를 지운다 (새 오류가 나기 전까진 다시 안 뜸)."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+    return await account_crud.clear_account_error(db, account)
+
+
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
     account_id: str,
