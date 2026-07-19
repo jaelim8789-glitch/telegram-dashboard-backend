@@ -350,13 +350,122 @@ async def send_message_stream(
 
 # ─── Tool 실행 ────────────────────────────────────────────────────────────
 
+async def _execute_send_tool(db: AsyncSession, payload: dict) -> dict:
+    """발송 tool — app/services/delivery.py의 deliver_message 재사용."""
+    account_id = payload.get("account_id")
+    recipients = payload.get("recipients")
+    message = payload.get("message")
+
+    missing = [k for k, v in (("account_id", account_id), ("recipients", recipients), ("message", message)) if not v]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"발송 Tool에 필수 정보가 없습니다: {', '.join(missing)}",
+        )
+    if not isinstance(recipients, list) or len(recipients) == 0:
+        raise HTTPException(status_code=422, detail="발송 Tool의 recipients는 비어있지 않은 배열이어야 합니다.")
+    if not isinstance(message, str) or not message.strip():
+        raise HTTPException(status_code=422, detail="발송 Tool의 message는 비어있지 않은 문자열이어야 합니다.")
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    request = DeliveryRequest(
+        account_id=account_id,
+        recipients=[str(r) for r in recipients],
+        message=message,
+        media_path=payload.get("media_path"),
+        source="ai_agent_tool",
+        source_id=account_id,
+        reply_to_msg_id=payload.get("reply_to_msg_id"),
+        inline_buttons=payload.get("inline_buttons"),
+    )
+    results = await deliver_message(request)
+    succeeded = [r.recipient for r in results if r.status.value == "success"]
+    failed = [{"recipient": r.recipient, "error": r.error_message} for r in results if r.status.value != "success"]
+    return {
+        "tool": "send",
+        "delivered": len(succeeded),
+        "failed": len(failed),
+        "succeeded_recipients": succeeded,
+        "errors": failed,
+    }
+
+
+async def _execute_schedule_tool(db: AsyncSession, payload: dict) -> dict:
+    """예약 tool — app/crud/broadcast.py로 실제 스케줄 broadcast 생성."""
+    account_id = payload.get("account_id")
+    recipients = payload.get("recipients")
+    group_ids = payload.get("group_ids")
+    message = payload.get("message")
+    scheduled_at_raw = payload.get("scheduled_at")
+
+    missing = []
+    if not account_id:
+        missing.append("account_id")
+    if not message:
+        missing.append("message")
+    if not recipients and not group_ids:
+        missing.append("recipients/group_ids")
+    if not scheduled_at_raw:
+        missing.append("scheduled_at")
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"예약 Tool에 필수 정보가 없습니다: {', '.join(missing)}",
+        )
+
+    # scheduled_at 파싱 (ISO 8601, 시간대 정보 있으면 UTC로 정규화)
+    from datetime import datetime, timezone
+
+    try:
+        if isinstance(scheduled_at_raw, (int, float)):
+            scheduled_at = datetime.fromtimestamp(float(scheduled_at_raw), tz=timezone.utc).replace(tzinfo=None)
+        else:
+            s = str(scheduled_at_raw).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            scheduled_at = dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+    except (ValueError, TypeError, OverflowError):
+        raise HTTPException(
+            status_code=422,
+            detail="예약 Tool의 scheduled_at이 올바른 ISO 8601 형식이 아닙니다.",
+        )
+
+    from app.crud import broadcast as broadcast_crud
+    from app.schemas.broadcast import BroadcastCreate
+
+    data = BroadcastCreate(
+        account_id=account_id,
+        message=message,
+        recipients=list(recipients) if recipients else [],
+        scheduled_at=scheduled_at,
+        recurring_interval_minutes=payload.get("recurring_interval_minutes"),
+        delivery_mode=payload.get("delivery_mode", "normal"),
+        reply_to_msg_id=payload.get("reply_to_msg_id"),
+        delay_seconds=payload.get("delay_seconds"),
+        inline_buttons=payload.get("inline_buttons"),
+        group_ids=list(group_ids) if group_ids else None,
+    )
+    broadcast = await broadcast_crud.create_broadcast(db, data, media_path=payload.get("media_path"), scheduled_at=scheduled_at)
+    return {
+        "tool": "schedule",
+        "broadcast_id": broadcast.id,
+        "status": broadcast.status,
+        "scheduled_at": broadcast.scheduled_at.isoformat() if broadcast.scheduled_at else None,
+    }
+
+
 @router.post("/messages/{message_id}/execute")
 async def execute_tool(
     message_id: str,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """Tool 버튼 실행 (메시지에 포함된 tool_payload 실행)"""
+    """Tool 버튼 실행 (메시지에 포함된 tool_payload 실행)
+
+    tool_name별로 기존 발송/스케줄 로직을 재사용:
+    - send     → app/services/delivery.py deliver_message
+    - schedule → app/crud/broadcast.py create_broadcast (실제 예약 broadcast 생성)
+    """
     msg = await db.get(AiMessage, message_id)
     if msg is None or msg.role != "agent":
         raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
@@ -366,6 +475,8 @@ async def execute_tool(
     if not msg.tool_name:
         raise HTTPException(status_code=400, detail="실행할 Tool이 없습니다.")
 
+    payload = msg.tool_payload or {}
+
     # 토큰 차감 (Tool = 3토큰)
     used = await get_monthly_usage(db, identity.tenant_id, "ai_chat")
     from app.core.plans import get_plan_limits
@@ -374,18 +485,38 @@ async def execute_tool(
     limit = get_plan_limits(tenant.plan if tenant else "free").get("monthly_ai_chat_limit", 0)
     if limit > 0 and used + TOOL_PER_TOKEN > limit:
         raise HTTPException(status_code=429, detail="월간 AI 채팅 한도를 초과했습니다.")
+
+    tool_name = (msg.tool_name or "").lower()
+    try:
+        if tool_name in ("send", "발송", "broadcast"):
+            result = await _execute_send_tool(db, payload)
+        elif tool_name in ("schedule", "예약"):
+            result = await _execute_schedule_tool(db, payload)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"지원하지 않는 Tool입니다: {msg.tool_name}",
+            )
+    except HTTPException:
+        # 422/400 검증 에러는 그대로 전달
+        raise
+    except Exception as exc:
+        logger.error("ai_agent_tool_failed", tool=msg.tool_name, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Tool 실행 중 오류가 발생했습니다: {str(exc)}")
+
     await record_usage(identity.tenant_id, "ai_chat", TOOL_PER_TOKEN)
 
-    # Tool 실행 로그
+    # Tool 실행 결과 로그
     db.add(AiMessage(
         chat_id=msg.chat_id, role="tool",
-        content=f"Tool 실행됨: {msg.tool_name}",
+        content=f"Tool 실행 결과: {msg.tool_name} → {result}",
         tool_name=msg.tool_name,
+        tool_payload=result,
         tokens_used=TOOL_PER_TOKEN,
     ))
     await db.commit()
 
-    return {"status": "executed", "tool": msg.tool_name, "payload": msg.tool_payload}
+    return {"status": "executed", "tool": msg.tool_name, "result": result}
 
 
 # ─── 템플릿 마켓 ──────────────────────────────────────────────────────────
