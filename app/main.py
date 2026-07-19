@@ -55,7 +55,7 @@ from app.api.scheduler import router as scheduler_router
 from app.api.telegram_auth import router as telegram_auth_router
 from app.api.preview import router as preview_router
 from app.api.telegram_verify import router as telegram_verify_router
-from app.api.employees import router as employees_router
+from app.api.ai_agent import router as ai_agent_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -252,7 +252,7 @@ app.include_router(ai_reply_v2_router, dependencies=_auth_required)
 app.include_router(ai_chat_v2_router, dependencies=_auth_required)
 app.include_router(mcp_gateway_router, dependencies=_auth_required)
 app.include_router(chat_router, dependencies=_auth_required)
-app.include_router(employees_router, dependencies=_auth_required)
+app.include_router(ai_agent_router, dependencies=_auth_required)
 
 # ── AI Platform Routers ───────────────────────────────────────────────
 app.include_router(ai_tools_router, dependencies=_auth_required)
