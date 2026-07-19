@@ -36,6 +36,45 @@ def _parse_target_chats(raw: str) -> list[str]:
     )
 
 
+@router.get("/toggle")
+async def get_toggle_state(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """단순화된 랜덤 답장 on/off 상태 + 메시지 내용 조회 (계정당 1개, 대상 그룹은 자동)."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_or_create_for_account(db, account_id)
+    return {"is_active": macro.is_active, "message_content": macro.message_content}
+
+
+@router.put("/toggle")
+async def set_toggle_state(
+    account_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """랜덤 답장 켜기/끄기 + 메시지 내용 저장. 켜져있으면 스케줄러가 주기적으로 자동 실행."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_or_create_for_account(db, account_id)
+
+    is_active = bool(body.get("is_active", macro.is_active))
+    message_content = body.get("message_content")
+    if is_active and not (message_content if message_content is not None else macro.message_content):
+        raise HTTPException(status_code=422, detail="메시지 내용을 입력해야 켤 수 있습니다.")
+
+    macro.is_active = is_active
+    if message_content is not None:
+        macro.message_content = message_content
+    await db.commit()
+    await db.refresh(macro)
+    logger.info("random_reply_toggled", account_id=account_id, macro_id=macro.id, is_active=macro.is_active)
+    return {"is_active": macro.is_active, "message_content": macro.message_content}
+
+
 @router.get("", response_model=list[ReplyMacroRead])
 async def list_macros(
     account_id: str,
@@ -54,10 +93,6 @@ async def create_macro(
     name: str = Form("macro"),
     target_chats: str = Form("[]"),
     message_content: str = Form(""),
-    schedule_type: str = Form("interval"),
-    interval_hours: str = Form("24"),
-    fixed_time: str = Form(""),
-    max_sends_per_day: str = Form("10"),
     is_active: bool = Form(True),
     file: UploadFile | None = File(default=None),
     db: AsyncSession = Depends(get_db),
@@ -82,10 +117,6 @@ async def create_macro(
         message_content=message_content,
         name=name,
         media_path=media_path,
-        schedule_type=schedule_type,
-        interval_hours=int(interval_hours) if interval_hours.isdigit() else 24,
-        fixed_time=fixed_time or None,
-        max_sends_per_day=int(max_sends_per_day) if max_sends_per_day.isdigit() else 10,
         is_active=is_active,
     )
     logger.info("reply_macro_created", account_id=account_id, macro_id=macro.id)

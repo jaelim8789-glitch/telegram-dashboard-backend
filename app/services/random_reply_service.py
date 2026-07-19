@@ -49,8 +49,6 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
         target_chats_raw = macro.target_chats
         target_chats = json.loads(target_chats_raw) if target_chats_raw.startswith("[") else target_chats_raw.split(",")
         target_chats = [c.strip() for c in target_chats if c.strip()]
-        if not target_chats:
-            return {"status": "skipped", "reason": "no_targets"}
 
         used = await macro_crud.get_used_targets(macro)
         used_set = {(u["chat_id"], u["user_id"]) for u in used}
@@ -63,6 +61,21 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
     if not client.is_connected():
         logger.warning("random_reply_client_disconnected", macro_id=macro_id, account_id=account.id)
         return {"status": "failed", "reason": "client_disconnected"}
+
+    # No manually-picked targets (the simplified on/off toggle never sets any) —
+    # resolve to every group/channel this account is currently a member of.
+    if not target_chats:
+        try:
+            target_chats = [
+                str(d.entity.id)
+                async for d in client.iter_dialogs()
+                if d.is_group or d.is_channel
+            ]
+        except Exception as exc:
+            logger.warning("random_reply_dialog_list_failed", macro_id=macro_id, error=str(exc))
+            return {"status": "failed", "reason": "dialog_list_failed"}
+        if not target_chats:
+            return {"status": "skipped", "reason": "no_groups"}
 
     results = []
     async with async_session_maker() as db:

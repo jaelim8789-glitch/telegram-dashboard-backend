@@ -16,10 +16,6 @@ async def create_macro(
     *,
     name: str = "macro",
     media_path: str | None = None,
-    schedule_type: str = "interval",
-    interval_hours: int = 24,
-    fixed_time: str | None = None,
-    max_sends_per_day: int = 10,
     is_active: bool = True,
     macro_data: object = None,
 ) -> ReplyMacro:
@@ -37,10 +33,6 @@ async def create_macro(
         message_content = data.message_content
         name = getattr(data, "name", name)
         media_path = getattr(data, "media_path", media_path)
-        schedule_type = getattr(data, "schedule_type", schedule_type)
-        interval_hours = getattr(data, "interval_hours", interval_hours)
-        fixed_time = getattr(data, "fixed_time", fixed_time)
-        max_sends_per_day = getattr(data, "max_sends_per_day", max_sends_per_day)
         is_active = getattr(data, "is_active", is_active)
 
     macro = ReplyMacro(
@@ -49,10 +41,6 @@ async def create_macro(
         target_chats=json.dumps(target_chats or []),
         message_content=message_content or "",
         media_path=media_path,
-        schedule_type=schedule_type,
-        interval_hours=interval_hours,
-        fixed_time=fixed_time,
-        max_sends_per_day=max_sends_per_day,
         is_active=is_active,
     )
     db.add(macro)
@@ -66,6 +54,36 @@ async def list_macros(db: AsyncSession, account_id: str) -> list[ReplyMacro]:
         select(ReplyMacro)
         .where(ReplyMacro.account_id == account_id)
         .order_by(ReplyMacro.updated_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_or_create_for_account(db: AsyncSession, account_id: str) -> ReplyMacro:
+    """Single implicit macro per account — no user-facing macro management.
+    target_chats stays empty; execution resolves it dynamically to 'every
+    group the account is in' rather than a manually picked list."""
+    result = await db.execute(
+        select(ReplyMacro).where(ReplyMacro.account_id == account_id).order_by(ReplyMacro.created_at).limit(1)
+    )
+    macro = result.scalars().first()
+    if macro is not None:
+        return macro
+    macro = ReplyMacro(
+        account_id=account_id,
+        name="랜덤 답장",
+        target_chats="[]",
+        message_content="",
+        is_active=False,
+    )
+    db.add(macro)
+    await db.commit()
+    await db.refresh(macro)
+    return macro
+
+
+async def list_active_with_message(db: AsyncSession) -> list[ReplyMacro]:
+    result = await db.execute(
+        select(ReplyMacro).where(ReplyMacro.is_active.is_(True), ReplyMacro.message_content != "")
     )
     return list(result.scalars().all())
 
@@ -143,34 +161,6 @@ async def list_logs(
         query = query.where(ReplyMacroLog.status == status)
     result = await db.execute(query)
     return list(result.scalars().all())
-
-
-async def list_active_macros_due(db: AsyncSession) -> list[ReplyMacro]:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    result = await db.execute(
-        select(ReplyMacro).where(
-            ReplyMacro.is_active == True,  # noqa: E712
-            ReplyMacro.last_sent_at.is_(None) | (ReplyMacro.last_sent_at <= now),
-        )
-    )
-    return list(result.scalars().all())
-
-
-async def claim_macro_dispatch(db: AsyncSession, macro_id: str, observed_last_sent_at: datetime | None) -> bool:
-    result = await db.execute(
-        select(ReplyMacro).where(
-            ReplyMacro.id == macro_id,
-            ReplyMacro.is_active == True,  # noqa: E712
-        ).with_for_update()
-    )
-    macro = result.scalar_one_or_none()
-    if macro is None:
-        return False
-    if macro.last_sent_at != observed_last_sent_at:
-        return False
-    macro.last_sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    await db.commit()
-    return True
 
 
 async def mark_macro_sent(db: AsyncSession, macro: ReplyMacro) -> ReplyMacro:

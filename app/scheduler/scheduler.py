@@ -4,8 +4,7 @@ Reliability semantics (Sprint 22):
 - Each dispatch function wraps execution in try/except to prevent one
   failure from crashing the entire tick.
 - Broadcasts use atomic claim (status='sending') to prevent duplicate
-  concurrent execution across ticks or workers.
-- Reply macros already use claim_macro_dispatch for atomicity.
+  execution across ticks or workers.
 - Failed executions record safe error messages on the schedule record
   without disabling valid schedules.
 - In-memory concurrency guard prevents the same schedule from being
@@ -23,12 +22,13 @@ from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.billing import downgrade_expired_tenants
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
-from app.services.reply_macro_service import execute_reply_macro
+from app.services.random_reply_service import execute_random_reply
 from app.services.usdt_watcher import check_usdt_payments
 
 logger = get_logger(__name__)
 
 DISPATCH_INTERVAL_SECONDS = 30
+RANDOM_REPLY_INTERVAL_MINUTES = 30
 
 scheduler = AsyncIOScheduler()
 
@@ -36,7 +36,7 @@ scheduler = AsyncIOScheduler()
 # Prevents duplicate concurrent execution of the same schedule within this process.
 _running_broadcasts: set[str] = set()
 _running_recurring: set[str] = set()
-_running_macros: set[str] = set()
+_running_random_reply: set[str] = set()
 
 
 async def dispatch_due_broadcasts() -> None:
@@ -153,51 +153,24 @@ async def dispatch_due_broadcasts() -> None:
             _running_recurring.discard(parent_id)
 
 
-async def dispatch_due_reply_macros() -> None:
-    """Dispatch all reply macros that are due to be sent now.
-
-    Uses atomic claim_macro_dispatch to prevent double-execution
-    across concurrent ticks, multiple workers, or restart.
-    Each macro is processed independently — one failure does not
-    block others.
-    """
+async def dispatch_due_random_replies() -> None:
+    """Simplified random-reply toggle: every macro with is_active=True and a
+    non-empty message gets one random-reply pass across all of that account's
+    groups, on a fixed interval. No per-macro schedule configuration."""
     async with async_session_maker() as db:
-        due_macros = await macro_crud.list_active_macros_due(db)
+        macros = await macro_crud.list_active_with_message(db)
 
-    if not due_macros:
-        logger.info("macro_tick_completed", due_count=0)
-        return
-
-    for macro in due_macros:
-        # Skip if already running in this process
-        if macro.id in _running_macros:
-            logger.info("reply_macro_skipped_already_running", macro_id=macro.id)
+    for macro in macros:
+        if macro.id in _running_random_reply:
             continue
-
-        # Atomically claim this dispatch — skip if another tick/worker won.
-        # Pass the last_sent_at observed by list_active_macros_due so the
-        # claim is conditioned on it (true optimistic-concurrency check),
-        # not just is_active — otherwise two concurrent claims both succeed.
-        async with async_session_maker() as db:
-            claimed = await macro_crud.claim_macro_dispatch(db, macro.id, macro.last_sent_at)
-        if not claimed:
-            logger.info("reply_macro_skipped_already_claimed", macro_id=macro.id)
-            continue
-
-        _running_macros.add(macro.id)
+        _running_random_reply.add(macro.id)
         try:
-            logger.info("reply_macro_dispatched", macro_id=macro.id, account_id=macro.account_id)
-            await execute_reply_macro(macro.id)
+            result = await execute_random_reply(macro.id)
+            logger.info("random_reply_auto_dispatched", macro_id=macro.id, account_id=macro.account_id, result=result)
         except Exception as exc:
-            logger.error(
-                "reply_macro_failed",
-                macro_id=macro.id,
-                error=str(exc),
-            )
+            logger.error("random_reply_auto_dispatch_failed", macro_id=macro.id, error=str(exc))
         finally:
-            _running_macros.discard(macro.id)
-
-    logger.info("macro_tick_completed", dispatched=len(due_macros))
+            _running_random_reply.discard(macro.id)
 
 
 def start_scheduler() -> None:
@@ -205,12 +178,6 @@ def start_scheduler() -> None:
         dispatch_due_broadcasts,
         IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
         id="dispatch_due_broadcasts",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        dispatch_due_reply_macros,
-        IntervalTrigger(seconds=DISPATCH_INTERVAL_SECONDS),
-        id="dispatch_due_reply_macros",
         replace_existing=True,
     )
     scheduler.add_job(
@@ -237,6 +204,13 @@ def start_scheduler() -> None:
         generate_and_store_ops_report,
         IntervalTrigger(hours=24),
         id="generate_ai_ops_report",
+        replace_existing=True,
+    )
+    # 랜덤 답장 on/off 토글 — 켜진 계정은 이 주기로 자동 실행 (대상 그룹은 매번 새로 조회).
+    scheduler.add_job(
+        dispatch_due_random_replies,
+        IntervalTrigger(minutes=RANDOM_REPLY_INTERVAL_MINUTES),
+        id="dispatch_due_random_replies",
         replace_existing=True,
     )
     scheduler.start()
