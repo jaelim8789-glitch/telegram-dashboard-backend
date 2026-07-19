@@ -431,10 +431,24 @@ async def purchase_template(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """템플릿 구매 → 내 Agent로 복제"""
+    """템플릿 구매 → Stars 차감(판매자 70% 정산) → 내 Agent로 복제"""
     template = await db.get(AiAgent, template_id)
     if template is None or not template.is_template:
         raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다.")
+    if template.owner_id == identity.tenant_id:
+        raise HTTPException(status_code=400, detail="자신의 템플릿은 구매할 수 없습니다.")
+
+    new_balance = None
+    if template.template_price > 0:
+        from app.services.usage_tracker import spend_stars, add_stars_credit
+
+        result = await spend_stars(
+            identity.tenant_id, template.template_price, f"agent_template:{template_id}"
+        )
+        if not result["success"]:
+            raise HTTPException(status_code=402, detail=result["error"])
+        new_balance = result["new_balance"]
+        await add_stars_credit(template.owner_id, int(template.template_price * 0.7))
 
     agent = AiAgent(
         owner_id=identity.tenant_id,
@@ -447,4 +461,4 @@ async def purchase_template(
     template.template_purchases += 1
     await db.commit()
     await db.refresh(agent)
-    return {"id": agent.id, "name": agent.name, "role": agent.role}
+    return {"id": agent.id, "name": agent.name, "role": agent.role, "stars_balance": new_balance}

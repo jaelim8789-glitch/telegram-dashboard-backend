@@ -65,6 +65,7 @@ def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
         trial_expires_at=tenant.trial_expires_at if tenant else None,
         telegram_username=user.telegram_username or None,
         telegram_photo_url=user.telegram_photo_url or None,
+        stars_balance=tenant.stars_balance if tenant else 0,
     )
 
 
@@ -296,6 +297,7 @@ async def me(
             subscription_status=tenant.subscription_status if tenant else None,
             plan=tenant.plan if tenant else None,
             trial_expires_at=tenant.trial_expires_at if tenant else None,
+            stars_balance=tenant.stars_balance if tenant else 0,
         )
     return MeResponse(role=identity.kind)
 

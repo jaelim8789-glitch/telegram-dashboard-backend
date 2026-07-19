@@ -56,6 +56,7 @@ class MeResponse(BaseModel):
     trial_expires_at: datetime | None = None
     telegram_username: str | None = None
     telegram_photo_url: str | None = None
+    stars_balance: int = 0
 
 
 class TelegramLoginRequest(BaseModel):
