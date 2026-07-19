@@ -38,7 +38,6 @@ from app.api.join_queue import router as join_queue_router
 from app.api.team import router as team_router
 from app.api.webhook_settings import router as webhook_settings_router
 from app.api.ai_reply_v2 import router as ai_reply_v2_router
-from app.api.ai_chat_v2 import router as ai_chat_v2_router
 from app.api.deps import require_api_key_or_admin
 from app.api.channel_hub import router as channel_hub_router
 from app.api.folder import router as folder_router
@@ -200,7 +199,6 @@ app.include_router(search_router, dependencies=_auth_required)
 app.include_router(batch_router, dependencies=_auth_required)
 app.include_router(webhook_settings_router, dependencies=_auth_required)
 app.include_router(ai_reply_v2_router, dependencies=_auth_required)
-app.include_router(ai_chat_v2_router, dependencies=_auth_required)
 
 
 @app.get("/health")
