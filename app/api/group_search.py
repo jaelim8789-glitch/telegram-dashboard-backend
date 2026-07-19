@@ -5,8 +5,11 @@ from app.api.deps import get_current_identity, Identity, require_account_tenant_
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import group_search as group_search_crud
+from app.crud import join_queue as queue_crud
 from app.database import get_db
 from app.schemas.group_search import (
+    AutoQueueRequest,
+    AutoQueueResponse,
     GroupJoinLogList,
     GroupJoinLogRead,
     GroupSearchRequest,
@@ -104,6 +107,66 @@ async def join_groups(
         )
 
     return results
+
+
+@router.post("/auto-queue", response_model=AutoQueueResponse)
+async def auto_queue_groups(
+    payload: AutoQueueRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """검색 결과 중 조건(최소 인원 수, 미가입, 공개 username 존재)을 만족하는 그룹을
+    Smart Join Queue에 자동 등록한다. 실제 입장은 큐 프로세서(스케줄러)가
+    안전한 속도로 순차 처리한다 — 즉시 대량 가입으로 인한 계정 제재를 피하기 위함."""
+    await require_account_tenant_access(payload.account_id, db, identity)
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    results = await group_search_crud.get_recent_results(db, payload.account_id, keyword=payload.keyword, limit=200)
+    existing_items, _ = await queue_crud.list_queue(db, payload.account_id, limit=1000)
+    already_queued = {item.chat_id for item in existing_items if item.chat_id} | {
+        item.username for item in existing_items if item.username
+    }
+
+    to_queue: list[dict] = []
+    skipped_already_joined = 0
+    skipped_already_queued = 0
+    skipped_below_threshold = 0
+    skipped_no_username = 0
+
+    for r in results:
+        if r.is_joined:
+            skipped_already_joined += 1
+            continue
+        if r.chat_id in already_queued or (r.username and r.username in already_queued):
+            skipped_already_queued += 1
+            continue
+        if (r.participants_count or 0) < payload.min_members:
+            skipped_below_threshold += 1
+            continue
+        if not r.username:
+            skipped_no_username += 1
+            continue
+        to_queue.append({
+            "raw_link": f"https://t.me/{r.username}",
+            "title": r.title,
+            "chat_type": r.chat_type,
+            "username": r.username,
+            "chat_id": r.chat_id,
+        })
+
+    if to_queue:
+        await queue_crud.add_many_to_queue(db, payload.account_id, to_queue)
+        logger.info("group_search_auto_queued", account_id=payload.account_id, count=len(to_queue))
+
+    return AutoQueueResponse(
+        queued=len(to_queue),
+        skipped_already_joined=skipped_already_joined,
+        skipped_already_queued=skipped_already_queued,
+        skipped_below_threshold=skipped_below_threshold,
+        skipped_no_username=skipped_no_username,
+    )
 
 
 @router.get("/join-info/{account_id}", response_model=JoinInfo)

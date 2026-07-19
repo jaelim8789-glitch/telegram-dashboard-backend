@@ -9,6 +9,21 @@ class GroupSearchRequest(BaseModel):
     keyword: str = Field(min_length=1, max_length=100)
 
 
+class AutoQueueRequest(BaseModel):
+    """Auto-enqueue qualifying search results into the Smart Join Queue."""
+    account_id: str
+    keyword: str | None = None
+    min_members: int = Field(default=50, ge=0)
+
+
+class AutoQueueResponse(BaseModel):
+    queued: int
+    skipped_already_joined: int
+    skipped_already_queued: int
+    skipped_below_threshold: int
+    skipped_no_username: int
+
+
 class PublicGroupInfo(BaseModel):
     """Result from Telegram search returned to frontend for user selection."""
     chat_id: str
