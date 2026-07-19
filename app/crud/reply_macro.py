@@ -16,6 +16,11 @@ async def create_macro(
     *,
     name: str = "macro",
     media_path: str | None = None,
+    schedule_type: str = "interval",
+    interval_hours: int = 24,
+    fixed_time: str | None = None,
+    max_sends_per_day: int = 10,
+    is_active: bool = True,
     macro_data: object = None,
 ) -> ReplyMacro:
     if macro_data is not None:
@@ -32,6 +37,11 @@ async def create_macro(
         message_content = data.message_content
         name = getattr(data, "name", name)
         media_path = getattr(data, "media_path", media_path)
+        schedule_type = getattr(data, "schedule_type", schedule_type)
+        interval_hours = getattr(data, "interval_hours", interval_hours)
+        fixed_time = getattr(data, "fixed_time", fixed_time)
+        max_sends_per_day = getattr(data, "max_sends_per_day", max_sends_per_day)
+        is_active = getattr(data, "is_active", is_active)
 
     macro = ReplyMacro(
         account_id=account_id,
@@ -39,6 +49,11 @@ async def create_macro(
         target_chats=json.dumps(target_chats or []),
         message_content=message_content or "",
         media_path=media_path,
+        schedule_type=schedule_type,
+        interval_hours=interval_hours,
+        fixed_time=fixed_time,
+        max_sends_per_day=max_sends_per_day,
+        is_active=is_active,
     )
     db.add(macro)
     await db.commit()

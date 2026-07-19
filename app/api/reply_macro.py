@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
@@ -23,6 +23,19 @@ async def _get_account_or_404(account_id: str, db: AsyncSession):
     return account
 
 
+def _parse_target_chats(raw: str) -> list[str]:
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(c) for c in parsed]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="target_chats는 JSON 배열이어야 합니다.",
+    )
+
+
 @router.get("", response_model=list[ReplyMacroRead])
 async def list_macros(
     account_id: str,
@@ -38,15 +51,42 @@ async def list_macros(
 @router.post("", response_model=ReplyMacroRead, status_code=status.HTTP_201_CREATED)
 async def create_macro(
     account_id: str,
-    body: ReplyMacroCreate,
+    name: str = Form("macro"),
+    target_chats: str = Form("[]"),
+    message_content: str = Form(""),
+    schedule_type: str = Form("interval"),
+    interval_hours: str = Form("24"),
+    fixed_time: str = Form(""),
+    max_sends_per_day: str = Form("10"),
+    is_active: bool = Form(True),
+    file: UploadFile | None = File(default=None),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
     """랜덤 답장 매크로 생성."""
     await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
+
+    parsed_target_chats = _parse_target_chats(target_chats)
+    if not parsed_target_chats:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target_chats는 최소 1개 이상 필요합니다.")
+
+    media_path = None
+    if file is not None and file.filename:
+        media_path = await save_broadcast_media(file)
+
     macro = await macro_crud.create_macro(
-        db, account_id, body.target_chats, body.message_content
+        db,
+        account_id,
+        target_chats=parsed_target_chats,
+        message_content=message_content,
+        name=name,
+        media_path=media_path,
+        schedule_type=schedule_type,
+        interval_hours=int(interval_hours) if interval_hours.isdigit() else 24,
+        fixed_time=fixed_time or None,
+        max_sends_per_day=int(max_sends_per_day) if max_sends_per_day.isdigit() else 10,
+        is_active=is_active,
     )
     logger.info("reply_macro_created", account_id=account_id, macro_id=macro.id)
     return macro

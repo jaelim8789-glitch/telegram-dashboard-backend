@@ -1,3 +1,7 @@
+import hashlib
+import hmac
+import time
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +32,8 @@ from app.schemas.auth import (
     MeResponse,
     SendCodeRequest,
     SendCodeResponse,
+    TelegramLoginRequest,
+    TelegramLoginResponse,
     VerifyCodeRequest,
     VerifyCodeResponse,
 )
@@ -36,6 +42,30 @@ from app.services.usage_tracker import apply_plan_limits
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = get_logger(__name__)
+
+
+def _verify_telegram_widget(data: TelegramLoginRequest, bot_token: str) -> bool:
+    raw = data.model_dump(exclude={"hash"})
+    check_string_parts = []
+    for key, value in sorted(raw.items()):
+        if value is not None and value != "":
+            check_string_parts.append(f"{key}={value}")
+    check_string = "\n".join(check_string_parts)
+    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    computed = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+    return computed == data.hash
+
+
+def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
+    return MeResponse(
+        role="user",
+        phone=user.phone,
+        subscription_status=tenant.subscription_status if tenant else None,
+        plan=tenant.plan if tenant else None,
+        trial_expires_at=tenant.trial_expires_at if tenant else None,
+        telegram_username=user.telegram_username or None,
+        telegram_photo_url=user.telegram_photo_url or None,
+    )
 
 
 @router.post("/send-code", response_model=SendCodeResponse)
@@ -180,6 +210,71 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 비활성화된 API 키입니다.")
 
 
+@router.post("/telegram-login", response_model=TelegramLoginResponse)
+async def telegram_login(
+    payload: TelegramLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.telegram_bot_token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram Login이 설정되지 않았습니다.")
+
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "telegram_login", max_attempts=10, window_seconds=300):
+        retry_after = get_retry_after_seconds(client_ip, "telegram_login")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if not _verify_telegram_widget(payload, settings.telegram_bot_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Telegram 로그인 인증에 실패했습니다.")
+
+    now_ts = int(time.time())
+    if now_ts - payload.auth_date > 86400:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 만료되었습니다. 다시 시도해주세요.")
+
+    user = await user_crud.get_or_create_user_by_telegram(
+        db, payload.id, payload.username, payload.photo_url,
+    )
+
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비활성화된 계정입니다.")
+
+    await user_crud.touch_last_login(db, user)
+
+    from sqlalchemy import select
+    result = await db.execute(select(Tenant).where(Tenant.phone == user.phone))
+    tenant = result.scalar_one_or_none()
+    is_new_user = tenant is None
+
+    if not tenant:
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
+        tenant = Tenant(
+            phone=user.phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant.id,
+    )
+
+    logger.info("telegram_login_success", user_id=user.id, telegram_id=payload.id)
+    return TelegramLoginResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+        is_new_user=is_new_user,
+    )
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(
     identity: Identity = Depends(get_current_identity),
@@ -189,17 +284,13 @@ async def me(
         from sqlalchemy import select
         result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
         tenant = result.scalar_one_or_none()
-        return MeResponse(
-            role=identity.kind,
-            phone=identity.user.phone,
-            subscription_status=tenant.subscription_status if tenant else None,
-            plan=tenant.plan if tenant else None,
-            trial_expires_at=tenant.trial_expires_at if tenant else None,
-        )
+        return _public_me_response(identity.user, tenant)
     if identity.tenant_id:
         from sqlalchemy import select
         result = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
         tenant = result.scalar_one_or_none()
+        if identity.user:
+            return _public_me_response(identity.user, tenant)
         return MeResponse(
             role=identity.kind,
             subscription_status=tenant.subscription_status if tenant else None,

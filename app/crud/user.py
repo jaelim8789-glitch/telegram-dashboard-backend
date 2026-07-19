@@ -113,3 +113,35 @@ async def set_active(db: AsyncSession, user: User, is_active: bool) -> User:
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def get_user_by_telegram_id(db: AsyncSession, telegram_id: int) -> User | None:
+    result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_user_by_telegram(
+    db: AsyncSession,
+    telegram_id: int,
+    telegram_username: str | None,
+    telegram_photo_url: str | None,
+) -> User:
+    user = await get_user_by_telegram_id(db, telegram_id)
+    if user is None:
+        user = User(
+            telegram_id=telegram_id,
+            telegram_username=telegram_username or "",
+            telegram_photo_url=telegram_photo_url or "",
+            phone=f"tg_{telegram_id}",
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    else:
+        if telegram_username and telegram_username != user.telegram_username:
+            user.telegram_username = telegram_username
+        if telegram_photo_url:
+            user.telegram_photo_url = telegram_photo_url
+        await db.commit()
+        await db.refresh(user)
+    return user

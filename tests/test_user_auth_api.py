@@ -185,6 +185,8 @@ async def test_auth_me_reports_admin_role(unauthenticated_client):
         "subscription_status": None,
         "plan": None,
         "trial_expires_at": None,
+        "telegram_username": None,
+        "telegram_photo_url": None,
     }
 
 
@@ -244,4 +246,6 @@ async def test_auth_me_reports_api_key_role(unauthenticated_client):
         "subscription_status": None,
         "plan": None,
         "trial_expires_at": None,
+        "telegram_username": None,
+        "telegram_photo_url": None,
     }

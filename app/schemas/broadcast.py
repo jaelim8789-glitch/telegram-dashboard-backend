@@ -96,6 +96,7 @@ class BroadcastChildrenRead(BaseModel):
     created_at: datetime
     error_message: str | None
     failure_info: dict | None = None
+    delivery_mode: DeliveryMode = "normal"
     reply_to_msg_id: int | None = None
     inline_buttons: list[dict] | None = None
 

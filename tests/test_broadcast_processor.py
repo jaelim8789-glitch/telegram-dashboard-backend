@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -861,3 +861,191 @@ async def test_concurrent_dispatch_only_processes_the_winning_claim(db_session, 
         f"deliver_message was called {len(deliver_calls)} times for one broadcast_id — "
         "a concurrent second call reached actual delivery instead of being rejected"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sprint 31 — Broadcast reply_to_map actual propagation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_reply_mode_populates_reply_to_map_from_explicit_id(db_session, monkeypatch):
+    """When delivery_mode='reply' and reply_to_msg_id is set, reply_to_map must be
+    populated with that ID for every recipient so the delivery layer uses it
+    per-recipient instead of relying on the fallback reply_to_msg_id."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(
+        db_session, account.id, message="답장 테스트",
+        recipients=["-100001", "-100002"],
+    )
+    broadcast.delivery_mode = "reply"
+    broadcast.reply_to_msg_id = 55555
+    await db_session.commit()
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["reply_to_map"] = dict(request.reply_to_map) if request.reply_to_map else None
+        captured["reply_to_msg_id"] = request.reply_to_msg_id
+        return [_success_result(r) for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+
+    await process_broadcast(broadcast.id, skip_rate_limit=True)
+
+    assert captured["reply_to_map"] == {"-100001": 55555, "-100002": 55555}
+    assert captured["reply_to_msg_id"] == 55555
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_reply_mode_fetches_per_recipient_reply_map(db_session, monkeypatch):
+    """When delivery_mode='reply' and no explicit reply_to_msg_id is set, the
+    processor must fetch the latest message per recipient and populate
+    reply_to_map accordingly."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(
+        db_session, account.id, message="답장 테스트",
+        recipients=["-100001", "-100002"],
+    )
+    broadcast.delivery_mode = "reply"
+    broadcast.reply_to_msg_id = None
+    await db_session.commit()
+
+    fake_message_1 = MagicMock()
+    fake_message_1.id = 111
+    fake_message_2 = MagicMock()
+    fake_message_2.id = 222
+
+    fake_client = AsyncMock()
+    fake_client.get_messages = AsyncMock(side_effect=[[fake_message_1], [fake_message_2]])
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["reply_to_map"] = dict(request.reply_to_map) if request.reply_to_map else None
+        captured["reply_to_msg_id"] = request.reply_to_msg_id
+        return [_success_result(r) for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+    monkeypatch.setattr("app.services.broadcast_processor.get_authorized_client", AsyncMock(return_value=fake_client))
+
+    await process_broadcast(broadcast.id, skip_rate_limit=True)
+
+    assert captured["reply_to_map"] == {"-100001": 111, "-100002": 222}
+    assert captured["reply_to_msg_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_reply_mode_maintains_reply_map_after_group_resolution(db_session, monkeypatch):
+    """When a broadcast has group_ids and delivery_mode='reply', after group
+    resolution the reply_to_map must be built for the resolved recipients."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(
+        db_session, account.id, message="그룹 답장 테스트",
+        recipients=[],
+    )
+    broadcast.delivery_mode = "reply"
+    broadcast.reply_to_msg_id = 77777
+    broadcast.group_ids = ["-100999"]
+    await db_session.commit()
+
+    fake_member_1 = MagicMock()
+    fake_member_1.id = 123456
+    fake_member_2 = MagicMock()
+    fake_member_2.id = 789012
+
+    captured = {}
+
+    async def _capture(request, *args, **kwargs):
+        captured["reply_to_map"] = dict(request.reply_to_map) if request.reply_to_map else None
+        captured["recipients"] = list(request.recipients)
+        return [_success_result(r) for r in request.recipients]
+
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", _capture)
+    monkeypatch.setattr("app.services.broadcast_processor.list_group_members", AsyncMock(return_value=[fake_member_1, fake_member_2]))
+
+    await process_broadcast(broadcast.id, skip_rate_limit=True)
+
+    assert set(captured["recipients"]) == {"123456", "789012"}
+    assert captured["reply_to_map"] == {"123456": 77777, "789012": 77777}
+
+
+@pytest.mark.asyncio
+async def test_delivery_pipeline_uses_per_recipient_reply_to_map(db_session, monkeypatch):
+    """Integration test: when DeliveryRequest.reply_to_map has different IDs per
+    recipient, the delivery pipeline must pass the correct per-recipient value
+    to _send_single / Telethon, falling back to reply_to_msg_id only when the
+    map is absent."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(
+        db_session, account.id, message="통합 답장 테스트",
+        recipients=["-100001", "-100002", "-100003"],
+    )
+    broadcast.delivery_mode = "reply"
+    broadcast.reply_to_msg_id = None
+    await db_session.commit()
+
+    captured_reply_to = {}
+
+    async def _fake_send_single(client, target, message, media_path=None, reply_to_msg_id=None, inline_buttons=None):
+        captured_reply_to[str(target)] = reply_to_msg_id
+        return (DeliveryStatus.SUCCESS, 200, None, None)
+
+    monkeypatch.setattr("app.services.delivery._send_single", _fake_send_single)
+    monkeypatch.setattr("app.services.delivery.get_authorized_client", AsyncMock(return_value="dummy-client"))
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100001", "-100002", "-100003"],
+        message="통합 답장 테스트",
+        source="broadcast",
+        source_id=broadcast.id,
+        reply_to_map={"-100001": 111, "-100002": 222, "-100003": 333},
+    )
+
+    results = await deliver_message(request)
+
+    assert captured_reply_to == {"-100001": 111, "-100002": 222, "-100003": 333}
+    assert all(r.status == DeliveryStatus.SUCCESS for r in results)
+
+
+@pytest.mark.asyncio
+async def test_delivery_pipeline_falls_back_to_reply_to_msg_id_when_map_absent(db_session, monkeypatch):
+    """When reply_to_map is None, the delivery pipeline must fall back to
+    reply_to_msg_id for all recipients."""
+    account = await _make_account(db_session)
+    broadcast = await _make_broadcast(
+        db_session, account.id, message="fallback 테스트",
+        recipients=["-100001", "-100002"],
+    )
+    broadcast.delivery_mode = "reply"
+    broadcast.reply_to_msg_id = 55555
+    await db_session.commit()
+
+    captured_reply_to = {}
+
+    async def _fake_send_single(client, target, message, media_path=None, reply_to_msg_id=None, inline_buttons=None):
+        captured_reply_to[str(target)] = reply_to_msg_id
+        return (DeliveryStatus.SUCCESS, 200, None, None)
+
+    monkeypatch.setattr("app.services.delivery._send_single", _fake_send_single)
+    monkeypatch.setattr("app.services.delivery.get_authorized_client", AsyncMock(return_value="dummy-client"))
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    request = DeliveryRequest(
+        account_id=account.id,
+        recipients=["-100001", "-100002"],
+        message="fallback 테스트",
+        source="broadcast",
+        source_id=broadcast.id,
+        reply_to_msg_id=55555,
+        reply_to_map=None,
+    )
+
+    results = await deliver_message(request)
+
+    assert captured_reply_to == {"-100001": 55555, "-100002": 55555}
+    assert all(r.status == DeliveryStatus.SUCCESS for r in results)

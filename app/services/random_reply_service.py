@@ -1,3 +1,4 @@
+import asyncio
 import json
 import random
 from datetime import datetime, timezone
@@ -11,6 +12,17 @@ from app.services.telegram_actions import AccountNotAuthenticatedError, get_auth
 
 logger = get_logger(__name__)
 
+_macro_locks: dict[str, asyncio.Lock] = {}
+_macro_lock_global = asyncio.Lock()
+
+
+def _get_macro_lock(macro_id: str) -> asyncio.Lock:
+    lock = _macro_locks.get(macro_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _macro_locks[macro_id] = lock
+    return lock
+
 
 async def execute_random_reply(macro_id: str) -> dict:
     """Execute a random reply macro.
@@ -18,6 +30,13 @@ async def execute_random_reply(macro_id: str) -> dict:
     For each target chat, fetch recent messages, pick a random one from a unique user
     who hasn't been replied to before, and send the macro's message as a reply.
     """
+    lock = _get_macro_lock(macro_id)
+    async with lock:
+        return await _execute_random_reply_impl(macro_id)
+
+
+async def _execute_random_reply_impl(macro_id: str) -> dict:
+    """Internal implementation — callers must hold the per-macro lock."""
     async with async_session_maker() as db:
         macro = await macro_crud.get_macro(db, macro_id)
         if macro is None or not macro.is_active:
@@ -41,6 +60,10 @@ async def execute_random_reply(macro_id: str) -> dict:
     except AccountNotAuthenticatedError:
         return {"status": "failed", "reason": "not_authenticated"}
 
+    if not client.is_connected():
+        logger.warning("random_reply_client_disconnected", macro_id=macro_id, account_id=account.id)
+        return {"status": "failed", "reason": "client_disconnected"}
+
     results = []
     async with async_session_maker() as db:
         macro = await macro_crud.get_macro(db, macro_id)
@@ -54,22 +77,26 @@ async def execute_random_reply(macro_id: str) -> dict:
                 messages = await client.get_messages(target, limit=20)
             except Exception as exc:
                 logger.warning("random_reply: failed to fetch messages for %s: %s", chat_id, exc)
+                results.append({"chat_id": chat_id, "user_id": None, "status": "failed", "error": str(exc)})
                 continue
 
-            # Pick a random message from a unique user not already used
             candidates = []
             seen_users_in_chat = set()
             for msg in messages:
                 if msg.out:
-                    continue  # skip our own messages
-                sender = await msg.get_sender()
+                    continue
+                try:
+                    sender = await msg.get_sender()
+                except Exception as exc:
+                    logger.debug("random_reply_get_sender_failed", macro_id=macro_id, chat_id=chat_id, error=str(exc))
+                    continue
                 if sender is None:
                     continue
                 uid = str(sender.id)
                 if (chat_id, uid) in used_set:
                     continue
                 if uid in seen_users_in_chat:
-                    continue  # only one msg per user per chat
+                    continue
                 seen_users_in_chat.add(uid)
                 candidates.append((uid, msg))
 
@@ -79,7 +106,6 @@ async def execute_random_reply(macro_id: str) -> dict:
 
             chosen_uid, chosen_msg = random.choice(candidates)
 
-            # Send as reply to the chosen message
             request = DeliveryRequest(
                 account_id=macro.account_id,
                 recipients=[chat_id],
@@ -90,7 +116,12 @@ async def execute_random_reply(macro_id: str) -> dict:
                 reply_to_map={chat_id: chosen_msg.id},
             )
 
-            delivery_results = await deliver_message(request)
+            try:
+                delivery_results = await deliver_message(request)
+            except Exception as exc:
+                logger.error("random_reply_delivery_failed", macro_id=macro_id, chat_id=chat_id, error=str(exc))
+                results.append({"chat_id": chat_id, "user_id": chosen_uid, "status": "failed", "error": str(exc)})
+                continue
 
             for dr in delivery_results:
                 is_success = dr.status == DeliveryStatus.SUCCESS
@@ -114,5 +145,9 @@ async def execute_random_reply(macro_id: str) -> dict:
                 })
 
         await macro_crud.mark_macro_sent(db, macro)
+
+    failed_count = sum(1 for r in results if r["status"] == "failed")
+    if failed_count:
+        logger.warning("random_reply_partial_failure", macro_id=macro_id, failed=failed_count, total=len(results))
 
     return {"status": "completed", "results": results}

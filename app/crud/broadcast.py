@@ -299,7 +299,6 @@ async def list_logs(
             return []
 
     query = query.order_by(Broadcast.created_at.desc())
-    query = query.where(Broadcast.recurring_interval_minutes.is_(None))
     if account_id:
         query = query.where(Broadcast.account_id == account_id)
     if status:
@@ -439,6 +438,9 @@ async def create_recurring_child_broadcast(
         status="pending",
         scheduled_at=scheduled_at,
         parent_broadcast_id=parent.id,
+        delivery_mode=parent.delivery_mode,
+        reply_to_msg_id=parent.reply_to_msg_id,
+        campaign_id=parent.campaign_id,
         delay_seconds=parent.delay_seconds,
         inline_buttons=parent.inline_buttons,
         group_ids=parent.group_ids,

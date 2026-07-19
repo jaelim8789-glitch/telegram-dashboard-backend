@@ -149,6 +149,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                 broadcast_id=broadcast_id,
                 reply_to_msg_id=explicit_reply_to_id,
             )
+            reply_to_map = {recipient: explicit_reply_to_id for recipient in recipients_local}
         else:
             async with async_session_maker() as db:
                 account = await account_crud.get_account(db, account_id_local)

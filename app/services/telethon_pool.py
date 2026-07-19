@@ -13,6 +13,10 @@ class PendingAuth:
     phone_code_hash: str
 
 
+class SessionInvalidError(Exception):
+    """Raised when a pooled TelegramClient's session is no longer authorized."""
+
+
 logger = get_logger(__name__)
 
 
@@ -70,6 +74,13 @@ class TelethonClientPool:
                                 error=str(exc),
                             )
                             raise
+            if session_string and not await client.is_user_authorized():
+                self._clients.pop(account_id, None)
+                self._pending_auth.pop(account_id, None)
+                logger.warning("telethon_session_invalid", account_id=account_id)
+                raise SessionInvalidError(
+                    f"Telegram session is no longer authorized for account {account_id}"
+                )
             return client
 
     def peek_client(self, account_id: str) -> TelegramClient | None:

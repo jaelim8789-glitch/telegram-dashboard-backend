@@ -114,6 +114,47 @@ async def call_deepseek(
         return None, 0
 
 
+async def _call_deepseek_stream(
+    messages: list[dict],
+    max_tokens: int = _MAX_TOKENS,
+    model: str | None = None,
+):
+    """SSE 스트리밍 버전: async generator가 토큰을 하나씩 yield."""
+    if not settings.deepseek_api_key:
+        logger.warning("deepseek_api_key not configured")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream(
+                "POST",
+                f"{settings.deepseek_api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                json={
+                    "model": model or settings.deepseek_model or _DEFAULT_MODEL,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                },
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        continue
+    except Exception as exc:
+        logger.error("ai_deepseek_stream_error", error=str(exc))
+        yield None
+
+
 # ─── Graphiti Memory Integration ──────────────────────────────────────────
 
 

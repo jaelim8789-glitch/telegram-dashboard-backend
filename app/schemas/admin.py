@@ -58,3 +58,38 @@ class GuideHubPublishResponse(BaseModel):
     chat_id: str
     message_id: int
     created: bool
+
+
+class AdminDashboardUserStats(BaseModel):
+    total: int
+    active: int
+    inactive: int
+
+
+class AdminDashboardAccountStats(BaseModel):
+    total: int
+    healthy: int
+    unhealthy: int
+    not_configured: int
+    banned: int
+    rate_limited: int
+    unauthorized: int
+    error_count: int
+    unknown: int
+    has_session: int
+    has_errors: int
+    total_today_sent: int
+    total_groups: int
+
+
+class AdminDashboardBroadcastStats(BaseModel):
+    recent_total: int
+    recent_failed: int
+    failure_rate: float
+    recent_window_hours: int = 24
+
+
+class AdminDashboardStatusResponse(BaseModel):
+    users: AdminDashboardUserStats
+    accounts: AdminDashboardAccountStats
+    broadcasts: AdminDashboardBroadcastStats

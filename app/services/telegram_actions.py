@@ -8,7 +8,7 @@ from app.core.crypto import decrypt_session
 from app.core.limits import INTER_MESSAGE_DELAY_SECONDS
 from app.core.logging import get_logger
 from app.models.account import Account
-from app.services.telethon_pool import pool
+from app.services.telethon_pool import pool, SessionInvalidError
 
 logger = get_logger(__name__)
 
@@ -23,7 +23,10 @@ async def get_authorized_client(account: Account) -> TelegramClient:
             "계정이 아직 인증되지 않았습니다. 먼저 '계정 등록'에서 Telegram 인증을 완료해주세요."
         )
     session_string = decrypt_session(account.session_data)
-    client = await pool.get_client(account.id, session_string)
+    try:
+        client = await pool.get_client(account.id, session_string)
+    except SessionInvalidError as exc:
+        raise AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.") from exc
     if not await client.is_user_authorized():
         raise AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.")
     return client

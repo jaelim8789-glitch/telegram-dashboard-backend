@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_identity, require_admin
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
@@ -14,6 +14,7 @@ from app.models.audit_log import AdminAuditLog
 from app.models.tenant import Tenant
 from app.models.telegram_verification import TelegramChannelVerification
 from app.schemas.admin import (
+    AdminDashboardStatusResponse,
     AdminLoginRequest,
     AdminMeResponse,
     AdminTokenResponse,
@@ -24,10 +25,11 @@ from app.schemas.admin import (
 )
 from app.services.guide_hub_service import GuideHubUnavailable, publish_or_update_guide_hub
 from app.services.usage_tracker import apply_plan_limits
+from app.services.account_health import get_health_summary
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
-
-from datetime import datetime, timezone
+from app.models.message_log import MessageLog
+from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
@@ -320,3 +322,53 @@ async def publish_guide_hub(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     logger.info("guide_hub_publish_requested", chat_id=chat_id, message_id=message_id, created=created)
     return GuideHubPublishResponse(chat_id=chat_id, message_id=message_id, created=created)
+
+
+@router.get("/dashboard/status", response_model=AdminDashboardStatusResponse, dependencies=[Depends(require_admin)])
+async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identity = Depends(get_current_identity)):
+    """Get aggregated real-time status for the admin dashboard."""
+    users = await user_crud.list_users(db)
+    active_users = [u for u in users if u.is_active]
+    inactive_users = [u for u in users if not u.is_active]
+
+    summary = await get_health_summary(identity)
+
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+    result = await db.execute(
+        select(
+            func.count(MessageLog.id).label("total"),
+            func.sum(case((MessageLog.success.is_(False), 1), else_=0)).label("failed"),
+        ).where(MessageLog.created_at >= since)
+    )
+    row = result.one_or_none()
+    recent_total = row.total or 0 if row else 0
+    recent_failed = row.failed or 0 if row else 0
+    failure_rate = round((recent_failed / recent_total * 100), 1) if recent_total > 0 else 0.0
+
+    return AdminDashboardStatusResponse(
+        users=AdminDashboardUserStats(
+            total=len(users),
+            active=len(active_users),
+            inactive=len(inactive_users),
+        ),
+        accounts=AdminDashboardAccountStats(
+            total=summary.total,
+            healthy=summary.healthy,
+            unhealthy=summary.unhealthy,
+            not_configured=summary.not_configured,
+            banned=summary.banned,
+            rate_limited=summary.rate_limited,
+            unauthorized=summary.unauthorized,
+            error_count=summary.error_count,
+            unknown=summary.unknown,
+            has_session=summary.has_session,
+            has_errors=summary.has_errors,
+            total_today_sent=summary.total_today_sent,
+            total_groups=summary.total_groups,
+        ),
+        broadcasts=AdminDashboardBroadcastStats(
+            recent_total=recent_total,
+            recent_failed=recent_failed,
+            failure_rate=failure_rate,
+        ),
+    )

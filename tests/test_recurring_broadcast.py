@@ -1032,3 +1032,36 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     assert child_b.status == "sent"
     await db_session.refresh(child_a)
     assert child_a.status in ("sent", "failed")
+
+
+@pytest.mark.asyncio
+async def test_recurring_child_propagates_delivery_mode_and_reply_and_campaign(db_session, monkeypatch):
+    """Child broadcasts must inherit delivery_mode, reply_to_msg_id, and
+    campaign_id from their parent so recurring reply-mode broadcasts don't
+    silently revert to normal mode on each execution."""
+    account = await _make_account(db_session)
+    parent = await _make_broadcast(
+        db_session, account.id, recurring_interval_minutes=30,
+        delivery_mode="reply", reply_to_msg_id=55555, campaign_id="camp-1",
+    )
+    parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.services.broadcast_processor.deliver_message",
+        AsyncMock(return_value=[_success_result()]),
+    )
+
+    await dispatch_due_broadcasts()
+
+    from app.models.broadcast import Broadcast
+    from sqlalchemy import select as sa_select
+    result = await db_session.execute(
+        sa_select(Broadcast).where(Broadcast.parent_broadcast_id == parent.id)
+    )
+    children = list(result.scalars().all())
+    assert len(children) >= 1
+    child = children[0]
+    assert child.delivery_mode == "reply"
+    assert child.reply_to_msg_id == 55555
+    assert child.campaign_id == "camp-1"

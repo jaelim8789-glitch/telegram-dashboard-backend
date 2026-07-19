@@ -37,9 +37,39 @@ class LoginWithApiKeyResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class TelegramLoginRequest(BaseModel):
+    phone: str = Field(min_length=1, max_length=50)
+    code: str = Field(min_length=1, max_length=10)
+
+
+class TelegramLoginResponse(BaseModel):
+    access_token: str
+    session_token: str | None = None
+    token_type: str = "bearer"
+
+
 class MeResponse(BaseModel):
     role: Literal["admin", "user", "api_key"]
     phone: str | None = None
     subscription_status: str | None = None
     plan: str | None = None
     trial_expires_at: datetime | None = None
+    telegram_username: str | None = None
+    telegram_photo_url: str | None = None
+
+
+class TelegramLoginRequest(BaseModel):
+    id: int
+    first_name: str
+    last_name: str | None = None
+    username: str | None = None
+    photo_url: str | None = None
+    auth_date: int
+    hash: str
+
+
+class TelegramLoginResponse(BaseModel):
+    access_token: str
+    session_token: str
+    token_type: str = "bearer"
+    is_new_user: bool = False
