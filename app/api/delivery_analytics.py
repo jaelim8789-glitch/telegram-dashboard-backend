@@ -8,7 +8,7 @@ Sprint 16 extensions:
 - Overview endpoint (GET /overview)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.deps import get_current_identity, Identity
 from app.services.delivery_analytics import (
@@ -27,6 +27,7 @@ from app.services.delivery_analytics import (
     get_latency_by_account,
     get_overview,
 )
+from app.services.performance_card import generate_performance_card
 
 router = APIRouter(prefix="/api/delivery-analytics", tags=["delivery-analytics"])
 
@@ -288,3 +289,20 @@ async def api_logical_broadcast_analytics(
         start_time=start_time, end_time=end_time,
     )
     return result
+
+
+@router.get("/performance-card")
+async def api_performance_card(
+    days: int = Query(default=30, le=365, ge=1),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Render a shareable PNG card summarizing this tenant's delivery stats
+    over the last `days` (total sent, success rate) — for sharing outside
+    the dashboard (e.g. Telegram, social media) as a lightweight growth hook.
+    """
+    png_bytes = await generate_performance_card(identity, days=days)
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="telemon-performance-{days}d.png"'},
+    )
