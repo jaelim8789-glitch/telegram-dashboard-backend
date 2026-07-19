@@ -93,6 +93,10 @@ async def dispatch_due_broadcasts() -> None:
                     continue
                 one_time_ids.append(broadcast.id)
 
+    if not one_time_ids and not recurring_ids:
+        logger.info("broadcast_tick_completed", due_count=0)
+        return
+
     # Dispatch one-time broadcasts (existing flow)
     for broadcast_id in one_time_ids:
         async with async_session_maker() as db:
@@ -123,6 +127,8 @@ async def dispatch_due_broadcasts() -> None:
                 )
         finally:
             _running_broadcasts.discard(broadcast_id)
+
+    logger.info("broadcast_tick_completed", one_time=len(one_time_ids), recurring=len(recurring_ids))
 
     # Dispatch recurring parent broadcasts
     for parent_id in recurring_ids:
@@ -158,6 +164,10 @@ async def dispatch_due_reply_macros() -> None:
     async with async_session_maker() as db:
         due_macros = await macro_crud.list_active_macros_due(db)
 
+    if not due_macros:
+        logger.info("macro_tick_completed", due_count=0)
+        return
+
     for macro in due_macros:
         # Skip if already running in this process
         if macro.id in _running_macros:
@@ -186,6 +196,8 @@ async def dispatch_due_reply_macros() -> None:
             )
         finally:
             _running_macros.discard(macro.id)
+
+    logger.info("macro_tick_completed", dispatched=len(due_macros))
 
 
 def start_scheduler() -> None:

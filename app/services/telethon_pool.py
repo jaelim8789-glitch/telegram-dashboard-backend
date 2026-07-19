@@ -5,11 +5,15 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from app.config import settings
+from app.core.logging import get_logger
 
 
 @dataclass
 class PendingAuth:
     phone_code_hash: str
+
+
+logger = get_logger(__name__)
 
 
 class TelethonClientPool:
@@ -20,6 +24,10 @@ class TelethonClientPool:
     processes. Fine for a single personal-use uvicorn process; a multi-worker deployment
     would need a shared store (e.g. Redis) instead.
     """
+
+    MAX_RECONNECT_ATTEMPTS = 3
+    RECONNECT_DELAY_SECONDS = 2
+    DISCONNECT_TIMEOUT_SECONDS = 5
 
     def __init__(self) -> None:
         self._clients: dict[str, TelegramClient] = {}
@@ -41,7 +49,27 @@ class TelethonClientPool:
                 client = TelegramClient(StringSession(session_string), api_id, api_hash)
                 self._clients[account_id] = client
             if not client.is_connected():
-                await client.connect()
+                for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+                    try:
+                        await client.connect()
+                        break
+                    except Exception as exc:
+                        logger.warning(
+                            "telethon_reconnect_attempt",
+                            account_id=account_id,
+                            attempt=attempt,
+                            max_attempts=self.MAX_RECONNECT_ATTEMPTS,
+                            error=str(exc),
+                        )
+                        if attempt < self.MAX_RECONNECT_ATTEMPTS:
+                            await asyncio.sleep(self.RECONNECT_DELAY_SECONDS)
+                        else:
+                            logger.error(
+                                "telethon_reconnect_exhausted",
+                                account_id=account_id,
+                                error=str(exc),
+                            )
+                            raise
             return client
 
     def peek_client(self, account_id: str) -> TelegramClient | None:
@@ -64,11 +92,23 @@ class TelethonClientPool:
             client = self._clients.pop(account_id, None)
         self._pending_auth.pop(account_id, None)
         if client is not None:
-            await client.disconnect()
+            try:
+                await asyncio.wait_for(
+                    client.disconnect(),
+                    timeout=self.DISCONNECT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("telethon_disconnect_timeout", account_id=account_id)
+            except Exception as exc:
+                logger.warning("telethon_disconnect_error", account_id=account_id, error=str(exc))
 
     async def disconnect_all(self) -> None:
+        tasks = []
         for account_id in list(self._clients):
-            await self.remove_client(account_id)
+            tasks.append(self.remove_client(account_id))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info("telethon_pool_disconnected", count=len(tasks))
 
 
 pool = TelethonClientPool()

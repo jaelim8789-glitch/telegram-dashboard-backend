@@ -56,7 +56,7 @@ async def start(request: Request, db: AsyncSession = Depends(get_db)):
     return TelegramVerifyStartResponse(
         token=row.id,
         bot_deep_link=f"https://t.me/{settings.telegram_bot_username}?start={row.id}",
-        channel_url="https://t.me/TeleMon_2",
+        channel_url=settings.telegram_official_channel_url,
     )
 
 
