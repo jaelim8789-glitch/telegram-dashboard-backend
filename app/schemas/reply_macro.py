@@ -18,10 +18,12 @@ class ReplyMacroCreate(BaseModel):
 
 
 class ReplyMacroUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str | None = Field(default=None, min_length=1, max_length=100)
     target_chats: list[str] | None = None
     message_content: str | None = Field(default=None, min_length=1, max_length=4096)
-    schedule_type: Literal["interval", "fixed"] | None = None
+    schedule_type: str | None = Field(default=None, pattern=r"^(interval|fixed)$")
     interval_hours: int | None = Field(default=None, ge=1)
     fixed_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     max_sends_per_day: int | None = Field(default=None, ge=1)

@@ -195,7 +195,7 @@ async def create_account(
         account_data = payload.model_dump()
         if identity.tenant_id:
             account_data["tenant_id"] = identity.tenant_id
-        account = await account_crud.create_account(db, AccountCreate(**account_data) if hasattr(payload, 'model_dump') else payload)
+        account = await account_crud.create_account(db, AccountCreate(**account_data))
         if identity.tenant_id:
             account.tenant_id = identity.tenant_id
             await db.commit()

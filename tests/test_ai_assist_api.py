@@ -14,7 +14,6 @@ from app.main import app
 from app.models.tenant import Lead
 import app.api.ai_assist as ai_assist_module
 import app.services.ai_analysis_service as ai_analysis_service_module
-import app.services.ai_reply_service as ai_reply_service_module
 
 
 async def _admin_headers(client) -> dict[str, str]:
@@ -28,7 +27,7 @@ async def _admin_headers(client) -> dict[str, str]:
 @pytest.mark.asyncio
 async def test_suggest_reply_returns_drafted_text(client, monkeypatch):
     monkeypatch.setattr(
-        ai_reply_service_module, "_call_deepseek", AsyncMock(return_value="안녕하세요! 문의 감사합니다.")
+        ai_assist_module, "_call_deepseek", AsyncMock(return_value="안녕하세요! 문의 감사합니다.")
     )
 
     res = await client.post("/api/ai/suggest-reply", json={"incoming_message": "영업시간이 어떻게 되나요?"})
@@ -39,7 +38,7 @@ async def test_suggest_reply_returns_drafted_text(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_suggest_reply_503_on_deepseek_failure(client, monkeypatch):
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_assist_module, "_call_deepseek", AsyncMock(return_value=None))
 
     res = await client.post("/api/ai/suggest-reply", json={"incoming_message": "안녕하세요"})
 

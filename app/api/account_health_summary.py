@@ -14,63 +14,6 @@ from app.services.account_health import get_account_health
 router = APIRouter(prefix="/api/account-health", tags=["account-health"])
 
 
-@router.get("/summary")
-async def api_health_summary(
-    identity: Identity = Depends(get_current_identity),
-):
-    """Get aggregated health summary with counts per state."""
-    items = await get_account_health(identity)
-    total = len(items)
-    counts = {}
-    for item in items:
-        s = item.status
-        counts[s] = counts.get(s, 0) + 1
-    
-    total_success = sum(i.recent_success_count for i in items)
-    total_failure = sum(i.recent_failure_count for i in items)
-    total_attempts = total_success + total_failure
-    overall_rate = (total_success / total_attempts * 100) if total_attempts > 0 else 0
-
-    # Compute health scores (0-100)
-    health_scores = []
-    for item in items:
-        score = 100
-        # Deduct for issues
-        if item.status == "banned":
-            score -= 80
-        elif item.status == "unauthorized":
-            score -= 60
-        elif item.status == "not_configured":
-            score -= 70
-        elif item.status == "rate_limited":
-            score -= 30
-        elif item.status == "error":
-            score -= 40
-        # Failure rate penalty
-        total_i = item.recent_success_count + item.recent_failure_count
-        if total_i > 0:
-            fail_rate = item.recent_failure_count / total_i
-            score -= fail_rate * 50
-        health_scores.append({
-            "account_id": item.account_id,
-            "score": max(0, score),
-        })
-
-    avg_score = sum(h["score"] for h in health_scores) / len(health_scores) if health_scores else 0
-
-    return {
-        "total": total,
-        "counts": counts,
-        "healthy_count": counts.get("healthy", 0),
-        "unhealthy_count": total - counts.get("healthy", 0),
-        "overall_success_rate": round(overall_rate, 1),
-        "total_success": total_success,
-        "total_failure": total_failure,
-        "average_health_score": round(avg_score, 0),
-        "health_scores": health_scores,
-    }
-
-
 @router.get("/trend")
 async def api_health_trend(
     days: int = Query(default=14, le=90, ge=1),

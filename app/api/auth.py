@@ -190,7 +190,7 @@ async def me(
         result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
         tenant = result.scalar_one_or_none()
         return MeResponse(
-            role="user",
+            role=identity.kind,
             phone=identity.user.phone,
             subscription_status=tenant.subscription_status if tenant else None,
             plan=tenant.plan if tenant else None,
@@ -201,7 +201,7 @@ async def me(
         result = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
         tenant = result.scalar_one_or_none()
         return MeResponse(
-            role="user",
+            role=identity.kind,
             subscription_status=tenant.subscription_status if tenant else None,
             plan=tenant.plan if tenant else None,
             trial_expires_at=tenant.trial_expires_at if tenant else None,

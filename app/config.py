@@ -25,11 +25,20 @@ class Settings(BaseSettings):
     # t.me/<username>?start=<token> deep link shown to users — not a secret.
     telegram_bot_username: str = ""
     # The official TeleMon channel to require membership in before a free trial can be
-    # created. Accepts either a numeric chat id (e.g. "-1001234567890") or an
+    # created. Accepts either a numeric chat id (e.g. "-1001234567890") or a
     # "@channelusername" — whatever the Bot API's getChatMember chat_id accepts.
     # Required for the channel-verification-gated signup flow; the bot must be an
     # admin of this channel to call getChatMember on non-admin members.
     telegram_official_channel_id: str = "@TeleMon_2"
+
+    @property
+    def telegram_official_channel_url(self) -> str:
+        cid = self.telegram_official_channel_id
+        if cid.startswith("@"):
+            return f"https://t.me/{cid[1:]}"
+        if cid.startswith("-100"):
+            return f"https://t.me/c/{cid[3:]}"
+        return f"https://t.me/{cid}"
 
     # JSON object mapping guide-hub button keys (see GUIDE_HUB_BUTTONS in
     # app/services/guide_hub_service.py) to the official channel's guide post URLs, e.g.
@@ -213,6 +222,20 @@ class Settings(BaseSettings):
         if not isinstance(parsed, dict):
             return {}
         return {str(k): str(v) for k, v in parsed.items() if v}
+
+    # ─── MCP Gateway & MCP servers (TeleMon AI Platform Phase 1) ───────────
+    # The MCP Gateway exposes registered MCP tool servers (Telegram PoC, Grafana,
+    # ...) behind a single authenticated /api/mcp-gateway endpoint. Each server is
+    # enabled independently and degrades gracefully when unconfigured.
+    mcp_gateway_enabled: bool = True
+    # Telegram MCP (PoC) — talks to the TeleMon bot-facing Telegram surface using
+    # the existing MTProto/Telethon pool where possible, falling back to config.
+    telegram_mcp_enabled: bool = False
+    # Grafana MCP — queries Grafana datasources (Prometheus/Loki) over HTTP API.
+    grafana_mcp_enabled: bool = False
+    grafana_base_url: str = ""
+    grafana_api_token: str = ""
+    grafana_datasource_uid: str = "prometheus"
 
     @property
     def telegram_credentials(self) -> tuple[int, str]:

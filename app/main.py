@@ -18,6 +18,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import text
 
 from app.api.account_health import router as account_health_router
+from app.api.account_health_summary import router as account_health_summary_router
 from app.api.accounts import router as accounts_router
 from app.api.batch import router as batch_router
 from app.api.admin import router as admin_router
@@ -38,6 +39,7 @@ from app.api.join_queue import router as join_queue_router
 from app.api.team import router as team_router
 from app.api.webhook_settings import router as webhook_settings_router
 from app.api.ai_reply_v2 import router as ai_reply_v2_router
+from app.api.mcp_gateway import router as mcp_gateway_router
 from app.api.deps import require_api_key_or_admin
 from app.api.channel_hub import router as channel_hub_router
 from app.api.folder import router as folder_router
@@ -59,6 +61,23 @@ from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
 from app.services.telethon_pool import pool
+
+# ── AI Platform Imports ───────────────────────────────────────────────
+from app.ai.routers import (
+    tools_router as ai_tools_router,
+    workflows_router as ai_workflows_router,
+    tasks_router as ai_tasks_router,
+    events_router as ai_events_router,
+    schedules_router as ai_schedules_router,
+    plugins_router as ai_plugins_router,
+    providers_router as ai_providers_router,
+)
+from app.ai.tools.builtin_tools import register_builtin_tools
+from app.ai.tools.registry import get_tool_registry
+from app.ai.task_queue.worker import get_task_worker
+from app.ai.scheduler.service import get_ai_scheduler_service
+from app.ai.event_bus.bus import get_event_bus
+from app.ai.plugin.manager import get_plugin_manager
 
 configure_logging()
 logger = get_logger(__name__)
@@ -93,6 +112,34 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("telegram_bot_startup_failed", error=str(exc))
 
+    # ── AI Platform Startup ────────────────────────────────────────────
+    try:
+        register_builtin_tools()
+        logger.info("ai_builtin_tools_registered")
+    except Exception as exc:
+        logger.error("ai_builtin_tools_registration_failed", error=str(exc))
+
+    try:
+        worker = get_task_worker()
+        worker.start()
+        logger.info("ai_task_worker_started")
+    except Exception as exc:
+        logger.error("ai_task_worker_startup_failed", error=str(exc))
+
+    try:
+        scheduler = get_ai_scheduler_service()
+        scheduler.start()
+        logger.info("ai_scheduler_started")
+    except Exception as exc:
+        logger.error("ai_scheduler_startup_failed", error=str(exc))
+
+    try:
+        manager = get_plugin_manager()
+        await manager.discover_and_load()
+        logger.info("ai_plugins_loaded")
+    except Exception as exc:
+        logger.error("ai_plugins_load_failed", error=str(exc))
+
     logger.info("app_started")
     yield
 
@@ -112,6 +159,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("pool_disconnect_failed", error=str(exc))
 
+    # ── AI Platform Shutdown ───────────────────────────────────────────
+    try:
+        ai_scheduler = get_ai_scheduler_service()
+        await ai_scheduler.stop()
+    except Exception as exc:
+        logger.error("ai_scheduler_shutdown_failed", error=str(exc))
+
+    try:
+        worker = get_task_worker()
+        await worker.stop()
+    except Exception as exc:
+        logger.error("ai_task_worker_shutdown_failed", error=str(exc))
+
     logger.info("app_stopped")
 
 
@@ -119,18 +179,12 @@ app = FastAPI(
     title="Telegram Management Dashboard API",
     lifespan=lifespan,
     debug=settings.debug,
-    # Hide interactive API docs when not in debug mode -- this app handles encrypted
-    # Telegram sessions, so the schema (and "try it out" button) shouldn't be public
-    # by default in a real deployment.
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
 )
 
 # ── Middleware stack ───────────────────────────────────────────────────
-# Order matters: ProxyHeaders runs first so downstream middleware and routes
-# see the correct client IP when behind nginx/Cloudflare.
-# TrustedHost runs last (outermost) to reject requests with unexpected Host headers.
 
 if settings.environment.strip().lower() in ("production", "prod"):
     app.add_middleware(
@@ -156,12 +210,7 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
-# Not gated by _auth_required below -- these are the login endpoints themselves
-# (send-code/verify-code/login-with-api-key must be reachable without a session yet).
-# /me carries its own per-route Depends(get_current_identity).
 app.include_router(auth_router)
-# Also unauthenticated -- used before signup completes to gate free-trial creation on
-# official-channel membership. Rate-limited per-route instead.
 app.include_router(telegram_verify_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
@@ -177,14 +226,12 @@ app.include_router(group_search_router, dependencies=_auth_required)
 app.include_router(link_inspector_router, dependencies=_auth_required)
 app.include_router(auto_reply_router, dependencies=_auth_required)
 app.include_router(reply_macro_router, dependencies=_auth_required)
-# billing and payment routers need auth for write operations
 app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
-# features router needs auth — tenant_id path param is not authentication
 app.include_router(features_router, dependencies=_auth_required)
-# Free API key (unauthenticated — channel verification replaces auth)
 app.include_router(free_api_key_router)
 app.include_router(account_health_router, dependencies=_auth_required)
+app.include_router(account_health_summary_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
 app.include_router(ai_assist_router, dependencies=_auth_required)
 app.include_router(ai_copilot_router, dependencies=_auth_required)
@@ -199,16 +246,21 @@ app.include_router(search_router, dependencies=_auth_required)
 app.include_router(batch_router, dependencies=_auth_required)
 app.include_router(webhook_settings_router, dependencies=_auth_required)
 app.include_router(ai_reply_v2_router, dependencies=_auth_required)
+app.include_router(mcp_gateway_router, dependencies=_auth_required)
+
+# ── AI Platform Routers ───────────────────────────────────────────────
+app.include_router(ai_tools_router, dependencies=_auth_required)
+app.include_router(ai_workflows_router, dependencies=_auth_required)
+app.include_router(ai_tasks_router, dependencies=_auth_required)
+app.include_router(ai_events_router, dependencies=_auth_required)
+app.include_router(ai_schedules_router, dependencies=_auth_required)
+app.include_router(ai_plugins_router, dependencies=_auth_required)
+app.include_router(ai_providers_router, dependencies=_auth_required)
 
 
 @app.get("/health")
 async def health():
-    """Health check endpoint with database connectivity probe.
-
-    Returns 200 with ``{"status": "ok"}`` when the app is running and the
-    database is reachable. If the database is down, returns 503 so load
-    balancers / Render can route traffic away from this instance.
-    """
+    """Health check endpoint with database connectivity probe."""
     try:
         async with async_session_maker() as session:
             await session.execute(text("SELECT 1"))

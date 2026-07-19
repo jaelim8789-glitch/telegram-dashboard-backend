@@ -20,6 +20,35 @@ class Identity:
     tenant_id: str | None = None
 
 
+async def get_current_identity(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> Identity:
+    """Returns a fully-resolved Identity including tenant_id."""
+    identity = await _resolve_identity(x_api_key, authorization, x_session_token, db)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
+    return identity
+
+
+async def get_current_tenant_id(
+    identity: Identity = Depends(get_current_identity),
+) -> str:
+    """FastAPI dependency that extracts the current tenant_id from the auth context.
+    
+    Returns the tenant_id string. Raises 401 if not authenticated.
+    Used by AI Platform routers and other tenant-scoped endpoints.
+    """
+    if identity.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="테넌트 정보가 없습니다. API 키 또는 세션으로 인증해주세요.",
+        )
+    return identity.tenant_id
+
+
 async def require_admin(authorization: str | None = Header(default=None)) -> None:
     """Guards /api/admin/* — a valid admin JWT only, no X-API-Key or user-session
     alternative (API keys and users are themselves managed here, so neither can also
@@ -92,19 +121,6 @@ async def require_api_key_or_admin(
     """Guards the main /api/* routes."""
     if await _resolve_identity(x_api_key, authorization, x_session_token, db) is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
-
-
-async def get_current_identity(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    authorization: str | None = Header(default=None),
-    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
-    db: AsyncSession = Depends(get_db),
-) -> Identity:
-    """Returns a fully-resolved Identity including tenant_id."""
-    identity = await _resolve_identity(x_api_key, authorization, x_session_token, db)
-    if identity is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
-    return identity
 
 
 async def require_tenant_access(
