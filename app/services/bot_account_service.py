@@ -70,6 +70,20 @@ class ClaimResult:
     detail: str = ""
 
 
+@dataclass
+class CheckinResult:
+    status: str  # "no_tenant" | "already_checked_in" | "ok"
+    streak: int = 0
+    stars_earned: int = 0
+    stars_balance: int = 0
+    detail: str = ""
+
+
+CHECKIN_BASE_STARS = 5
+CHECKIN_STREAK_MILESTONE_DAYS = 5
+CHECKIN_STREAK_MILESTONE_BONUS = 20
+
+
 # ─── DB helpers ────────────────────────────────────────────────────────
 
 
@@ -108,6 +122,67 @@ async def get_account_snapshot(db: AsyncSession, telegram_user_id: int) -> Accou
         max_accounts=tenant.max_accounts,
         monthly_message_limit=tenant.monthly_message_limit,
     )
+
+
+# ─── Daily check-in ─────────────────────────────────────────────────────
+
+
+async def do_checkin(db: AsyncSession, telegram_user_id: int) -> CheckinResult:
+    """Once-per-day check-in. Consecutive days build a streak; the streak
+    resets to 1 if a day is missed. Stars are credited via the same wallet
+    used for template-marketplace purchases (usage_tracker.add_stars_credit)."""
+    tenant = await _resolve_tenant(db, telegram_user_id)
+    if tenant is None:
+        return CheckinResult(status="no_tenant", detail="먼저 무료체험/요금제를 시작해주세요.")
+
+    now = _utcnow_naive()
+    if tenant.last_checkin_at is not None and tenant.last_checkin_at.date() == now.date():
+        return CheckinResult(
+            status="already_checked_in",
+            streak=tenant.checkin_streak,
+            stars_balance=tenant.stars_balance,
+            detail="오늘은 이미 출석체크를 완료했습니다. 내일 다시 와주세요!",
+        )
+
+    missed_a_day = (
+        tenant.last_checkin_at is None
+        or (now.date() - tenant.last_checkin_at.date()).days > 1
+    )
+    tenant.checkin_streak = 1 if missed_a_day else tenant.checkin_streak + 1
+    tenant.last_checkin_at = now
+
+    stars_earned = CHECKIN_BASE_STARS
+    if tenant.checkin_streak % CHECKIN_STREAK_MILESTONE_DAYS == 0:
+        stars_earned += CHECKIN_STREAK_MILESTONE_BONUS
+    tenant.stars_balance = (tenant.stars_balance or 0) + stars_earned
+
+    await db.commit()
+    await db.refresh(tenant)
+
+    logger.info(
+        "bot_checkin",
+        telegram_user_id=telegram_user_id,
+        tenant_id=tenant.id,
+        streak=tenant.checkin_streak,
+        stars_earned=stars_earned,
+    )
+    return CheckinResult(
+        status="ok",
+        streak=tenant.checkin_streak,
+        stars_earned=stars_earned,
+        stars_balance=tenant.stars_balance,
+    )
+
+
+async def get_checkin_leaderboard(db: AsyncSession, limit: int = 10) -> list[tuple[int, int]]:
+    """Top streaks, no PII — just (rank, streak_days) pairs."""
+    result = await db.execute(
+        select(Tenant.checkin_streak)
+        .where(Tenant.checkin_streak > 0)
+        .order_by(Tenant.checkin_streak.desc())
+        .limit(limit)
+    )
+    return list(enumerate((row[0] for row in result.all()), start=1))
 
 
 # ─── Purchase / renew ──────────────────────────────────────────────────

@@ -52,6 +52,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔄 갱신", callback_data="renew:start"),
             ],
             [InlineKeyboardButton("📜 구매내역", callback_data="purchase:history")],
+            [InlineKeyboardButton("✅ 출석체크", callback_data="checkin:do")],
             [InlineKeyboardButton("🤖 자동 응답 관리", callback_data="autoreply_menu")],
             [
                 InlineKeyboardButton("🆘 고객센터", callback_data="support:info"),
@@ -386,6 +387,39 @@ async def purchase_history_callback(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text(_history_text(records), reply_markup=_back_to_main_keyboard())
 
 
+async def checkin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle "✅ 출석체크" — once-per-day check-in, builds a streak, awards Stars."""
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    async with async_session_maker() as db:
+        result = await bot_account_service.do_checkin(db, telegram_user_id)
+        leaderboard = await bot_account_service.get_checkin_leaderboard(db)
+
+    lines = []
+    if result.status == "no_tenant":
+        lines.append(f"⚠️ {result.detail}")
+    elif result.status == "already_checked_in":
+        lines.append(f"✅ {result.detail}")
+        lines.append(f"🔥 연속 출석: {result.streak}일")
+    else:
+        lines.append(f"🎉 출석 완료! +{result.stars_earned}⭐ 획득")
+        lines.append(f"🔥 연속 출석: {result.streak}일 (보유 {result.stars_balance}⭐)")
+        if result.streak % bot_account_service.CHECKIN_STREAK_MILESTONE_DAYS == 0:
+            lines.append(f"🎁 {bot_account_service.CHECKIN_STREAK_MILESTONE_DAYS}일 연속 보너스 포함!")
+
+    if leaderboard:
+        lines.append("\n🏆 연속 출석 순위")
+        lines.extend(f"{rank}위 · {streak}일" for rank, streak in leaderboard)
+
+    await query.edit_message_text("\n".join(lines), reply_markup=_back_to_main_keyboard())
+
+
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle "🆘 고객센터" — static contact info."""
     query = update.callback_query
@@ -535,6 +569,7 @@ async def start_bot() -> None:
     application.add_handler(CallbackQueryHandler(pay_callback, pattern=r"^pay:"))
     application.add_handler(CallbackQueryHandler(renew_callback, pattern=r"^renew:"))
     application.add_handler(CallbackQueryHandler(purchase_history_callback, pattern=r"^purchase:"))
+    application.add_handler(CallbackQueryHandler(checkin_callback, pattern=r"^checkin:"))
     application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^support:"))
     application.add_handler(CallbackQueryHandler(notice_callback, pattern=r"^notice:"))
     application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))

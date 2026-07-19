@@ -66,7 +66,11 @@ class Tenant(Base):
     referred_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     referral_code: Mapped[str] = mapped_column(String(20), unique=True, default=lambda: str(uuid.uuid4())[:8])
     referral_earnings: Mapped[int] = mapped_column(Integer, default=0)
-    
+
+    # Daily check-in (bot menu)
+    checkin_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_checkin_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
