@@ -32,7 +32,6 @@ from app.services.account_health import get_health_summary
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
-from app.models.session import Session
 from app.models.token import TokenBalance, TokenTransaction
 from datetime import datetime, timezone, timedelta
 
