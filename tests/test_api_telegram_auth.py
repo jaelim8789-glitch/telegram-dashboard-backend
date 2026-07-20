@@ -167,7 +167,7 @@ async def test_send_code_passes_existing_session_to_pool(client, db_session, mon
 
     res = await client.post(f"/api/accounts/{account_id}/send-code")
     assert res.status_code == 200
-    get_client_mock.assert_called_once_with(account_id, "existing-session-string")
+    get_client_mock.assert_called_once_with(account_id, "existing-session-string", require_authorized=False)
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_verify_2fa_passes_persisted_session_to_pool(client, db_session, m
 
     res = await client.post(f"/api/accounts/{account_id}/verify-2fa", json={"password": "hunter2"})
     assert res.status_code == 200
-    get_client_mock.assert_called_once_with(account_id, "persisted-after-verify-code")
+    get_client_mock.assert_called_once_with(account_id, "persisted-after-verify-code", require_authorized=False)
 
 
 @pytest.mark.asyncio
