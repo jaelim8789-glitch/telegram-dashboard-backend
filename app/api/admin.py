@@ -23,6 +23,8 @@ from app.schemas.admin import (
     ManualIssueResponse,
     UserLookupResponse,
 )
+from app.schemas.style_profile import StyleProfileCreate, StyleProfileAnalyzeRequest, StyleProfileUpdate, StyleProfileRead
+from app.services.ai_style_service import analyze_style, list_profiles, get_profile, update_profile, delete_profile
 from app.services.guide_hub_service import GuideHubUnavailable, publish_or_update_guide_hub
 from app.services.usage_tracker import apply_plan_limits
 from app.services.account_health import get_health_summary
@@ -322,6 +324,81 @@ async def publish_guide_hub(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     logger.info("guide_hub_publish_requested", chat_id=chat_id, message_id=message_id, created=created)
     return GuideHubPublishResponse(chat_id=chat_id, message_id=message_id, created=created)
+
+
+@router.post(
+    "/style-profiles/analyze",
+    response_model=StyleProfileRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def create_style_profile(payload: StyleProfileAnalyzeRequest, db: AsyncSession = Depends(get_db)):
+    """분석할 텍스트를 받아 AI 말투 분석을 수행하고 스타일 프로필을 저장합니다."""
+    try:
+        profile = await analyze_style(
+            name=payload.name,
+            source_type=payload.source_type,
+            source_text=payload.source_text,
+            db=db,
+        )
+        await db.commit()
+        logger.info("style_profile_created", profile_id=profile.id, name=payload.name)
+        return profile
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.get(
+    "/style-profiles",
+    response_model=list[StyleProfileRead],
+    dependencies=[Depends(require_admin)],
+)
+async def list_style_profiles(db: AsyncSession = Depends(get_db)):
+    """저장된 스타일 프로필 목록을 조회합니다."""
+    return await list_profiles(db)
+
+
+@router.get(
+    "/style-profiles/{profile_id}",
+    response_model=StyleProfileRead,
+    dependencies=[Depends(require_admin)],
+)
+async def get_style_profile(profile_id: str, db: AsyncSession = Depends(get_db)):
+    """특정 스타일 프로필을 조회합니다."""
+    profile = await get_profile(db, profile_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    return profile
+
+
+@router.patch(
+    "/style-profiles/{profile_id}",
+    response_model=StyleProfileRead,
+    dependencies=[Depends(require_admin)],
+)
+async def update_style_profile(profile_id: str, payload: StyleProfileUpdate, db: AsyncSession = Depends(get_db)):
+    """스타일 프로필 이름을 수정합니다."""
+    profile = await get_profile(db, profile_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    if payload.name is not None:
+        profile = await update_profile(db, profile, payload.name)
+        await db.commit()
+    return profile
+
+
+@router.delete(
+    "/style-profiles/{profile_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_style_profile(profile_id: str, db: AsyncSession = Depends(get_db)):
+    """스타일 프로필을 삭제합니다."""
+    profile = await get_profile(db, profile_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    await delete_profile(db, profile)
+    await db.commit()
 
 
 @router.get("/dashboard/status", response_model=AdminDashboardStatusResponse, dependencies=[Depends(require_admin)])

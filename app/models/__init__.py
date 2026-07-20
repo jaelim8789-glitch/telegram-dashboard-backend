@@ -1,3 +1,4 @@
+from app.models.style_profile import StyleProfile
 from app.models.audit_log import AdminAuditLog
 from app.models.account import Account
 from app.models.ai import AiChatLog, AiReplyAssistantLog, AiBroadcastAssistantLog, AiOperationsReport, AiUsageRecord, AiPlanLimit
@@ -21,6 +22,7 @@ from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
 from app.models.user import PhoneVerification, User
 
 __all__ = [
+    "StyleProfile",
     "Account",
     "AdminAuditLog",
     "AiBroadcastDraft",
