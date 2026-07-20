@@ -1,44 +1,25 @@
 import os
-import socket
-
-# Must run before any `app.*` import: app/config.py and app/database.py build a
-# Settings()/engine singleton at import time, so the DB URL has to be overridden in the
-# environment first. Only DATABASE_URL is isolated — ENCRYPTION_KEY / ADMIN_* / etc. are
-# fine to share with local dev since tests never write real data through them.
-#
-# Falls back to SQLite when no local Postgres is reachable (e.g. this dev box) so the
-# suite can still run; CI/production dev environments with Postgres available keep using
-# it unchanged since this is just a connectivity probe, not a preference.
-def _postgres_reachable() -> bool:
-    try:
-        with socket.create_connection(("localhost", 5432), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
-if "DATABASE_URL" not in os.environ:
-    if _postgres_reachable():
-        os.environ["DATABASE_URL"] = (
-            "postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard_test"
-        )
-    else:
-        os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test_telemon.db"
+import sys
 
 # Test suite runs in "development" env to bypass production guards in .env
 if "ENVIRONMENT" not in os.environ:
     os.environ["ENVIRONMENT"] = "development"
 os.environ["DEBUG"] = "true"
 os.environ["SMS_PROVIDER"] = "console"
+
+# Default to SQLite in-memory for tests unless DATABASE_URL is explicitly provided.
+# This keeps tests deterministic regardless of what is running on localhost:5432.
+# CI/production can still override with a real Postgres URL if needed.
+if "DATABASE_URL" not in os.environ:
+    os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+
 # Set required env vars with test-friendly defaults
 if "ENCRYPTION_KEY" not in os.environ:
-    # Must be a valid Fernet key: 32 url-safe base64-encoded bytes.
     os.environ["ENCRYPTION_KEY"] = "I62a0BiduGAdZjg9UH_vg3VuIEQMpe2AyDm2DfM2HlA="
 if "TELEGRAM_API_ID" not in os.environ:
     os.environ["TELEGRAM_API_ID"] = "12345"
 if "TELEGRAM_API_HASH" not in os.environ:
     os.environ["TELEGRAM_API_HASH"] = "test_hash_abcdef"
-# Ensure channel-verification gate is disabled by default for unrelated tests
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["TELEGRAM_OFFICIAL_CHANNEL_ID"] = ""
 
@@ -75,6 +56,10 @@ async def db_session(monkeypatch):
     monkeypatch.setattr(broadcast_processor_module, "async_session_maker", session_maker)
     monkeypatch.setattr(scheduler_module, "async_session_maker", session_maker)
     monkeypatch.setattr(auto_reply_service_module, "async_session_maker", session_maker)
+
+    for mod_name, module in list(sys.modules.items()):
+        if mod_name.startswith("app.") and hasattr(module, "async_session_maker"):
+            monkeypatch.setattr(module, "async_session_maker", session_maker)
 
     async with session_maker() as session:
         yield session
