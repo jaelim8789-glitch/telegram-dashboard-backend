@@ -64,13 +64,8 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 
 async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_session_token: str | None, db: AsyncSession) -> Identity | None:
-    # Session token (opaque persistent token, survives browser restart)
-    if x_session_token:
-        session = await session_crud.get_session_by_token(db, x_session_token)
-        if session is not None:
-            await session_crud.touch_session(db, session)
-            return Identity(kind="user", tenant_id=session.tenant_id)
-
+    # Authorization Bearer first — explicit login beats stored session to prevent
+    # "old session overwrites new login" bugs when a browser sends both headers.
     if authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
         try:
@@ -85,14 +80,19 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_
         if user_id:
             user = await user_crud.get_user(db, user_id)
             if user is not None and user.is_active:
-                # Resolve tenant_id from the user's phone to Tenant.phone
                 tenant_id = await _resolve_tenant_by_phone(db, user.phone)
                 return Identity(kind="user", user=user, tenant_id=tenant_id)
-            # Bearer token might be an API key JWT (sub="user:{api_key_id}")
             key_row = await api_key_crud.get_api_key(db, user_id)
             if key_row is not None and key_row.is_active:
                 await api_key_crud.touch_last_used(db, key_row)
                 return Identity(kind="api_key", tenant_id=key_row.tenant_id)
+
+    # Session token (opaque persistent token, survives browser restart)
+    if x_session_token:
+        session = await session_crud.get_session_by_token(db, x_session_token)
+        if session is not None:
+            await session_crud.touch_session(db, session)
+            return Identity(kind="user", tenant_id=session.tenant_id)
 
     if x_api_key:
         key_row = await api_key_crud.get_by_key(db, x_api_key)

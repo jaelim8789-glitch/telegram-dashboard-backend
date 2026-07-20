@@ -19,6 +19,7 @@ from app.core.security import (
     decode_access_token,
     decode_user_id_from_token,
 )
+from app.crud import session as session_crud
 from app.models.user import User
 
 
@@ -104,3 +105,57 @@ async def test_resolve_identity_inactive_user_token_rejected(db_session):
     )
 
     assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_bearer_token_wins_over_session_token(db_session):
+    """A valid Bearer token must take precedence over X-Session-Token.
+
+    Regression: if a browser sends both headers, the explicit login should
+    not be silently downgraded by a stored session.
+    """
+    user = User(phone="+821099995010")
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.commit()
+
+    user_token = create_user_access_token(user.id)
+    raw_session, _ = await session_crud.create_session(db_session, user_id=user.id, tenant_id="test-tenant")
+
+    identity = await _resolve_identity(
+        x_api_key=None,
+        authorization=f"Bearer {user_token}",
+        x_session_token=raw_session,
+        db=db_session,
+    )
+
+    assert identity is not None
+    assert identity.kind == "user"
+    assert identity.user is not None
+    assert identity.user.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_admin_bearer_token_wins_over_user_session(db_session):
+    """An admin Bearer token must win over a stored user session token.
+
+    Prevents the exact bug where an old user session would override a
+    fresh admin login when both headers are present.
+    """
+    admin_token = create_access_token()
+    user = User(phone="+821099995011")
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.commit()
+
+    raw_session, _ = await session_crud.create_session(db_session, user_id=user.id, tenant_id="test-tenant")
+
+    identity = await _resolve_identity(
+        x_api_key=None,
+        authorization=f"Bearer {admin_token}",
+        x_session_token=raw_session,
+        db=db_session,
+    )
+
+    assert identity is not None
+    assert identity.kind == "admin"
