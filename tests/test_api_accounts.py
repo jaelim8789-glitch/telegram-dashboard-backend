@@ -266,3 +266,19 @@ async def test_resume_non_suspended_account_returns_400(client, db_session):
         assert "일시중단" in res.json()["detail"]
     finally:
         app.dependency_overrides.pop(require_admin, None)
+
+
+@pytest.mark.asyncio
+async def test_delete_and_recreate_same_phone_is_allowed(client):
+    phone = "+821066667777"
+    created = await client.post("/api/accounts", json={"phone": phone, "name": "재생성 테스트"})
+    assert created.status_code == 201
+    account_id = created.json()["id"]
+
+    deleted = await client.delete(f"/api/accounts/{account_id}")
+    assert deleted.status_code == 204
+
+    recreated = await client.post("/api/accounts", json={"phone": phone, "name": "재생성 테스트2"})
+    assert recreated.status_code == 201
+    assert recreated.json()["phone"] == phone
+    assert recreated.json()["id"] != account_id

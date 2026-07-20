@@ -45,6 +45,19 @@ async def update_account(db: AsyncSession, account: Account, data: AccountUpdate
 async def delete_account(db: AsyncSession, account: Account) -> None:
     await db.delete(account)
     await db.commit()
+    if await get_account(db, account.id) is not None:
+        raise ValueError(
+            f"계정(id={account.id}, phone={account.phone})이 삭제되지 않았습니다. "
+            "다른 테이블의 참조 제약조건이 남아 있을 수 있습니다."
+        )
+
+
+async def delete_account_by_phone(db: AsyncSession, phone: str) -> Account | None:
+    account = await get_account_by_phone(db, phone)
+    if account is None:
+        return None
+    await delete_account(db, account)
+    return account
 
 
 async def set_auto_reply_enabled(db: AsyncSession, account: Account, enabled: bool) -> Account:

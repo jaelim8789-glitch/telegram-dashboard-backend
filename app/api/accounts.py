@@ -282,5 +282,11 @@ async def delete_account(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
-    await account_crud.delete_account(db, account)
+    try:
+        await account_crud.delete_account(db, account)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     logger.info("account_deleted", account_id=account_id)
