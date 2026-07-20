@@ -169,7 +169,7 @@ async def _fetch_channel_messages(account_id: str, chat_id: str, limit: int = 50
     collected: list[str] = []
     total_chars = 0
     for msg in messages:
-        if msg.out or not msg.text:
+        if not msg.out or not msg.text:
             continue
         text = msg.text.strip()
         if not text:
