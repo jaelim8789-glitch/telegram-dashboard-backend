@@ -38,6 +38,7 @@ FEATURE_CHAT = "ai_chat"
 FEATURE_REPLY_ASSISTANT = "ai_reply_assistant"
 FEATURE_BROADCAST_ASSISTANT = "ai_broadcast_assistant"
 FEATURE_OPERATIONS_REPORT = "ai_operations_report"
+FEATURE_CONTENT_STUDIO = "ai_content_studio"
 
 
 # ─── Data Classes ─────────────────────────────────────────────────────────

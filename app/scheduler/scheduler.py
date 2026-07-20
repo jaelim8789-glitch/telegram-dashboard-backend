@@ -19,11 +19,17 @@ from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
 from app.services.ai_ops_service import generate_and_store_ops_report
+from app.services.ai_content_studio_service import FEATURE_CONTENT_STUDIO
 from app.services.billing import downgrade_expired_tenants, notify_expiring_trials
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
 from app.services.random_reply_service import execute_random_reply
 from app.services.usdt_watcher import check_usdt_payments
+
+try:
+    from app.api.content_studio import run_daily_content_generation
+except Exception:
+    run_daily_content_generation = None
 
 logger = get_logger(__name__)
 
@@ -220,6 +226,14 @@ def start_scheduler() -> None:
         id="dispatch_due_random_replies",
         replace_existing=True,
     )
+    # AI 콘텐츠 스튜디오 — 매일 자동 콘텐츠 생성 + broadcast 발행
+    if run_daily_content_generation is not None:
+        scheduler.add_job(
+            _run_daily_content_generation_wrapper,
+            IntervalTrigger(hours=24),
+            id="run_daily_content_generation",
+            replace_existing=True,
+        )
     scheduler.start()
     logger.info("scheduler_started", interval_seconds=DISPATCH_INTERVAL_SECONDS)
 
@@ -228,3 +242,13 @@ def shutdown_scheduler() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("scheduler_stopped")
+
+
+async def _run_daily_content_generation_wrapper() -> None:
+    if run_daily_content_generation is None:
+        return
+    try:
+        async with async_session_maker() as db:
+            await run_daily_content_generation(db)
+    except Exception as exc:
+        logger.error("content_calendar_daily_job_failed", error=str(exc))
