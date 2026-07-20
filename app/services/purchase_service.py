@@ -16,6 +16,7 @@ from app.core.logging import get_logger
 from app.crud import user as user_crud
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.models.referral import ReferralCode
 
 logger = get_logger(__name__)
 
@@ -94,6 +95,15 @@ async def upsert_pending_tenant(
             referred_by=referred_by,
         )
         db.add(tenant)
+        await db.flush()
+
+        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id, is_active=True)
+        db.add(code)
+
+        if referred_by:
+            referrer = await db.get(Tenant, referred_by)
+            if referrer is not None:
+                referrer.referral_code_uses = (referrer.referral_code_uses or 0) + 1
     else:
         if tenant.subscription_status == "active":
             raise PurchaseConflict(

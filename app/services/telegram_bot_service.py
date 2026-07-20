@@ -16,6 +16,7 @@ from app.crud import account as account_crud
 from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.models.tenant import PaymentRecord
+from app.models.referral import ReferralCommission
 from app.services import ai_chat_service, billing, bot_account_service, purchase_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
@@ -591,6 +592,30 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     if not result.get("success"):
         logger.error("stars_topup_credit_failed", tenant_id=tenant.id, error=result.get("error"))
         return
+
+    if tenant.referred_by and not tenant.referral_rewarded:
+        async with async_session_maker() as db2:
+            from sqlalchemy import select
+            from app.models.tenant import Tenant as TenantModel
+            referrer = await db2.get(TenantModel, tenant.referred_by)
+            if referrer is not None:
+                commission_cents = int(payment.total_amount * 0.10)
+                db2.add(ReferralCommission(
+                    referrer_id=referrer.id,
+                    referred_id=tenant.id,
+                    amount_cents=commission_cents,
+                    rate=10,
+                    status="pending",
+                ))
+                referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
+                tenant.referral_rewarded = True
+                await db2.commit()
+                logger.info(
+                    "stars_referral_commission_credited",
+                    referrer_tenant_id=referrer.id,
+                    referred_tenant_id=tenant.id,
+                    commission_cents=commission_cents,
+                )
 
     balance = result.get("stars_balance", (tenant.stars_balance or 0) + payment.total_amount)
     await update.message.reply_text(

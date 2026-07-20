@@ -42,6 +42,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
     volumes:
       - media_data:/app/media
+      - bot_data:/app/data
 
   frontend:
     build:
@@ -68,3 +69,4 @@ services:
 volumes:
   pgdata:
   media_data:
+  bot_data:

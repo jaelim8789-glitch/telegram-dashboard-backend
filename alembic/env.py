@@ -25,6 +25,8 @@ from app.models import (  # noqa: F401 - ensures models are registered on Base.m
     MessageTemplate,
     PaymentRecord,
     PhoneVerification,
+    ReferralCode,
+    ReferralCommission,
     ReplyMacro,
     ReplyMacroLog,
     TeamMember,

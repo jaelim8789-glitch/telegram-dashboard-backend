@@ -32,6 +32,7 @@ from app.services.account_health import get_health_summary
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
+from app.models.referral import ReferralCommission
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -462,3 +463,56 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
             failure_rate=failure_rate,
         ),
     )
+
+
+@router.get("/referral/commissions")
+async def list_referral_commissions(
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    query = select(ReferralCommission).order_by(ReferralCommission.created_at.desc())
+    if status:
+        query = query.where(ReferralCommission.status == status)
+    result = await db.execute(query)
+    commissions = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": c.id,
+                "referrer_id": c.referrer_id,
+                "referred_id": c.referred_id,
+                "payment_id": c.payment_id,
+                "amount_cents": c.amount_cents,
+                "rate": c.rate,
+                "status": c.status,
+                "payment_tx_id": c.payment_tx_id,
+                "paid_at": c.paid_at.isoformat() if c.paid_at else None,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in commissions
+        ]
+    }
+
+
+@router.post("/referral/commissions/{commission_id}/approve")
+async def approve_referral_commission(
+    commission_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    commission = await db.get(ReferralCommission, commission_id)
+    if commission is None:
+        raise HTTPException(status_code=404, detail="커미션을 찾을 수 없습니다.")
+    if commission.status != "pending":
+        raise HTTPException(status_code=400, detail="이미 처리된 커미션입니다.")
+
+    commission.status = "paid"
+    commission.payment_tx_id = body.get("payment_tx_id")
+    commission.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(commission)
+
+    logger.info("referral_commission_approved", commission_id=commission.id)
+    return {"ok": True, "commission_id": commission.id, "status": "paid"}

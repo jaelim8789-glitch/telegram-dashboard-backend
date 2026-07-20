@@ -25,6 +25,7 @@ from app.crud import session as session_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.tenant import Tenant
+from app.models.referral import ReferralCode
 from app.models.user import User
 from app.schemas.auth import (
     LoginWithApiKeyRequest,
@@ -158,14 +159,27 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
         plan_def = get_plan("free")
         trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
         trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
+        referred_by = None
+        if payload.referral_code:
+            referred_by = await _resolve_referral_code(db, payload.referral_code, payload.phone)
         tenant = Tenant(
             phone=payload.phone,
             plan="free",
             subscription_status="active",
             trial_expires_at=trial_expires,
+            referred_by=referred_by,
         )
         db.add(tenant)
         await db.flush()
+
+        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id, is_active=True)
+        db.add(code)
+
+        if referred_by:
+            referrer = await db.get(Tenant, referred_by)
+            if referrer is not None:
+                referrer.referral_code_uses = (referrer.referral_code_uses or 0) + 1
+
         await apply_plan_limits(db, tenant, "free")
 
     logger.info("user_api_key_issued", user_id=user.id)
@@ -254,14 +268,27 @@ async def telegram_login(
         plan_def = get_plan("free")
         trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
         trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
+        referred_by = None
+        if payload.referral_code:
+            referred_by = await _resolve_referral_code(db, payload.referral_code, user.phone)
         tenant = Tenant(
             phone=user.phone,
             plan="free",
             subscription_status="active",
             trial_expires_at=trial_expires,
+            referred_by=referred_by,
         )
         db.add(tenant)
         await db.flush()
+
+        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id, is_active=True)
+        db.add(code)
+
+        if referred_by:
+            referrer = await db.get(Tenant, referred_by)
+            if referrer is not None:
+                referrer.referral_code_uses = (referrer.referral_code_uses or 0) + 1
+
         await apply_plan_limits(db, tenant, "free")
 
     raw_token, _ = await session_crud.create_session(
@@ -307,6 +334,29 @@ async def _resolve_tenant_id_by_user(db: AsyncSession, user: User) -> str | None
     from app.models.tenant import Tenant
     result = await db.execute(select(Tenant.id).where(Tenant.phone == user.phone))
     return result.scalar_one_or_none()
+
+
+async def _resolve_referral_code(db: AsyncSession, code: str, new_user_phone: str) -> str | None:
+    from sqlalchemy import select
+    from app.models.referral import ReferralCode
+    from app.models.tenant import Tenant
+
+    if not code:
+        return None
+
+    result = await db.execute(select(ReferralCode).where(ReferralCode.code == code, ReferralCode.is_active == True))
+    referral = result.scalar_one_or_none()
+    if referral is None:
+        return None
+
+    referrer = await db.get(Tenant, referral.owner_id)
+    if referrer is None:
+        return None
+
+    if referrer.phone == new_user_phone:
+        return None
+
+    return referrer.id
 
 
 @router.post("/logout")

@@ -23,6 +23,7 @@ from app.core.telegram_identity import parse_tg_identifier
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
 from app.models.api_key import APIKey
+from app.models.referral import ReferralCommission
 from app.services.telegram_notify import send_telegram_message
 from app.services.usage_tracker import apply_plan_limits
 
@@ -196,14 +197,20 @@ async def process_incoming_tx(tx: dict) -> dict:
         await apply_plan_limits(db, tenant, plan_name)
 
         # Referral commission — first real payment only (referral_rewarded guards
-        # against a renewal re-triggering this). Same payment method as the
-        # referred tenant paid with: USDT commission credited to the referrer's
-        # ledger (referral_earnings, cents) — no on-chain transfer, payout is
-        # manual/offline against that ledger.
+        # against a renewal re-triggering this). Record in referral_commissions
+        # table; actual payout is manual/offline against that ledger.
         if tenant.referred_by and not tenant.referral_rewarded:
             referrer = await db.get(Tenant, tenant.referred_by)
             if referrer is not None:
                 commission_cents = int(amount_cents * REFERRAL_COMMISSION_RATE)
+                db.add(ReferralCommission(
+                    referrer_id=referrer.id,
+                    referred_id=tenant.id,
+                    payment_id=payment.id if payment else None,
+                    amount_cents=commission_cents,
+                    rate=int(REFERRAL_COMMISSION_RATE * 100),
+                    status="pending",
+                ))
                 referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
                 tenant.referral_rewarded = True
                 logger.info(

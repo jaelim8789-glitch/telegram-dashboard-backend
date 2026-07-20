@@ -65,6 +65,7 @@ class Tenant(Base):
     # Referral
     referred_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     referral_code: Mapped[str] = mapped_column(String(20), unique=True, default=lambda: str(uuid.uuid4())[:8])
+    referral_code_uses: Mapped[int] = mapped_column(Integer, default=0)
     referral_earnings: Mapped[int] = mapped_column(Integer, default=0)  # cents, referrer's commission ledger
     referral_rewarded: Mapped[bool] = mapped_column(Boolean, default=False)  # guards against double-award on renewals
 

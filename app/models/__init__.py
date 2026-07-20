@@ -20,6 +20,7 @@ from app.models.telegram_verification import TelegramChannelVerification
 from app.models.session import UserSession
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
 from app.models.user import PhoneVerification, User
+from app.models.referral import ReferralCode, ReferralCommission
 
 __all__ = [
     "StyleProfile",
@@ -58,5 +59,7 @@ __all__ = [
     "Tenant",
     "UsageRecord",
     "User",
+    "ReferralCode",
+    "ReferralCommission",
     "BroadcastScheduleEntry",
 ]

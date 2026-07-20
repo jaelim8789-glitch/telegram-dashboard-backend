@@ -21,6 +21,9 @@ from app.bot import db as bot_db
 from app.bot.ai_employee import AiEmployee
 from app.bot.guest_engine import GuestEngine
 from app.bot.telegram_api import TelegramAPIError, TelegramBotClient, is_channel_member_status
+from app.database import async_session_maker
+from app.models.referral import ReferralCommission
+from app.models.tenant import Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +204,33 @@ async def _handle_successful_payment(client: TelegramBotClient, message: dict[st
             logger.info("[stars] ai_boost: user=%s +%d calls", user_id, product["ai_calls"])
 
         admin.create_invoice(user_id=user_id, amount_cents=stars_amount * 100, stripe_invoice_id=telegram_charge_id)
+
+        if product.get("plan") and product.get("period_days"):
+            async with async_session_maker() as db:
+                from sqlalchemy import select
+                phone = f"tg_{user_id}"
+                result = await db.execute(select(Tenant).where(Tenant.phone == phone))
+                tenant = result.scalar_one_or_none()
+                if tenant is not None and tenant.referred_by and not tenant.referral_rewarded:
+                    referrer = await db.get(Tenant, tenant.referred_by)
+                    if referrer is not None:
+                        commission_cents = int(stars_amount * 0.10)
+                        db.add(ReferralCommission(
+                            referrer_id=referrer.id,
+                            referred_id=tenant.id,
+                            amount_cents=commission_cents,
+                            rate=10,
+                            status="pending",
+                        ))
+                        referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
+                        tenant.referral_rewarded = True
+                        await db.commit()
+                        logger.info(
+                            "stars_referral_commission_credited",
+                            referrer_tenant_id=referrer.id,
+                            referred_tenant_id=tenant.id,
+                            commission_cents=commission_cents,
+                        )
     except Exception as e:
         logger.error("[stars] successful_payment error: %s", e)
 

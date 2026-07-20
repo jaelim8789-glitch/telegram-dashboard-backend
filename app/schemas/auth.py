@@ -15,10 +15,8 @@ class SendCodeResponse(BaseModel):
 class VerifyCodeRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=50)
     code: str = Field(min_length=1, max_length=10)
-    # Required only for a brand-new signup (no Tenant yet for this phone) — proves
-    # official-channel membership was verified server-side before a trial is created.
-    # Returning users (existing Tenant) don't need it. See app/api/telegram_verify.py.
     telegram_verification_token: str | None = None
+    referral_code: str | None = Field(default=None, max_length=30)
 
 
 class VerifyCodeResponse(BaseModel):
@@ -56,6 +54,7 @@ class TelegramLoginRequest(BaseModel):
     photo_url: str | None = None
     auth_date: int
     hash: str
+    referral_code: str | None = Field(default=None, max_length=30)
 
 
 class TelegramLoginResponse(BaseModel):
