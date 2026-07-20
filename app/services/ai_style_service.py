@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -138,7 +138,7 @@ async def analyze_style(
 async def list_profiles(db: AsyncSession, tenant_id: str | None = None) -> list[StyleProfile]:
     query = select(StyleProfile)
     if tenant_id:
-        query = query.where(StyleProfile.tenant_id == tenant_id)
+        query = query.where(or_(StyleProfile.tenant_id == tenant_id, StyleProfile.tenant_id.is_(None)))
     query = query.order_by(desc(StyleProfile.created_at))
     result = await db.execute(query)
     return list(result.scalars().all())
