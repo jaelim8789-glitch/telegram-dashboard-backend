@@ -3,6 +3,7 @@ from typing import Literal
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token, decode_user_id_from_token
@@ -240,3 +241,38 @@ async def require_broadcast_capacity(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이번 달 발송 한도에 도달했습니다. 요금제를 업그레이드해주세요.",
         )
+
+
+async def require_linked_api_key(
+    db: AsyncSession,
+    identity: Identity,
+) -> None:
+    """Gate for paid features: the tenant must have at least one linked API key.
+
+    Admin and identities with no resolved tenant bypass this check, matching
+    the carve-out used by other capacity/feature gates.
+
+    Accepts both:
+    - api_keys table rows (payment/admin-issued keys)
+    - users.api_key_hash (self-service free-trial keys)
+    """
+    if identity.kind == "admin" or identity.tenant_id is None:
+        return
+
+    from app.models.api_key import APIKey
+    from app.models.tenant import Tenant
+    from app.models.user import User
+
+    count = await api_key_crud.count_active_keys_for_tenant(db, identity.tenant_id)
+    if count > 0:
+        return
+
+    result = await db.execute(select(User).where(User.phone == select(Tenant.phone).where(Tenant.id == identity.tenant_id).scalar_subquery()))
+    user = result.scalar_one_or_none()
+    if user is not None and user.api_key_hash:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="API키가 필요합니다. 결제 후 발급받은 API키를 연결해주세요.",
+    )

@@ -25,3 +25,7 @@ class APIKeyRead(BaseModel):
     tenant_id: str | None = None
     created_at: datetime
     last_used: datetime | None
+
+
+class APIKeyLinkRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=100)

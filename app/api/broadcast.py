@@ -6,7 +6,7 @@ from fastapi import Request, APIRouter, BackgroundTasks, Depends, File, Form, HT
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_broadcast_capacity
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_broadcast_capacity, require_linked_api_key
 from app.config import settings
 from app.core.logging import get_logger
 from app.crud import account as account_crud
@@ -97,6 +97,7 @@ async def create_broadcast(
 ):
     await require_account_tenant_access(account_id, db, identity)
     await require_broadcast_capacity(db, identity)
+    await require_linked_api_key(db, identity)
 
     try:
         recipients_list = json.loads(recipients) if recipients else []
@@ -310,6 +311,7 @@ async def send_to_group(
     """
     await require_account_tenant_access(payload.account_id, db, identity)
     await require_broadcast_capacity(db, identity)
+    await require_linked_api_key(db, identity)
 
     account = await account_crud.get_account(db, payload.account_id)
     if account is None:

@@ -18,7 +18,7 @@ from app.core.limits import (
     VERIFY_CODE_MAX_PER_IP,
     VERIFY_CODE_PER_IP_WINDOW,
 )
-from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key
+from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key, mask_api_key
 from app.crud import telegram_verification as verification_crud
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
@@ -38,6 +38,7 @@ from app.schemas.auth import (
     VerifyCodeRequest,
     VerifyCodeResponse,
 )
+from app.schemas.api_key import APIKeyLinkRequest, APIKeyRead
 from app.services.sms_service import SmsSendError, send_verification_sms
 from app.services.usage_tracker import apply_plan_limits
 
@@ -357,6 +358,110 @@ async def _resolve_referral_code(db: AsyncSession, code: str, new_user_phone: st
         return None
 
     return referrer.id
+
+
+@router.post("/link-api-key", response_model=APIKeyRead)
+async def link_api_key(
+    payload: APIKeyLinkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    if identity.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요.",
+        )
+
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "link_api_key", max_attempts=20, window_seconds=300):
+        retry_after = get_retry_after_seconds(client_ip, "link_api_key", window_seconds=300)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    key = payload.key.strip()
+    if not key.startswith("sk-") or len(key) < 35 or len(key) > 50:
+        logger.warning("api_key_link_invalid_format", tenant_id=identity.tenant_id, client_ip=client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="올바르지 않은 API 키 형식입니다. 결제 후 발급받은 키를 입력해주세요.",
+        )
+
+    existing = await api_key_crud.get_by_key(db, key)
+    if existing is not None:
+        if existing.tenant_id == identity.tenant_id:
+            logger.info("api_key_link_idempotent", api_key_id=existing.id, tenant_id=identity.tenant_id, client_ip=client_ip)
+            return APIKeyRead(
+                id=existing.id,
+                masked_key=mask_api_key(existing.key),
+                name=existing.name,
+                is_active=existing.is_active,
+                tenant_id=existing.tenant_id,
+                created_at=existing.created_at,
+                last_used=existing.last_used,
+            )
+        if existing.tenant_id is None:
+            if getattr(existing, "purpose", None) == "admin_managed":
+                logger.warning(
+                    "api_key_link_admin_managed_rejected",
+                    api_key_id=existing.id,
+                    tenant_id=identity.tenant_id,
+                    client_ip=client_ip,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="이 API 키는 관리자 발급 키로, 사용자가 직접 연결할 수 없습니다. 관리자에게 문의해주세요.",
+                )
+            linked = await api_key_crud.link_api_key_to_tenant(db, key, identity.tenant_id)
+            if linked is None:
+                logger.warning("api_key_link_race", tenant_id=identity.tenant_id, client_ip=client_ip)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="이 API 키는 이미 다른 테넌트에 연결되어 있습니다.",
+                )
+            logger.info("api_key_linked", api_key_id=linked.id, tenant_id=identity.tenant_id, client_ip=client_ip)
+            return APIKeyRead(
+                id=linked.id,
+                masked_key=mask_api_key(linked.key),
+                name=linked.name,
+                is_active=linked.is_active,
+                tenant_id=linked.tenant_id,
+                created_at=linked.created_at,
+                last_used=linked.last_used,
+            )
+        logger.warning(
+            "api_key_link_conflict",
+            api_key_id=existing.id,
+            tenant_id=identity.tenant_id,
+            existing_tenant_id=existing.tenant_id,
+            client_ip=client_ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이 API 키는 이미 다른 테넌트에 연결되어 있습니다.",
+        )
+
+    linked = await api_key_crud.link_api_key_to_tenant(db, key, identity.tenant_id)
+    if linked is None:
+        logger.warning("api_key_link_race", tenant_id=identity.tenant_id, client_ip=client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이 API 키는 이미 다른 테넌트에 연결되어 있습니다.",
+        )
+
+    logger.info("api_key_linked", api_key_id=linked.id, tenant_id=identity.tenant_id, client_ip=client_ip)
+    return APIKeyRead(
+        id=linked.id,
+        masked_key=mask_api_key(linked.key),
+        name=linked.name,
+        is_active=linked.is_active,
+        tenant_id=linked.tenant_id,
+        created_at=linked.created_at,
+        last_used=linked.last_used,
+    )
 
 
 @router.post("/logout")

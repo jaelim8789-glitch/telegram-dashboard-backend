@@ -15,5 +15,6 @@ class APIKey(Base):
     name: Mapped[str] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
+    purpose: Mapped[str] = mapped_column(String(20), default="payment_issued")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_used: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

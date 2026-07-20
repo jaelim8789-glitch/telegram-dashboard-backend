@@ -82,7 +82,7 @@ async def create_api_key(payload: APIKeyCreateRequest, db: AsyncSession = Depend
                     detail="이 사용자에게 이미 발급된 API 키가 있습니다. 먼저 기존 키를 해지하거나 재발급해주세요.",
                 )
 
-    api_key = await api_key_crud.create_api_key(db, payload.name, tenant_id=payload.tenant_id)
+    api_key = await api_key_crud.create_api_key(db, payload.name, tenant_id=payload.tenant_id, purpose="admin_managed")
 
     # Bridge: store the same key's hash in User.api_key_hash so that
     # /auth/login-with-api-key (which only checks User.api_key_hash) can

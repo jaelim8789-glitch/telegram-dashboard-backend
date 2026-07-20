@@ -142,6 +142,19 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
         if matched_tx is None:
             return {"success": False, "error": "해당 tx_hash를 지갑 입금 내역에서 확인할 수 없습니다."}
 
+        expected_cents = get_plan_price_usdt(tenant.plan, "monthly")
+        if expected_cents is None:
+            return {"success": False, "error": "요금제 가격을 확인할 수 없습니다."}
+
+        actual_cents = matched_tx.get("amount_cents", 0)
+        expected_cents = int(expected_cents * 100)
+        tolerance = int(expected_cents * 0.1)
+        if actual_cents < expected_cents - tolerance or actual_cents > expected_cents + tolerance:
+            return {
+                "success": False,
+                "error": f"입금액이 요금제 가격과 일치하지 않습니다. (기대: {expected_cents} cents, 실제: {actual_cents} cents)",
+            }
+
         tenant.subscription_status = "active"
         tenant.trial_expires_at = None  # trial ends when paid plan starts
         tenant.billing_period_start = utcnow_naive()
@@ -161,6 +174,7 @@ async def confirm_usdt_payment(tenant_id: str, tx_hash: str) -> dict:
             name=f"USDT-{tenant.plan}-admin-confirm",
             is_active=True,
             tenant_id=tenant.id,
+            purpose="payment_issued",
         )
         db.add(api_key)
         await db.flush()

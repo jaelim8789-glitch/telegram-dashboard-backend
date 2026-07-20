@@ -7,8 +7,10 @@ import itertools
 import pytest
 
 from app.api.deps import Identity, get_current_identity
+from app.core.security import generate_api_key
 from app.database import async_session_maker
 from app.main import app
+from app.models.api_key import APIKey
 from app.models.tenant import PaymentRecord, Tenant
 from app.services.usage_tracker import apply_plan_limits
 
@@ -130,12 +132,17 @@ async def test_create_broadcast_allowed_when_plan_permits(client, db_session):
     tenant = await _make_tenant(db_session, plan="pro")  # can_broadcast=True
     _as_tenant(client, tenant.id)
 
+    raw_key = generate_api_key()
+    db_session.add(APIKey(key=raw_key, name="test-key", tenant_id=tenant.id, is_active=True))
+    await db_session.commit()
+
     account = await client.post("/api/accounts", json={"phone": "+821090000006"})
     account_id = account.json()["id"]
 
     res = await client.post(
         "/api/broadcast",
         data={"account_id": account_id, "message": "hi", "recipients": '["-100123"]'},
+        headers={"X-API-Key": raw_key},
     )
     assert res.status_code == 202
 

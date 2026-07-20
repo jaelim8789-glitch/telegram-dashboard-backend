@@ -156,21 +156,14 @@ async def process_incoming_tx(tx: dict) -> dict:
             return {"status": "already_processed"}
 
         tenant = None
-        if memo:
-            result = await db.execute(select(Tenant).where(Tenant.payment_ref == memo))
-            tenant = result.scalar_one_or_none()
+        if not memo:
+            logger.warning("usdt_tx_missing_memo", tx_id=tx_id, amount_cents=amount_cents)
+            db.add(PaymentRecord(tx_id=tx_id, from_address=from_addr, amount_usdt=amount_cents, status="unmatched", block_timestamp=tx.get("block_timestamp", 0)))
+            await db.commit()
+            return {"status": "unmatched", "reason": "missing_memo", "amount_cents": amount_cents}
 
-        if not tenant:
-            pm = match_plan(amount_cents)
-            if pm:
-                plan_name, billing = pm
-                result = await db.execute(
-                    select(Tenant).where(
-                        Tenant.subscription_status == "pending",
-                        Tenant.plan == plan_name,
-                    ).order_by(Tenant.created_at.asc()).limit(1)
-                )
-                tenant = result.scalar_one_or_none()
+        result = await db.execute(select(Tenant).where(Tenant.payment_ref == memo))
+        tenant = result.scalar_one_or_none()
 
         if not tenant:
             logger.warning("usdt_tx_unmatched", tx_id=tx_id, amount_cents=amount_cents)
@@ -221,7 +214,7 @@ async def process_incoming_tx(tx: dict) -> dict:
                 )
 
         raw_key = f"sk-{secrets.token_urlsafe(32)}"
-        api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True, tenant_id=tenant.id)
+        api_key = APIKey(key=raw_key, name=f"USDT-{plan_name}-auto", is_active=True, tenant_id=tenant.id, purpose="payment_issued")
         db.add(api_key)
         await db.flush()
 
