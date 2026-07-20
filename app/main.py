@@ -62,6 +62,8 @@ from app.routers.guest_routes import router as guest_routes_router
 from app.routers.stars_payments import router as stars_payments_router
 from app.routers.trigger_routes import router as trigger_routes_router
 from app.routers.draft_routes import router as draft_routes_router
+from app.api.ai_group_intel import router as ai_group_intel_router
+from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -216,6 +218,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ported from TeleMon/backend/monitoring.py — request-count/latency counters and
+# an optional alert webhook. Deliberately NOT calling setup_structured_logging()
+# here: app.core.logging already configures structured JSON logging for this
+# app, and calling both would fight over the root logger's handlers.
+from app.monitoring import MetricsMiddleware, get_metrics_text
+
+app.add_middleware(MetricsMiddleware)
+
 # ── Routers ────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
@@ -269,11 +279,20 @@ app.include_router(draft_routes_router, dependencies=_auth_required)
 # ── AI Platform Routers ───────────────────────────────────────────────
 app.include_router(ai_tools_router, dependencies=_auth_required)
 app.include_router(ai_workflows_router, dependencies=_auth_required)
+app.include_router(ai_group_intel_router, dependencies=_auth_required)
+app.include_router(ai_employee_admin_router, dependencies=_auth_required)
 app.include_router(ai_tasks_router, dependencies=_auth_required)
 app.include_router(ai_events_router, dependencies=_auth_required)
 app.include_router(ai_schedules_router, dependencies=_auth_required)
 app.include_router(ai_plugins_router, dependencies=_auth_required)
 app.include_router(ai_providers_router, dependencies=_auth_required)
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus exposition-format metrics (ported from TeleMon/backend/monitoring.py)."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(get_metrics_text())
 
 
 @app.get("/health")
