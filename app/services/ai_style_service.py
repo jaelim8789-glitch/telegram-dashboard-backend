@@ -55,11 +55,23 @@ async def analyze_style(
     account_id: str | None = None,
     chat_id: str | None = None,
     message_limit: int = 50,
+    tenant_id: str | None = None,
 ) -> StyleProfile:
+    if account_id:
+        account = await account_crud.get_account(db, account_id)
+        if account is not None and account.tenant_id:
+            tenant_id = account.tenant_id
+
     if source_type == "channel":
         if not account_id or not chat_id:
             raise ValueError("channel 모드는 account_id와 chat_id가 필요합니다.")
         source_text = await _fetch_channel_messages(account_id, chat_id, message_limit)
+
+    if tenant_id:
+        from app.services.ai_core_service import check_ai_quota
+        allowed, reason = await check_ai_quota(db, tenant_id, "ai_style_analysis")
+        if not allowed:
+            raise ValueError(reason)
 
     reply, _ = await call_deepseek(
         messages=[
@@ -113,6 +125,7 @@ async def analyze_style(
         source_text=source_text[:50000],
         tone_analysis=analysis,
         style_prompt=style_prompt,
+        tenant_id=tenant_id,
     )
     db.add(profile)
     await db.flush()
@@ -122,8 +135,12 @@ async def analyze_style(
     return profile
 
 
-async def list_profiles(db: AsyncSession) -> list[StyleProfile]:
-    result = await db.execute(select(StyleProfile).order_by(desc(StyleProfile.created_at)))
+async def list_profiles(db: AsyncSession, tenant_id: str | None = None) -> list[StyleProfile]:
+    query = select(StyleProfile)
+    if tenant_id:
+        query = query.where(StyleProfile.tenant_id == tenant_id)
+    query = query.order_by(desc(StyleProfile.created_at))
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
@@ -148,6 +165,8 @@ async def delete_profile(db: AsyncSession, profile: StyleProfile) -> None:
 
 async def _fetch_channel_messages(account_id: str, chat_id: str, limit: int = 50) -> str:
     from app.database import async_session_maker
+
+    limit = min(max(limit, 1), 200)
 
     async with async_session_maker() as db:
         account = await account_crud.get_account(db, account_id)

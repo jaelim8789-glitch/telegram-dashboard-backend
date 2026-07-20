@@ -16,5 +16,6 @@ class StyleProfile(Base):
     source_text: Mapped[str] = mapped_column(Text, nullable=False)
     tone_analysis: Mapped[dict] = mapped_column(JSON, default=dict)
     style_prompt: Mapped[str] = mapped_column(Text, default="")
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

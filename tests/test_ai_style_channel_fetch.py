@@ -48,7 +48,7 @@ def _patch_deps(monkeypatch):
 @pytest.mark.asyncio
 async def test_keeps_only_out_true_messages():
     """out=True messages are kept; out=False or no-text messages are skipped."""
-    fake_client = AsyncMock()
+    fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.get_messages = AsyncMock(return_value=[
         _fake_message("내가 쓴 글1", out=True),
@@ -73,7 +73,7 @@ async def test_keeps_only_out_true_messages():
 @pytest.mark.asyncio
 async def test_respects_8000_char_cap():
     """Total collected text does not exceed _MAX_CHANNEL_CHARS (8000)."""
-    fake_client = AsyncMock()
+    fake_client = MagicMock()
     fake_client.is_connected.return_value = True
 
     long_body = "가" * 7000
@@ -95,7 +95,7 @@ async def test_respects_8000_char_cap():
 @pytest.mark.asyncio
 async def test_raises_value_error_on_empty_result():
     """ValueError raised when no collectable messages found."""
-    fake_client = AsyncMock()
+    fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.get_messages = AsyncMock(return_value=[
         _fake_message("남의 글", out=False),
