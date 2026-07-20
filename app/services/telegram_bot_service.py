@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MenuButtonWebApp, Update, WebAppInfo
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -818,6 +818,16 @@ async def start_bot() -> None:
     # command then silently goes unanswered until the next restart. Retry instead.
     await application.updater.start_polling(bootstrap_retries=3)
     _application = application
+
+    # Auto-set menu button to TeleMon Mini App
+    try:
+        w = WebAppInfo(url="https://app.telemon.online/miniapp")
+        m = MenuButtonWebApp(text="🚀 TeleMon", web_app=w)
+        await application.bot.set_chat_menu_button(menu_button=m)
+        logger.info("miniapp_menu_set", url="https://app.telemon.online/miniapp")
+    except Exception as exc:
+        logger.warning("miniapp_menu_failed", error=str(exc))
+
     logger.info("telegram_bot_started")
 
 
