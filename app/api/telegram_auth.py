@@ -76,7 +76,10 @@ async def send_code(
 
     session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id, session_string)
+        # require_authorized=False: session_data here may be a pre-auth snapshot from
+        # an earlier incomplete attempt (saved right after send_code_request, before
+        # sign_in ever ran) — being unauthorized at this point is expected, not dead.
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
@@ -135,7 +138,11 @@ async def verify_code(
 
     session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id, session_string)
+        # require_authorized=False: this session was just saved by send_code before
+        # sign_in ever ran — "not yet authorized" is the expected state here, not a
+        # dead session. (This was the actual bug behind the 500s: the pool treated
+        # every pre-auth session as dead and raised SessionInvalidError uncaught.)
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
@@ -185,7 +192,9 @@ async def verify_2fa(
 
     session_string = decrypt_session(account.session_data) if account.session_data else ""
     try:
-        client = await pool.get_client(account.id, session_string)
+        # require_authorized=False — same reasoning as verify_code: sign_in(password=...)
+        # is what completes authorization, so it's expected to be unauthorized here.
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
