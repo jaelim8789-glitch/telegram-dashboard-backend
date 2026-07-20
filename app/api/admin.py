@@ -25,6 +25,7 @@ from app.schemas.admin import (
 )
 from app.schemas.style_profile import StyleProfileCreate, StyleProfileAnalyzeRequest, StyleProfileUpdate, StyleProfileRead
 from app.services.ai_style_service import analyze_style, list_profiles, get_profile, update_profile, delete_profile
+from app.services.telegram_actions import AccountNotAuthenticatedError
 from app.services.guide_hub_service import GuideHubUnavailable, publish_or_update_guide_hub
 from app.services.usage_tracker import apply_plan_limits
 from app.services.account_health import get_health_summary
@@ -333,17 +334,29 @@ async def publish_guide_hub(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_admin)],
 )
 async def create_style_profile(payload: StyleProfileAnalyzeRequest, db: AsyncSession = Depends(get_db)):
-    """분석할 텍스트를 받아 AI 말투 분석을 수행하고 스타일 프로필을 저장합니다."""
+    """분석할 텍스트를 받아 AI 말투 분석을 수행하고 스타일 프로필을 저장합니다.
+    
+    source_type=text: source_text 필드에 직접 텍스트를 붙여넣습니다.
+    source_type=channel: account_id + chat_id로 채널을 지정하면 최근 메시지를 자동 수집합니다.
+    """
     try:
         profile = await analyze_style(
             name=payload.name,
             source_type=payload.source_type,
             source_text=payload.source_text,
             db=db,
+            account_id=payload.account_id,
+            chat_id=payload.chat_id,
+            message_limit=payload.message_limit,
         )
         await db.commit()
         logger.info("style_profile_created", profile_id=profile.id, name=payload.name)
         return profile
+    except AccountNotAuthenticatedError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="해당 텔레그램 계정이 인증되지 않았습니다. 계정 설정에서 다시 로그인해주세요.",
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 

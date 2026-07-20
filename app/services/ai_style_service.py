@@ -4,8 +4,12 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.crud import account as account_crud
 from app.models.style_profile import StyleProfile
 from app.services.ai_core_service import call_deepseek
+from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
+
+_MAX_CHANNEL_CHARS = 8000
 
 logger = get_logger(__name__)
 
@@ -43,7 +47,20 @@ _STYLE_PROMPT_TEMPLATE = (
 )
 
 
-async def analyze_style(name: str, source_type: str, source_text: str, db: AsyncSession) -> StyleProfile:
+async def analyze_style(
+    name: str,
+    source_type: str,
+    source_text: str,
+    db: AsyncSession,
+    account_id: str | None = None,
+    chat_id: str | None = None,
+    message_limit: int = 50,
+) -> StyleProfile:
+    if source_type == "channel":
+        if not account_id or not chat_id:
+            raise ValueError("channel 모드는 account_id와 chat_id가 필요합니다.")
+        source_text = await _fetch_channel_messages(account_id, chat_id, message_limit)
+
     reply, _ = await call_deepseek(
         messages=[
             {"role": "system", "content": "You are a precise writing style analyst. Always respond with valid JSON only."},
@@ -124,6 +141,62 @@ async def update_profile(db: AsyncSession, profile: StyleProfile, name: str) -> 
 async def delete_profile(db: AsyncSession, profile: StyleProfile) -> None:
     await db.delete(profile)
     await db.flush()
+
+
+# ─── Channel Message Fetching ────────────────────────────────────────
+
+
+async def _fetch_channel_messages(account_id: str, chat_id: str, limit: int = 50) -> str:
+    from app.database import async_session_maker
+
+    async with async_session_maker() as db:
+        account = await account_crud.get_account(db, account_id)
+        if account is None:
+            raise ValueError(f"계정을 찾을 수 없습니다 (id={account_id}).")
+
+    client = await get_authorized_client(account)
+
+    if not client.is_connected():
+        raise ValueError("Telegram 세션이 연결되지 않았습니다. 계정을 다시 인증해주세요.")
+
+    try:
+        cleaned = chat_id.lstrip("-")
+        target = int(chat_id) if cleaned.isdigit() else chat_id
+        messages = await client.get_messages(target, limit=limit)
+    except Exception as exc:
+        raise ValueError(f"채널 메시지를 불러올 수 없습니다: {exc}")
+
+    collected: list[str] = []
+    total_chars = 0
+    for msg in messages:
+        if msg.out or not msg.text:
+            continue
+        text = msg.text.strip()
+        if not text:
+            continue
+        if total_chars + len(text) > _MAX_CHANNEL_CHARS:
+            remaining = _MAX_CHANNEL_CHARS - total_chars
+            if remaining > 100:
+                collected.append(text[:remaining])
+            break
+        collected.append(text)
+        total_chars += len(text)
+
+    if not collected:
+        raise ValueError(
+            "분석할 텍스트 메시지를 찾을 수 없습니다. "
+            "계정이 채널에 접근 가능한지, 채널에 게시글이 있는지 확인해주세요."
+        )
+
+    result = "\n\n---\n\n".join(collected)
+    logger.info(
+        "channel_messages_fetched",
+        account_id=account_id,
+        chat_id=chat_id,
+        messages_count=len(collected),
+        total_chars=total_chars,
+    )
+    return result
 
 
 # ─── Kiro Integration Helpers ────────────────────────────────────────
