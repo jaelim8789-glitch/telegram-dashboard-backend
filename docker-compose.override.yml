@@ -1,10 +1,10 @@
 services:
   backend:
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:change-me-strong-password@telemon-postgres-1:5432/telegram_messenger
+      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@backend-db-1:5432/telegram_dashboard
     networks:
+      - backend_default
       - default
-      - telemon_db_net
 
   frontend:
     networks:
@@ -24,5 +24,5 @@ services:
       - default
 
 networks:
-  telemon_db_net:
+  backend_default:
     external: true
