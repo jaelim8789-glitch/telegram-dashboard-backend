@@ -2,6 +2,8 @@
 
 import pytest
 
+from app.main import app
+
 
 @pytest.mark.asyncio
 async def test_list_accounts_empty(client):
@@ -216,3 +218,51 @@ async def test_sort_accounts_by_phone(client):
     body = res.json()
     phones = [item["phone"] for item in body["items"]]
     assert phones == sorted(phones)
+
+
+@pytest.mark.asyncio
+async def test_resume_suspended_account_returns_active(client, db_session):
+    from app.api.deps import require_admin
+    from app.models.account import Account
+    from sqlalchemy import select
+
+    app.dependency_overrides[require_admin] = lambda: None
+    try:
+        created = await client.post("/api/accounts", json={"phone": "+821099990000", "name": "재개 테스트"})
+        account_id = created.json()["id"]
+
+        result = await db_session.execute(select(Account).where(Account.id == account_id))
+        account = result.scalar_one_or_none()
+        assert account is not None
+        account.status = "suspended"
+        account.last_error = "규제 의심"
+        account.last_error_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(tzinfo=None)
+        await db_session.commit()
+
+        res = await client.post(f"/api/accounts/{account_id}/resume")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "active"
+        assert body["last_error"] is None
+        assert body["last_error_at"] is None
+
+        await db_session.refresh(account)
+        assert account.status == "active"
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
+
+
+@pytest.mark.asyncio
+async def test_resume_non_suspended_account_returns_400(client, db_session):
+    from app.api.deps import require_admin
+
+    app.dependency_overrides[require_admin] = lambda: None
+    try:
+        created = await client.post("/api/accounts", json={"phone": "+821099990001", "name": "재개 불가 테스트"})
+        account_id = created.json()["id"]
+
+        res = await client.post(f"/api/accounts/{account_id}/resume")
+        assert res.status_code == 400
+        assert "일시중단" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(require_admin, None)

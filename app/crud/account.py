@@ -138,6 +138,22 @@ async def clear_account_error(db: AsyncSession, account: Account) -> Account:
     return account
 
 
+async def resume_account(db: AsyncSession, account: Account) -> Account:
+    """Resume a suspended account back to active after admin review.
+
+    Clears the restriction-related error state so the health badge returns
+    to normal. The caller is responsible for verifying the account's actual
+    Telegram standing before calling this.
+    """
+    account.status = "active"
+    account.last_error = None
+    account.last_error_at = None
+    account.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+
 # ── Search / Filter / Sort / Paginate ────────────────────────────────────
 
 

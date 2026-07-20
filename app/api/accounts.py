@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.api.deps import get_current_identity, Identity, require_account_capacity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_capacity, require_account_tenant_access, require_admin
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
@@ -246,6 +246,30 @@ async def clear_account_error(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
     return await account_crud.clear_account_error(db, account)
+
+
+@router.post("/{account_id}/resume", response_model=AccountRead)
+async def resume_account(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    _admin_check: None = Depends(require_admin),
+):
+    """관리자가 suspended 계정을 active로 복구한다.
+
+    Requires admin privileges. Clears the restriction-related error state
+    so the account can send broadcasts again.
+    """
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+    if account.status != "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="일시중단된 계정만 재개할 수 있습니다.",
+        )
+    return await account_crud.resume_account(db, account)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
