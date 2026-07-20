@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Insecure default values that must be overridden before production deployment.
 # These match the shipped class-level defaults above.
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
-_ADMIN_DEFAULTS = {"admin_username": "123123", "admin_password": "123456"}
+_ADMIN_DEFAULTS = {"admin_username": "sksk2929", "admin_password": "ysjr0508"}
 _JWT_DEFAULT = "change-me-in-production"
 
 
@@ -61,8 +61,8 @@ class Settings(BaseSettings):
     # changed per-deployment without a code change. The shipped defaults match what was
     # asked for, but "123456" is a very weak password: change it before any deployment
     # that isn't strictly localhost-only.
-    admin_username: str = "123123"
-    admin_password: str = "123456"
+    admin_username: str = "sksk2929"
+    admin_password: str = "ysjr0508"
     admin_jwt_secret: str = "change-me-in-production"
     admin_jwt_expire_minutes: int = 60 * 24
 
