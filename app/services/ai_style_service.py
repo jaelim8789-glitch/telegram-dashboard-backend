@@ -124,3 +124,48 @@ async def update_profile(db: AsyncSession, profile: StyleProfile, name: str) -> 
 async def delete_profile(db: AsyncSession, profile: StyleProfile) -> None:
     await db.delete(profile)
     await db.flush()
+
+
+# ─── Kiro Integration Helpers ────────────────────────────────────────
+
+
+async def get_style_prompt_for_generation(profile_id: str, db: AsyncSession) -> str:
+    """Return the style_prompt string for a given profile.
+
+    Kiro's content generation endpoint can call this to retrieve the
+    style instruction and inject it into the system/messages list:
+
+        from app.services.ai_style_service import get_style_prompt_for_generation
+        style_prompt = await get_style_prompt_for_generation(profile_id, db)
+        if style_prompt:
+            messages.insert(0, {"role": "system", "content": style_prompt})
+
+    Returns empty string if the profile is not found.
+    """
+    profile = await db.get(StyleProfile, profile_id)
+    if profile is None:
+        logger.warning("style_profile_not_found", profile_id=profile_id)
+        return ""
+    return profile.style_prompt
+
+
+async def get_style_context_for_generation(profile_id: str, db: AsyncSession) -> dict:
+    """Return a full style context dict for a given profile.
+
+    Kiro can use this to get structured style metadata alongside the
+    prompt string, useful for displaying which style is active or for
+    building a richer system message.
+
+    Returns {"id": ..., "name": ..., "tone_analysis": ..., "style_prompt": ...}
+    or an empty dict if not found.
+    """
+    profile = await db.get(StyleProfile, profile_id)
+    if profile is None:
+        logger.warning("style_profile_not_found", profile_id=profile_id)
+        return {}
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "tone_analysis": profile.tone_analysis,
+        "style_prompt": profile.style_prompt,
+    }
