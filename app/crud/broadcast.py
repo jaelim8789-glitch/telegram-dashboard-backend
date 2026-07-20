@@ -46,6 +46,7 @@ async def create_broadcast(
         inline_buttons=getattr(data, "inline_buttons", None),
         group_ids=getattr(data, "group_ids", None),
         campaign_id=getattr(data, "campaign_id", None),
+        content_studio_content_id=getattr(data, "content_studio_content_id", None),
     )
     if data.recurring_interval_minutes is not None:
         if scheduled_at is None or scheduled_at <= now:

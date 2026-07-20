@@ -31,6 +31,7 @@ class ContentGenerateResponse(BaseModel):
     generated_content: str
     tokens_used: int
     style_profile_id: str | None = None
+    content_studio_content_id: str | None = None
 
 
 class ContentCalendarSettingCreate(BaseModel):

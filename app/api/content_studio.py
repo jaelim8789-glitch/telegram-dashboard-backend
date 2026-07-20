@@ -20,6 +20,7 @@ from app.crud.content_calendar import (
 )
 from app.database import get_db
 from app.models.content_calendar import ContentCalendarSetting
+from app.schemas.broadcast import BroadcastCreate
 from app.schemas.content_studio import (
     ContentCalendarSettingCreate,
     ContentCalendarSettingRead,
@@ -59,7 +60,7 @@ async def generate_content_studio(
     if not allowed:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
 
-    content, tokens = await generate_content(
+    content, tokens, content_studio_content_id = await generate_content(
         content_type=payload.content_type,
         tone=payload.tone,
         topic=payload.topic,
@@ -80,6 +81,7 @@ async def generate_content_studio(
         generated_content=content,
         tokens_used=tokens,
         style_profile_id=payload.style_profile_id,
+        content_studio_content_id=content_studio_content_id,
     )
 
 
@@ -164,9 +166,19 @@ async def run_daily_content_generation(db: AsyncSession) -> None:
 
     for setting in settings:
         try:
+            allowed, reason = await check_ai_quota(db, setting.tenant_id, FEATURE_CONTENT_STUDIO)
+            if not allowed:
+                logger.warning(
+                    "content_calendar_quota_exceeded",
+                    setting_id=setting.id,
+                    tenant_id=setting.tenant_id,
+                    reason=reason,
+                )
+                continue
+
             for _ in range(setting.daily_count):
                 content_type = random.choice(setting.content_types)
-                content, tokens = await generate_content(
+                content, tokens, content_studio_content_id = await generate_content(
                     content_type=content_type,
                     tone=setting.tone,
                     tenant_id=setting.tenant_id,
@@ -180,8 +192,14 @@ async def run_daily_content_generation(db: AsyncSession) -> None:
                     "recipients": [],
                     "group_ids": setting.group_ids,
                     "delivery_mode": "normal",
+                    "content_studio_content_id": content_studio_content_id,
                 }
-                broadcast = await broadcast_crud.create_broadcast(db, broadcast_data, media_path=None)
+                broadcast = await broadcast_crud.create_broadcast(
+                    db,
+                    BroadcastCreate(**broadcast_data),
+                    media_path=None,
+                    scheduled_at=None,
+                )
                 logger.info(
                     "content_calendar_broadcast_created",
                     setting_id=setting.id,

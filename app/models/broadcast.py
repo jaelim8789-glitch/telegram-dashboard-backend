@@ -69,3 +69,8 @@ class Broadcast(Base):
     # split across the tenant's active accounts (see app/services/broadcast_distribution.py).
     # All slices of the same logical request share this id.
     distribution_batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True, default=None)
+
+    # ── Content Studio linkage ───────────────────────────────────────
+    # When this broadcast was created by AI Content Studio, this stores the
+    # generated content ID so the client can later update / query by it.
+    content_studio_content_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True, default=None)

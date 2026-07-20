@@ -16,7 +16,7 @@ async def test_generate_endpoint_returns_ok(client):
     )
 
     fake_reply = "🔥 지금 바로 테스트 상품을 만나보세요! 무료 배송으로 오늘만 특가!"
-    with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 42)) as mock_gen:
+    with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 42, "cs-123")) as mock_gen:
         with patch("app.services.ai_core_service.check_ai_quota", return_value=(True, "")):
             response = await client.post("/api/ai/content-studio/generate", json=payload.model_dump())
 
@@ -27,6 +27,7 @@ async def test_generate_endpoint_returns_ok(client):
     assert data["generated_content"] == fake_reply
     assert data["tokens_used"] == 42
     assert data["style_profile_id"] is None
+    assert data["content_studio_content_id"] == "cs-123"
 
     mock_gen.assert_called_once()
     call_kwargs = mock_gen.call_args.kwargs
@@ -47,12 +48,13 @@ async def test_generate_endpoint_with_style_profile(client):
     )
 
     fake_reply = "💌 여러분의 이야기가 궁금해요... 참여해주세요!"
-    with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 30)) as mock_gen:
+    with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 30, "cs-456")) as mock_gen:
         with patch("app.services.ai_core_service.check_ai_quota", return_value=(True, "")):
             response = await client.post("/api/ai/content-studio/generate", json=payload.model_dump())
 
     assert response.status_code == 200
     data = response.json()
     assert data["style_profile_id"] == "style-123"
+    assert data["content_studio_content_id"] == "cs-456"
     mock_gen.assert_called_once()
     assert mock_gen.call_args.kwargs["style_profile_id"] == "style-123"

@@ -25,6 +25,8 @@ class BroadcastCreate(BaseModel):
     group_ids: list[str] | None = None
     # Campaign linkage
     campaign_id: str | None = None
+    # Content Studio linkage
+    content_studio_content_id: str | None = None
 
     @model_validator(mode="after")
     def _validate_message_or_reply(self):
@@ -85,6 +87,7 @@ class BroadcastRead(BaseModel):
     groups_resolved: bool = False
     campaign_id: str | None = None
     distribution_batch_id: str | None = None
+    content_studio_content_id: str | None = None
 
 
 class DistributionSiblingRead(BaseModel):

@@ -8,6 +8,7 @@ configuration, quota model, and usage tracking apply.
 from __future__ import annotations
 
 import random
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -249,10 +250,11 @@ async def generate_content(
     tenant_id: str | None = None,
     style_profile_id: str | None = None,
     db: AsyncSession | None = None,
-) -> tuple[str | None, int]:
+) -> tuple[str | None, int, str | None]:
     """Generate content via DeepSeek and record usage.
 
-    Returns (generated_content, tokens_used) or (None, 0) on failure.
+    Returns (generated_content, tokens_used, content_studio_content_id)
+    or (None, 0, None) on failure.
     """
     prompt = build_prompt(content_type, tone, topic, context)
 
@@ -272,7 +274,7 @@ async def generate_content(
 
     reply, tokens = await call_deepseek(messages)
     if reply is None:
-        return None, 0
+        return None, 0, None
 
     if tenant_id:
         try:
@@ -285,4 +287,4 @@ async def generate_content(
         except Exception:
             pass
 
-    return reply.strip(), tokens
+    return reply.strip(), tokens, str(uuid.uuid4())
