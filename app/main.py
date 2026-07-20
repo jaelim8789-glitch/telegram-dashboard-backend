@@ -58,6 +58,7 @@ from app.api.telegram_verify import router as telegram_verify_router
 from app.api.ai_agent import router as ai_agent_router
 from app.api.content_studio import router as content_studio_router
 from app.api.style_profiles import router as style_profiles_router
+from app.api.tokens import router as tokens_router
 from app.routers.guest_routes import router as guest_routes_router
 from app.routers.stars_payments import router as stars_payments_router
 from app.routers.trigger_routes import router as trigger_routes_router
@@ -271,6 +272,7 @@ app.include_router(chat_router, dependencies=_auth_required)
 app.include_router(ai_agent_router, dependencies=_auth_required)
 app.include_router(content_studio_router, dependencies=_auth_required)
 app.include_router(style_profiles_router, dependencies=_auth_required)
+app.include_router(tokens_router, dependencies=_auth_required)
 app.include_router(guest_routes_router, dependencies=_auth_required)
 app.include_router(stars_payments_router, dependencies=_auth_required)
 app.include_router(trigger_routes_router, dependencies=_auth_required)

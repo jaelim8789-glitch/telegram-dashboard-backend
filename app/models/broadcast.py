@@ -45,6 +45,11 @@ class Broadcast(Base):
     # Per-recipient pacing override in seconds for delivery_mode "normal" (null = default 60s cooldown pacing).
     delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # ── Batch size ──────────────────────────────────────────────────
+    # Number of parallel sends per batch (1~50). Only applies to "normal" delivery mode.
+    # When set, recipients are sent in batches of this size concurrently.
+    batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # ── Campaign linkage ────────────────────────────────────────────
     # Links this broadcast to a campaign for aggregation/grouping.
     campaign_id: Mapped[str | None] = mapped_column(

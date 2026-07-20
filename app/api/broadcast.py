@@ -85,6 +85,9 @@ async def create_broadcast(
     group_ids: Annotated[
         str | None, Form(description="JSON array of group chat IDs to resolve recipients from, e.g. [\"-100123\"]")
     ] = None,
+    batch_size: Annotated[
+        str | None, Form(description="Number of parallel sends per batch (1~50). Only applies to 'normal' delivery mode.")
+    ] = None,
     campaign_id: Annotated[
         str | None, Form(description="Campaign ID to link this broadcast to")
     ] = None,
@@ -165,6 +168,22 @@ async def create_broadcast(
                 detail="delay_seconds는 유효한 정수여야 합니다.",
             )
 
+    # Parse batch_size
+    batch_size_val: int | None = None
+    if batch_size is not None and batch_size.strip():
+        try:
+            batch_size_val = int(batch_size.strip())
+            if batch_size_val < 1 or batch_size_val > 50:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="batch_size는 1에서 50 사이여야 합니다.",
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="batch_size는 유효한 정수여야 합니다.",
+            )
+
     # Parse inline_buttons
     parsed_inline_buttons: list[dict] | None = None
     if inline_buttons is not None and inline_buttons.strip():
@@ -201,6 +220,7 @@ async def create_broadcast(
             delay_seconds=parsed_delay_seconds,
             inline_buttons=parsed_inline_buttons,
             group_ids=parsed_group_ids,
+            batch_size=batch_size_val,
             campaign_id=campaign_id,
         )
     except ValidationError as exc:

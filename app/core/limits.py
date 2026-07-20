@@ -1,10 +1,24 @@
 # Telegram ToS-friendly self-imposed limits for the broadcast feature.
 # No hard cap on recipients per broadcast — the plan's monthly_message_limit
-# and per-account 60s cooldown provide sufficient guardrails.
+# and per-account cooldown provide sufficient guardrails.
+# 달라진 점: BROADCAST_MIN_INTERVAL_SECONDS 이제 batch_size 기반으로 동적 조정.
+# 실제 유효 간격 = BROADCAST_MIN_INTERVAL_SECONDS / batch_size (최소 5초)
 BROADCAST_MIN_INTERVAL_SECONDS = 60
 # Small pause between individual sends within one broadcast, on top of the
 # per-account cooldown above, so a burst doesn't hit Telegram's rate limits.
 INTER_MESSAGE_DELAY_SECONDS = 2
+
+# 최소 rate limit 간격 (batch_size 기반 동적 계산)
+MINIMUM_INTERVAL_SECONDS = 5
+
+
+def effective_broadcast_interval(batch_size: int | None = None) -> int:
+    """batch_size에 따라 rate limit 간격을 동적 계산.
+    batch_size=1 → 60초, 5→12초, 10→6초, 50→5초(최소)
+    """
+    if batch_size is None or batch_size <= 1:
+        return BROADCAST_MIN_INTERVAL_SECONDS
+    return max(MINIMUM_INTERVAL_SECONDS, BROADCAST_MIN_INTERVAL_SECONDS // batch_size)
 
 MAX_MEDIA_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
 ALLOWED_MEDIA_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"}

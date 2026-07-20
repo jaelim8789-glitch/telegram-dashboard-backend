@@ -23,6 +23,8 @@ class BroadcastCreate(BaseModel):
     inline_buttons: list[dict] | None = None
     # Send-to-group: if set, recipients will be resolved from group member lists at dispatch time
     group_ids: list[str] | None = None
+    # 발송 batch 크기 (1~50). normal 모드에서 N개 병렬 발송에 사용됩니다.
+    batch_size: int | None = Field(default=None, ge=1, le=50)
     # Campaign linkage
     campaign_id: str | None = None
     # Content Studio linkage

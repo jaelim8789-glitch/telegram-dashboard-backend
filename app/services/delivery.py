@@ -112,6 +112,9 @@ class DeliveryRequest:
     reply_to_msg_id: int | None = None
     reply_to_map: dict[str, int] | None = None
     inline_buttons: list[dict] | None = None
+    # Number of parallel sends per batch (1~50). When set, recipients are
+    # processed in batches of this size concurrently via asyncio.gather.
+    batch_size: int | None = None
 
 
 def utcnow_naive() -> datetime:
@@ -572,7 +575,8 @@ async def deliver_message(
     # 3. Send to each recipient with retry
     _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)
 
-    for i, recipient in enumerate(request.recipients):
+    async def _send_one(recipient: str) -> DeliveryResult:
+        """Send to a single recipient with post-send bookkeeping."""
         target = _resolve_target(recipient)
         reply_to = (
             request.reply_to_map.get(recipient)
@@ -592,7 +596,6 @@ async def deliver_message(
             reply_to_msg_id=reply_to,
             inline_buttons=request.inline_buttons,
         )
-        results.append(result)
 
         # If Telegram told us the account is banned, persist it so future
         # deliveries fast-fail without a network call.
@@ -605,16 +608,40 @@ async def deliver_message(
             except Exception as persist_err:
                 logger.warning("banned_persistence_failed", account_id=request.account_id, error=str(persist_err))
 
-        # Restriction early-warning: a burst of forbidden-class failures across
-        # many distinct recipients signals a likely Telegram anti-spam restriction.
-        # Pause sending so we don't escalate a temporary restriction into a ban.
+        # Restriction early-warning
         if result.status == DeliveryStatus.FORBIDDEN:
             should_suspend = _record_forbidden_failure(request.account_id, recipient)
             if should_suspend:
                 await _maybe_suspend_for_restriction(request.account_id)
 
-        # Pacing delay between recipients (configurable per request)
-        if i < len(request.recipients) - 1:
-            await asyncio.sleep(request.inter_message_delay)
+        return result
+
+    batch_size = request.batch_size or 1
+    total = len(request.recipients)
+
+    if batch_size > 1 and total > 1:
+        # Batch mode: send N recipients concurrently, then pace between batches
+        for start in range(0, total, batch_size):
+            batch = request.recipients[start:start + batch_size]
+            batch_results = await asyncio.gather(
+                *(_send_one(r) for r in batch),
+                return_exceptions=True,
+            )
+            for r in batch_results:
+                if isinstance(r, Exception):
+                    logger.error("batch_send_exception", error=str(r))
+                    continue
+                results.append(r)
+            # Pacing delay between batches (not between individual sends)
+            if start + batch_size < total:
+                await asyncio.sleep(request.inter_message_delay)
+    else:
+        # Sequential mode (default): send one at a time with pacing
+        for i, recipient in enumerate(request.recipients):
+            result = await _send_one(recipient)
+            results.append(result)
+            # Pacing delay between recipients
+            if i < len(request.recipients) - 1:
+                await asyncio.sleep(request.inter_message_delay)
 
     return results
