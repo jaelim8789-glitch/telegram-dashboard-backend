@@ -84,6 +84,23 @@ class BroadcastRead(BaseModel):
     group_ids: list[str] | None = None
     groups_resolved: bool = False
     campaign_id: str | None = None
+    distribution_batch_id: str | None = None
+
+
+class DistributionSiblingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    broadcast: BroadcastRead
+    account_id: str
+    account_phone: str
+    account_name: str | None = None
+
+
+class DistributionStatusResponse(BaseModel):
+    batch_id: str
+    siblings: list[DistributionSiblingRead]
+
+
 class BroadcastChildrenRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

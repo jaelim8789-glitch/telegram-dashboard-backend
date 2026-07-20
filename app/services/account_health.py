@@ -9,6 +9,8 @@ All data is already persisted by the canonical delivery pipeline.
 
 Health states (mutually exclusive, highest-priority-first):
 - banned: Account.status == "banned" or most recent delivery was banned
+- restricted: Account.status == "suspended" (auto-paused after a likely
+  Telegram restriction — see app/services/delivery.py restriction early-warning)
 - unauthorized: No valid session or most recent delivery was session_expired
 - rate_limited: Most recent delivery was flood_wait
 - error: Most recent delivery was a non-recoverable error
@@ -59,6 +61,7 @@ class HealthSummary:
     banned: int
     rate_limited: int
     unauthorized: int
+    restricted: int
     error_count: int
     unknown: int
     has_session: int
@@ -133,6 +136,8 @@ async def get_account_health(
 
         if account.status == "banned":
             status_val = "banned"
+        elif account.status == "suspended":
+            status_val = "restricted"
         elif not has_session:
             status_val = "not_configured"
         elif latest and not latest.success:
@@ -188,6 +193,7 @@ async def get_health_summary(
     banned = sum(1 for i in items if i.status == "banned")
     rate_limited = sum(1 for i in items if i.status == "rate_limited")
     unauthorized = sum(1 for i in items if i.status == "unauthorized")
+    restricted = sum(1 for i in items if i.status == "restricted")
     error_count = sum(1 for i in items if i.status == "error")
     unknown = sum(1 for i in items if i.status == "unknown")
     has_session = sum(1 for i in items if i.has_session)
@@ -205,6 +211,7 @@ async def get_health_summary(
         banned=banned,
         rate_limited=rate_limited,
         unauthorized=unauthorized,
+        restricted=restricted,
         error_count=error_count,
         unknown=unknown,
         has_session=has_session,

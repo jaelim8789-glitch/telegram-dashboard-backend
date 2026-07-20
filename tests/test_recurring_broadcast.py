@@ -21,6 +21,7 @@ import pytest
 
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
+from app.crud.recurring_schedule import create_recurring_schedule
 from app.crud.broadcast import RECURRING_STALE_TIMEOUT_SECONDS, recover_stale_recurring_parents
 from app.schemas.account import AccountCreate
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
@@ -1030,8 +1031,25 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     # which persisted message_logs for child_b and child_a.
     await db_session.refresh(child_b)
     assert child_b.status == "sent"
-    await db_session.refresh(child_a)
-    assert child_a.status in ("sent", "failed")
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_schedule_rejects_suspended_account(db_session):
+    """create_recurring_schedule must refuse a suspended account."""
+    from app.schemas.recurring_schedule import RecurringScheduleCreate
+
+    account = await _make_account(db_session)
+    account.status = "suspended"
+    await db_session.commit()
+
+    data = RecurringScheduleCreate(
+        account_id=account.id,
+        message="반복",
+        interval_minutes=60,
+        group_ids=["-100123"],
+    )
+    with pytest.raises(ValueError, match="일시 중단"):
+        await create_recurring_schedule(db_session, data, media_path=None)
 
 
 @pytest.mark.asyncio

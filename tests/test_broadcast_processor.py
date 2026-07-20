@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,7 +9,7 @@ from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.schemas.account import AccountCreate
 from app.schemas.broadcast import BroadcastCreate
-from app.services.broadcast_processor import process_broadcast
+from app.services.broadcast_processor import process_broadcast, process_recurring_parent
 from app.services.delivery import DeliveryResult, DeliveryStatus
 
 
@@ -1049,3 +1050,45 @@ async def test_delivery_pipeline_falls_back_to_reply_to_msg_id_when_map_absent(d
 
     assert captured_reply_to == {"-100001": 55555, "-100002": 55555}
     assert all(r.status == DeliveryStatus.SUCCESS for r in results)
+
+
+@pytest.mark.asyncio
+async def test_process_broadcast_suspended_account_marks_failed_without_sending(db_session, monkeypatch):
+    account = await _make_account(db_session)
+    account.status = "suspended"
+    await db_session.commit()
+
+    broadcast = await _make_broadcast(db_session, account.id)
+
+    deliver_mock = AsyncMock(return_value=[_success_result()])
+    monkeypatch.setattr("app.services.broadcast_processor.deliver_message", deliver_mock)
+
+    await process_broadcast(broadcast.id)
+
+    deliver_mock.assert_not_called()
+
+    await db_session.refresh(broadcast)
+    assert broadcast.status == "failed"
+    assert "일시 중단" in broadcast.error_message
+
+
+@pytest.mark.asyncio
+async def test_process_recurring_parent_skips_suspended(db_session, monkeypatch):
+    account = await _make_account(db_session)
+    account.status = "suspended"
+    await db_session.commit()
+
+    parent = await _make_broadcast(db_session, account.id, message="반복")
+    parent.recurring_interval_minutes = 60
+    parent.next_scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db_session.commit()
+
+    child_mock = AsyncMock()
+    monkeypatch.setattr("app.services.broadcast_processor.process_broadcast", child_mock)
+
+    await process_recurring_parent(parent.id)
+
+    child_mock.assert_not_called()
+
+    await db_session.refresh(parent)
+    assert parent.status == "pending"

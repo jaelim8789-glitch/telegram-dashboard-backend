@@ -63,3 +63,9 @@ class Broadcast(Base):
     # JSON array: [{"label": "...", "url": "..."}, ...]
     # These are rendered as URL inline buttons on the Telegram message.
     inline_buttons: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=None)
+
+    # ── Multi-account distribution ──────────────────────────────────
+    # Non-null = this broadcast is one account's slice of a group list that was
+    # split across the tenant's active accounts (see app/services/broadcast_distribution.py).
+    # All slices of the same logical request share this id.
+    distribution_batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True, default=None)

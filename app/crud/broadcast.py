@@ -504,6 +504,18 @@ async def unpause_recurring_broadcast(db: AsyncSession, broadcast_id: str) -> Br
 # ── Child broadcast queries (execution history) ────────────────────
 
 
+async def list_distribution_siblings(db: AsyncSession, batch_id: str) -> list[Broadcast]:
+    """All broadcasts created from one multi-account distribution request
+    (see app/services/broadcast_distribution.py), across every account it
+    was split to."""
+    result = await db.execute(
+        select(Broadcast)
+        .where(Broadcast.distribution_batch_id == batch_id)
+        .order_by(Broadcast.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def list_child_broadcasts(
     db: AsyncSession, parent_id: str, limit: int = 20, offset: int = 0
 ) -> list[Broadcast]:

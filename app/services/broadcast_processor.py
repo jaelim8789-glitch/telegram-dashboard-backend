@@ -63,6 +63,14 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                 logger.warning("broadcast_failed_rate_limited", broadcast_id=broadcast_id, account_id=account.id)
                 return
 
+        if account.status == "suspended":
+            await broadcast_crud.update_broadcast_status(
+                db, broadcast, status="failed",
+                error_message="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다.",
+            )
+            logger.warning("broadcast_failed_suspended", broadcast_id=broadcast_id, account_id=account.id)
+            return
+
         # ── Send-to-Group resolution ──────────────────────────────────────
         group_ids = getattr(broadcast, "group_ids", None)
         if group_ids and not broadcast.groups_resolved:
@@ -257,6 +265,15 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
 
         if parent.status == "cancelled" or parent.is_recurring_paused:
             logger.info("recurring_parent_skipped", parent_id=parent_broadcast_id, status=parent.status)
+            return
+
+        account = await account_crud.get_account(db, parent.account_id)
+        if account is not None and account.status == "suspended":
+            logger.info(
+                "recurring_parent_suspended",
+                parent_id=parent_broadcast_id,
+                account_id=parent.account_id,
+            )
             return
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)

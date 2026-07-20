@@ -21,8 +21,14 @@ from app.schemas.broadcast import (
     BatchRetryResult,
     BroadcastEstimateRequest,
     BroadcastEstimateResponse,
+    DistributionSiblingRead,
+    DistributionStatusResponse,
     RECURRING_INTERVAL_VALUES,
     DeliveryMode,
+)
+from app.services.broadcast_distribution import (
+    DISTRIBUTION_GROUP_THRESHOLD,
+    create_distributed_broadcast,
 )
 from app.services.broadcast_processor import process_broadcast
 from app.services.failure_intel import classify_failure
@@ -204,6 +210,12 @@ async def create_broadcast(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
 
+    if account.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요.",
+        )
+
     now = broadcast_crud.utcnow_naive()
     scheduled_for = _to_naive_utc(payload.scheduled_at) if payload.scheduled_at else None
     is_immediate = scheduled_for is None or scheduled_for <= now
@@ -217,9 +229,41 @@ async def create_broadcast(
             )
 
     media_path = await save_broadcast_media(image) if image is not None else None
+    resolved_scheduled_at = None if is_immediate else scheduled_for
+
+    # `group_ids` (member-resolution mode) and `recipients` (direct-chat mode,
+    # what SendTab's group broadcast actually sends — see
+    # broadcast_distribution.create_distributed_broadcast docstring) are
+    # mutually exclusive per request; distribute whichever one is the large list.
+    if parsed_group_ids and len(parsed_group_ids) > DISTRIBUTION_GROUP_THRESHOLD:
+        distribution_target_field, distribution_target_ids = "group_ids", parsed_group_ids
+    elif not parsed_group_ids and len(recipients_list) > DISTRIBUTION_GROUP_THRESHOLD:
+        distribution_target_field, distribution_target_ids = "recipients", recipients_list
+    else:
+        distribution_target_field, distribution_target_ids = None, None
+
+    if distribution_target_field is not None:
+        broadcasts = await create_distributed_broadcast(
+            db,
+            requesting_account=account,
+            target_ids=distribution_target_ids,
+            target_field=distribution_target_field,
+            message=message,
+            media_path=media_path,
+            delivery_mode=mode_val,
+            delay_seconds=parsed_delay_seconds,
+            inline_buttons=parsed_inline_buttons,
+            reply_to_msg_id=parsed_reply_to_id,
+            scheduled_at=resolved_scheduled_at,
+            campaign_id=campaign_id,
+        )
+        if is_immediate:
+            for b in broadcasts:
+                background_tasks.add_task(process_broadcast, b.id)
+        return broadcasts[0]
 
     broadcast = await broadcast_crud.create_broadcast(
-        db, payload, media_path, scheduled_at=None if is_immediate else scheduled_for
+        db, payload, media_path, scheduled_at=resolved_scheduled_at
     )
 
     if is_immediate:
@@ -251,6 +295,12 @@ async def send_to_group(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
 
+    if account.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요.",
+        )
+
     now = broadcast_crud.utcnow_naive()
     scheduled_for = _to_naive_utc(payload.scheduled_at) if payload.scheduled_at else None
     is_immediate = scheduled_for is None or scheduled_for <= now
@@ -278,8 +328,30 @@ async def send_to_group(
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
 
+    resolved_scheduled_at = None if is_immediate else scheduled_for
+
+    if len(payload.group_ids) > DISTRIBUTION_GROUP_THRESHOLD:
+        broadcasts = await create_distributed_broadcast(
+            db,
+            requesting_account=account,
+            target_ids=payload.group_ids,
+            target_field="group_ids",
+            message=payload.message,
+            media_path=None,
+            delivery_mode=payload.delivery_mode,
+            delay_seconds=payload.delay_seconds,
+            inline_buttons=payload.inline_buttons,
+            reply_to_msg_id=None,
+            scheduled_at=resolved_scheduled_at,
+            campaign_id=payload.campaign_id,
+        )
+        if is_immediate:
+            for b in broadcasts:
+                background_tasks.add_task(process_broadcast, b.id)
+        return broadcasts[0]
+
     broadcast = await broadcast_crud.create_broadcast(
-        db, create_payload, media_path=None, scheduled_at=None if is_immediate else scheduled_for
+        db, create_payload, media_path=None, scheduled_at=resolved_scheduled_at
     )
 
     if is_immediate:
@@ -628,3 +700,32 @@ async def read_recurring_children(
         )
 
     return _enrich_broadcast_list(await broadcast_crud.list_child_broadcasts(db, broadcast_id, limit=limit, offset=offset))
+
+
+@router.get("/distribution/{batch_id}", response_model=DistributionStatusResponse)
+async def read_distribution_status(
+    batch_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Per-account status for a broadcast that was split across multiple
+    accounts (see app/services/broadcast_distribution.py)."""
+    siblings = await broadcast_crud.list_distribution_siblings(db, batch_id)
+    if not siblings:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="분산 발송 기록을 찾을 수 없습니다.")
+
+    await require_account_tenant_access(siblings[0].account_id, db, identity)
+
+    _enrich_broadcast_list(siblings)
+    result = []
+    for b in siblings:
+        acc = await account_crud.get_account(db, b.account_id)
+        result.append(
+            DistributionSiblingRead(
+                broadcast=b,
+                account_id=b.account_id,
+                account_phone=acc.phone if acc else "",
+                account_name=acc.name if acc else None,
+            )
+        )
+    return DistributionStatusResponse(batch_id=batch_id, siblings=result)

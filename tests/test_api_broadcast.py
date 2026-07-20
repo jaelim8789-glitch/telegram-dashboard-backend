@@ -179,3 +179,42 @@ async def test_logs_tenant_isolation(client):
         assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_create_broadcast_suspended_account_returns_403(client, db_session):
+    account_id = await _create_account(client)
+
+    from sqlalchemy import select
+    from app.models.account import Account
+
+    result = await db_session.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    assert account is not None
+    account.status = "suspended"
+    await db_session.commit()
+
+    res = await client.post("/api/broadcast", data=_broadcast_form(account_id))
+    assert res.status_code == 403
+    assert "일시 중단" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_send_to_group_suspended_account_returns_403(client, db_session):
+    account_id = await _create_account(client)
+
+    from sqlalchemy import select
+    from app.models.account import Account
+
+    result = await db_session.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    assert account is not None
+    account.status = "suspended"
+    await db_session.commit()
+
+    res = await client.post(
+        "/api/broadcast/send-group",
+        json={"account_id": account_id, "message": "hi", "group_ids": ["-100123"]},
+    )
+    assert res.status_code == 403
+    assert "일시 중단" in res.json()["detail"]

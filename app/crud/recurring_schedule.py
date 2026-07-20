@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.crud import account as account_crud
 from app.models.recurring_schedule import RecurringSchedule
 from app.schemas.recurring_schedule import RecurringScheduleCreate
 
@@ -14,6 +15,13 @@ def utcnow_naive() -> datetime:
 async def create_recurring_schedule(
     db: AsyncSession, data: RecurringScheduleCreate, media_path: str | None
 ) -> RecurringSchedule:
+    account = await account_crud.get_account(db, data.account_id)
+    if account is None:
+        raise ValueError(f"Account {data.account_id} not found")
+    if account.status == "suspended":
+        raise ValueError(
+            "이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요."
+        )
     schedule = RecurringSchedule(
         account_id=data.account_id,
         message=data.message,
