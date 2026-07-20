@@ -46,7 +46,9 @@ class TelethonClientPool:
             self._locks[account_id] = lock
         return lock
 
-    async def get_client(self, account_id: str, session_string: str = "") -> TelegramClient:
+    async def get_client(
+        self, account_id: str, session_string: str = "", *, require_authorized: bool = True
+    ) -> TelegramClient:
         async with self._lock_for(account_id):
             client = self._clients.get(account_id)
             if client is None:
@@ -94,7 +96,7 @@ class TelethonClientPool:
                                 error=str(exc),
                             )
                             raise
-            if session_string and not await client.is_user_authorized():
+            if require_authorized and session_string and not await client.is_user_authorized():
                 self._clients.pop(account_id, None)
                 self._pending_auth.pop(account_id, None)
                 logger.warning("telethon_session_invalid", account_id=account_id)

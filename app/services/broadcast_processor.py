@@ -52,7 +52,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
         if not skip_rate_limit:
             wait_seconds = await broadcast_crud.seconds_until_next_allowed_broadcast(
-                db, account.id, exclude_id=broadcast.id
+                db, account.id, exclude_id=broadcast.id, batch_size=getattr(broadcast, "batch_size", None)
             )
             if wait_seconds > 0:
                 await broadcast_crud.update_broadcast_status(
@@ -127,6 +127,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         media_path_local = broadcast.media_path
         delay_seconds_local = getattr(broadcast, "delay_seconds", None)
         inline_buttons_local = getattr(broadcast, "inline_buttons", None)
+        batch_size_local = getattr(broadcast, "batch_size", None)
 
         parent_id = broadcast.id if is_recurring_parent else broadcast.parent_broadcast_id
 
@@ -188,6 +189,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         reply_to_msg_id=explicit_reply_to_id,
         reply_to_map=reply_to_map,
         inline_buttons=inline_buttons_local,
+        batch_size=batch_size_local,
     )
 
     if delivery_mode == "bulk":

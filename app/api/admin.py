@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, require_admin
@@ -33,6 +33,8 @@ from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
 from app.models.referral import ReferralCommission
+from app.models.session import Session
+from app.models.token import TokenBalance, TokenTransaction
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -414,6 +416,96 @@ async def delete_style_profile(profile_id: str, db: AsyncSession = Depends(get_d
     await delete_profile(db, profile)
     await db.commit()
 
+
+# ── 관리자 토큰 충전 ────────────────────────────────────────────────
+
+@router.post(
+    "/users/{user_id}/topup-tokens",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+)
+async def admin_topup_tokens(
+    user_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자가 특정 사용자의 토큰을 수동으로 충전합니다.
+
+    Request body: {"amount": 500, "memo": "버그 보상"}
+    """
+    amount = body.get("amount", 0)
+    memo = body.get("memo", "관리자 수동 충전")
+
+    if amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="유효하지 않은 토큰 수량입니다.")
+
+    user = await user_crud.get_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+
+    # 토큰 잔액 조회/생성
+    result = await db.execute(select(TokenBalance).where(TokenBalance.user_id == user_id))
+    balance = result.scalar_one_or_none()
+    if balance is None:
+        balance = TokenBalance(user_id=user_id, balance=0, lifetime_earned=0)
+        db.add(balance)
+        await db.flush()
+
+    balance.balance += amount
+    balance.lifetime_earned += amount
+
+    # 트랜잭션 기록
+    tx = TokenTransaction(
+        user_id=user_id,
+        amount=amount,
+        balance_after=balance.balance,
+        reason="admin_topup",
+        memo=memo[:500] if memo else None,
+    )
+    db.add(tx)
+    await db.commit()
+
+    logger.info("admin_token_topup", user_id=user_id, amount=amount, memo=memo)
+    return {"user_id": user_id, "amount": amount, "new_balance": balance.balance}
+
+
+# ── 사용자 삭제 (전화번호 기반) ──────────────────────────────────────
+
+@router.delete(
+    "/users/by-phone/{phone}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_user_by_phone(
+    phone: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """전화번호로 사용자를 완전히 삭제합니다. 관련 세션, 테넌트, API 키도 함께 정리합니다."""
+    user = await user_crud.get_user_by_phone(db, phone)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 전화번호의 사용자를 찾을 수 없습니다.")
+
+    # 세션 삭제
+    await db.execute(
+        sa_text("DELETE FROM sessions WHERE user_id = :user_id"),
+        {"user_id": user.id},
+    )
+
+    # Tenant 삭제
+    await db.execute(
+        sa_text("DELETE FROM tenants WHERE phone = :phone"),
+        {"phone": phone},
+    )
+
+    # 사용자 삭제
+    await db.delete(user)
+    await db.commit()
+
+    logger.info("admin_user_deleted_by_phone", user_id=user.id, phone=phone)
+    return {"deleted": True, "user_id": user.id, "phone": phone}
+
+
+# ── 대시보드 ────────────────────────────────────────────────────────
 
 @router.get("/dashboard/status", response_model=AdminDashboardStatusResponse, dependencies=[Depends(require_admin)])
 async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identity = Depends(get_current_identity)):

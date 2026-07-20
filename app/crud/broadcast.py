@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity
 from app.config import settings
-from app.core.limits import BROADCAST_MIN_INTERVAL_SECONDS
+from app.core.limits import BROADCAST_MIN_INTERVAL_SECONDS, effective_broadcast_interval
 from app.core.logging import get_logger
 from app.models.broadcast import Broadcast
 from app.models.account import Account
@@ -46,6 +46,7 @@ async def create_broadcast(
         inline_buttons=getattr(data, "inline_buttons", None),
         group_ids=getattr(data, "group_ids", None),
         campaign_id=getattr(data, "campaign_id", None),
+        batch_size=getattr(data, "batch_size", None),
         content_studio_content_id=getattr(data, "content_studio_content_id", None),
     )
     if data.recurring_interval_minutes is not None:
@@ -65,7 +66,7 @@ async def get_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | None
 
 
 async def seconds_until_next_allowed_broadcast(
-    db: AsyncSession, account_id: str, *, exclude_id: str | None = None
+    db: AsyncSession, account_id: str, *, exclude_id: str | None = None, batch_size: int | None = None
 ) -> float:
     now = utcnow_naive()
     reference_time = func.coalesce(Broadcast.sent_at, Broadcast.created_at)
@@ -86,8 +87,9 @@ async def seconds_until_next_allowed_broadcast(
     last_time = result.scalar_one_or_none()
     if last_time is None:
         return 0
+    interval = effective_broadcast_interval(batch_size)
     elapsed = (now - last_time).total_seconds()
-    return max(0.0, BROADCAST_MIN_INTERVAL_SECONDS - elapsed)
+    return max(0.0, interval - elapsed)
 
 
 async def update_broadcast_status(
