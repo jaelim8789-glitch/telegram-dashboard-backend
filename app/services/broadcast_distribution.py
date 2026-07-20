@@ -160,6 +160,15 @@ async def create_distributed_broadcast(
     if target_field not in ("recipients", "group_ids"):
         raise ValueError(f"target_field must be 'recipients' or 'group_ids', got {target_field!r}")
 
+    if not target_ids:
+        return []
+
+    if requesting_account.status in ("suspended", "banned"):
+        raise ValueError(
+            f"Cannot distribute broadcast from {requesting_account.status} account "
+            f"{requesting_account.id}"
+        )
+
     candidates = await get_eligible_accounts(db, requesting_account.tenant_id)
     # Always include the requesting account itself as a candidate, even if a
     # stricter status filter would exclude it for some reason — the caller

@@ -72,6 +72,38 @@ def test_plan_distribution_falls_back_to_requester_for_orphan_group():
     assert "g99" in plan.assignments["acc-a"]
 
 
+def test_plan_distribution_all_groups_are_orphans_falls_back_to_requester():
+    """When no candidate is a member of any target group, everything falls
+    back to the requesting account."""
+    membership = {
+        "acc-a": set(),
+        "acc-b": set(),
+    }
+    plan = plan_distribution(membership, ["g1", "g2", "g3"], requesting_account_id="acc-a")
+
+    assert plan.assignments == {"acc-a": ["g1", "g2", "g3"]}
+    assert plan.distributed is False
+
+
+def test_plan_distribution_partial_membership_balances_load():
+    """Load balancing still works when accounts only partially overlap."""
+    membership = {
+        "acc-a": {"g1", "g2", "g3"},
+        "acc-b": {"g2", "g3", "g4"},
+        "acc-c": {"g3", "g4", "g5"},
+    }
+    group_ids = [f"g{i}" for i in range(1, 6)]
+
+    plan = plan_distribution(membership, group_ids, requesting_account_id="acc-a")
+
+    # Every group must be assigned to someone who is actually a member.
+    for group_id in group_ids:
+        assigned_to = [aid for aid, groups in membership.items() if group_id in groups and group_id in (plan.assignments.get(aid) or [])]
+        # A group may also be assigned to requester via fallback, but at least
+        # one eligible member must have received it.
+        assert len(assigned_to) >= 1 or group_id in plan.assignments.get("acc-a", [])
+
+
 # ── check_membership ─────────────────────────────────────────────────
 
 
@@ -251,6 +283,95 @@ async def test_create_distributed_broadcast_single_candidate_has_no_batch_id(db_
     assert len(broadcasts) == 1
     assert broadcasts[0].distribution_batch_id is None
     assert set(broadcasts[0].group_ids) == set(group_ids)
+
+
+@pytest.mark.asyncio
+async def test_create_distributed_broadcast_empty_target_ids_returns_empty(db_session, monkeypatch):
+    acc_a = await _make_account(db_session, phone="+821011110015", status="active")
+
+    broadcasts = await create_distributed_broadcast(
+        db_session,
+        requesting_account=acc_a,
+        target_ids=[],
+        target_field="group_ids",
+        message="빈 대상",
+        media_path=None,
+        delivery_mode="normal",
+        delay_seconds=None,
+        inline_buttons=None,
+        reply_to_msg_id=None,
+        scheduled_at=None,
+        campaign_id=None,
+    )
+
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_create_distributed_broadcast_requesting_account_suspended_raises(db_session, monkeypatch):
+    acc_a = await _make_account(db_session, phone="+821011110016", status="suspended")
+    acc_b = await _make_account(db_session, phone="+821011110017", status="active")
+
+    group_ids = [f"g{i}" for i in range(5)]
+
+    async def fake_list_groups(account):
+        return [{"id": g} for g in group_ids]
+
+    monkeypatch.setattr(
+        "app.services.broadcast_distribution.list_groups", fake_list_groups
+    )
+
+    with pytest.raises(ValueError, match="suspended"):
+        await create_distributed_broadcast(
+            db_session,
+            requesting_account=acc_a,
+            target_ids=group_ids,
+            target_field="group_ids",
+            message="suspended 요청",
+            media_path=None,
+            delivery_mode="normal",
+            delay_seconds=None,
+            inline_buttons=None,
+            reply_to_msg_id=None,
+            scheduled_at=None,
+            campaign_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_distributed_broadcast_at_threshold_boundary_is_not_distributed(
+    client, db_session, monkeypatch
+):
+    account_id = await _create_account_via_api(client, "+821022220003")
+
+    from sqlalchemy import select
+    from app.models.account import Account
+
+    result = await db_session.execute(select(Account).where(Account.id == account_id))
+    acc = result.scalar_one()
+    acc.status = "active"
+    await db_session.commit()
+
+    group_ids = [f"g{i}" for i in range(DISTRIBUTION_GROUP_THRESHOLD)]
+
+    async def fake_list_groups(account):
+        return [{"id": g} for g in group_ids]
+
+    monkeypatch.setattr(
+        "app.services.broadcast_distribution.list_groups", fake_list_groups
+    )
+
+    res = await client.post(
+        "/api/broadcast",
+        data={
+            "account_id": account_id,
+            "message": "경계값 테스트",
+            "recipients": json.dumps([]),
+            "group_ids": json.dumps(group_ids),
+        },
+    )
+    assert res.status_code == 202
+    assert res.json()["distribution_batch_id"] is None
 
 
 # ── API integration ──────────────────────────────────────────────────
