@@ -1,11 +1,13 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.limits import OTP_EXPIRE_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SECONDS
 from app.core.security import hash_otp_code
+from app.models.account import Account
+from app.models.tenant import Tenant
 from app.models.user import PhoneVerification, User
 
 
@@ -106,6 +108,60 @@ async def touch_last_login(db: AsyncSession, user: User) -> User:
 async def list_users(db: AsyncSession) -> list[User]:
     result = await db.execute(select(User).order_by(User.created_at.desc()))
     return list(result.scalars().all())
+
+
+class UserWithTenantInfo:
+    """Lightweight row wrapper combining a User with its matching Tenant (joined on
+    phone — tenants aren't FK-linked to users, see Tenant model docstring) and its
+    account count. Used only for the admin users list, which needs plan/subscription/
+    account-count columns the bare User model doesn't have."""
+
+    __slots__ = ("user", "plan", "subscription_status", "trial_expires_at", "account_count", "stars_balance")
+
+    def __init__(
+        self,
+        user: User,
+        plan: str | None,
+        subscription_status: str | None,
+        trial_expires_at: datetime | None,
+        account_count: int,
+        stars_balance: int,
+    ) -> None:
+        self.user = user
+        self.plan = plan
+        self.subscription_status = subscription_status
+        self.trial_expires_at = trial_expires_at
+        self.account_count = account_count
+        self.stars_balance = stars_balance
+
+
+async def list_users_with_tenant_info(db: AsyncSession) -> list[UserWithTenantInfo]:
+    """Admin users list, enriched with plan/subscription/account-count so the admin
+    console can show a real picture of each user instead of just phone + active flag."""
+    account_counts_subq = (
+        select(Account.tenant_id, func.count(Account.id).label("account_count"))
+        .group_by(Account.tenant_id)
+        .subquery()
+    )
+    result = await db.execute(
+        select(User, Tenant, account_counts_subq.c.account_count)
+        .outerjoin(Tenant, Tenant.phone == User.phone)
+        .outerjoin(account_counts_subq, account_counts_subq.c.tenant_id == Tenant.id)
+        .order_by(User.created_at.desc())
+    )
+    rows = []
+    for user, tenant, account_count in result.all():
+        rows.append(
+            UserWithTenantInfo(
+                user=user,
+                plan=tenant.plan if tenant else None,
+                subscription_status=tenant.subscription_status if tenant else None,
+                trial_expires_at=tenant.trial_expires_at if tenant else None,
+                account_count=account_count or 0,
+                stars_balance=tenant.stars_balance if tenant else 0,
+            )
+        )
+    return rows
 
 
 async def set_active(db: AsyncSession, user: User, is_active: bool) -> User:

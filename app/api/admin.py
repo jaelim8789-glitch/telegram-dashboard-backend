@@ -133,7 +133,23 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])
 async def list_users(db: AsyncSession = Depends(get_db)):
-    return await user_crud.list_users(db)
+    """List all users with plan/subscription/account-count info."""
+    users_with_info = await user_crud.list_users_with_tenant_info(db)
+    return [
+        UserRead(
+            id=u.user.id,
+            phone=u.user.phone,
+            is_active=u.user.is_active,
+            created_at=u.user.created_at,
+            last_login=u.user.last_login,
+            plan=u.plan,
+            subscription_status=u.subscription_status,
+            trial_expires_at=u.trial_expires_at,
+            account_count=u.account_count,
+            stars_balance=u.stars_balance,
+        )
+        for u in users_with_info
+    ]
 
 
 @router.post("/users/{user_id}/toggle", response_model=UserRead, dependencies=[Depends(require_admin)])
