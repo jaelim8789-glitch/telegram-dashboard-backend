@@ -66,7 +66,8 @@ from app.routers.draft_routes import router as draft_routes_router
 from app.api.ai_group_intel import router as ai_group_intel_router
 from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
-from app.api.cryptomus_payments import router as cryptomus_payments_router
+from app.api.nowpayments import router as nowpayments_router
+from app.api.nowpayments import router as nowpayments_router
 from app.api.referral import router as referral_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -250,7 +251,7 @@ app.include_router(auto_reply_router, dependencies=_auth_required)
 app.include_router(reply_macro_router, dependencies=_auth_required)
 app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
-app.include_router(cryptomus_payments_router)
+app.include_router(nowpayments_router, dependencies=_auth_required)
 app.include_router(referral_router, dependencies=_auth_required)
 app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)
