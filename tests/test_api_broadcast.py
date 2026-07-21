@@ -158,8 +158,7 @@ async def test_logs_filter_by_account_and_status(client):
     assert all(item["status"] == "pending" for item in by_status.json())
 
     by_missing_account = await client.get("/api/logs?account_id=does-not-exist")
-    assert by_missing_account.status_code == 200
-    assert by_missing_account.json() == []
+    assert by_missing_account.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -177,6 +176,36 @@ async def test_logs_tenant_isolation(client):
         resp = await client.get(f"/api/logs?account_id={account_id}")
         assert resp.status_code == 403
         assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_logs_without_account_id_scopes_to_caller_tenant(client):
+    """Regression test: GET /api/logs with no account_id filter must not 422
+    (the require_account_tenant_access dependency previously ran unconditionally
+    and required an account_id, breaking the "all logs" view) and must not leak
+    another tenant's broadcasts — list_logs itself scopes by identity.tenant_id."""
+    from app.api.deps import get_current_identity, Identity
+    from app.main import app
+
+    account_id = await _create_account(client)
+    await client.post("/api/broadcast", data=_broadcast_form(account_id))
+
+    # Same tenant that owns the account should see its own log.
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="tenant-a")
+    try:
+        own_tenant = await client.get("/api/logs")
+        assert own_tenant.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_current_identity, None)
+
+    # A different tenant must see no logs, not an error, when account_id is omitted.
+    app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="other-tenant")
+    try:
+        other_tenant = await client.get("/api/logs")
+        assert other_tenant.status_code == 200
+        assert other_tenant.json() == []
     finally:
         app.dependency_overrides.pop(get_current_identity, None)
 
