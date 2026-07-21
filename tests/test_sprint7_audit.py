@@ -130,6 +130,10 @@ def test_billing_routers_missing_auth():
             # knowing it *is* the authentication, the same pattern as a
             # password-reset or Stripe checkout-session link.
             "/api/payment/claim-key/{payment_ref}",
+            # NOWPayments' own servers call this IPN endpoint and can't carry our
+            # session/API-key headers — it verifies the x-nowpayments-signature
+            # header itself instead (see app/api/nowpayments.py::nowpayments_webhook).
+            "/api/payments/nowpayments/webhook",
         ):
             continue
         deps = getattr(route, "dependencies", [])
