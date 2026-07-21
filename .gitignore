@@ -28,3 +28,4 @@ test-results/
 tsconfig.tsbuildinfo  
 next-env.d.ts  
 telegram-dashboard-backend/  
+.dyad/
