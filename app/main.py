@@ -67,7 +67,6 @@ from app.api.ai_group_intel import router as ai_group_intel_router
 from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.api.nowpayments import router as nowpayments_router
-from app.api.nowpayments import router as nowpayments_router
 from app.api.referral import router as referral_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -93,6 +92,7 @@ from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
 from app.ai.event_bus.bus import get_event_bus
 from app.ai.plugin.manager import get_plugin_manager
+from app.database import engine
 
 configure_logging()
 logger = get_logger(__name__)
@@ -107,6 +107,14 @@ async def lifespan(app: FastAPI):
     does not prevent the HTTP server from starting — the app is degraded
     but still serving health checks and API calls.
     """
+    # ── Database sanity check ─────────────────────────────────────────
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1 FROM users LIMIT 1"))
+        logger.info("database_schema_ok")
+    except Exception as exc:
+        logger.error("database_schema_missing_table", error=str(exc))
+
     # ── Scheduler ──────────────────────────────────────────────────────
     try:
         start_scheduler()
@@ -251,7 +259,7 @@ app.include_router(auto_reply_router, dependencies=_auth_required)
 app.include_router(reply_macro_router, dependencies=_auth_required)
 app.include_router(billing_router, dependencies=_auth_required)
 app.include_router(usdt_payment_router)
-app.include_router(nowpayments_router, dependencies=_auth_required)
+app.include_router(nowpayments_router)
 app.include_router(referral_router, dependencies=_auth_required)
 app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)

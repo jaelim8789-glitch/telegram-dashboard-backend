@@ -28,6 +28,8 @@ from app.models.tenant import Tenant
 from app.models.referral import ReferralCode
 from app.models.user import User
 from app.schemas.auth import (
+    LinkTelegramRequest,
+    LinkTelegramResponse,
     LoginWithApiKeyRequest,
     LoginWithApiKeyResponse,
     MeResponse,
@@ -461,6 +463,62 @@ async def link_api_key(
         tenant_id=linked.tenant_id,
         created_at=linked.created_at,
         last_used=linked.last_used,
+    )
+
+
+@router.post("/link-telegram", response_model=LinkTelegramResponse)
+async def link_telegram(
+    payload: LinkTelegramRequest,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> LinkTelegramResponse:
+    """웹 로그인된 사용자에게 Telegram ID를 연결하여 봇과 연동합니다.
+
+    봇에서 /start 한 사용자의 telegram_id를 웹 계정에 연결합니다.
+    이미 다른 웹 계정에 연결된 telegram_id면 409 충돌을 반환합니다.
+    """
+    if not identity.tenant_id:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+
+    # Check if this telegram_id is already linked to another user
+    from sqlalchemy import select
+    existing = await db.execute(
+        select(User).where(User.telegram_id == payload.telegram_id)
+    )
+    existing_user = existing.scalar_one_or_none()
+    if existing_user and existing_user.id != identity.tenant_id:
+        raise HTTPException(
+            status_code=409,
+            detail="이 Telegram 계정은 이미 다른 사용자와 연결되어 있습니다.",
+        )
+
+    # Link telegram_id to current user
+    user = await db.get(User, identity.tenant_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    user.telegram_id = payload.telegram_id
+    if payload.telegram_username:
+        user.telegram_username = payload.telegram_username
+    if payload.telegram_photo_url:
+        user.telegram_photo_url = payload.telegram_photo_url
+
+    tenant = await db.get(Tenant, identity.tenant_id)
+    await db.commit()
+
+    logger.info(
+        "telegram_linked",
+        user_id=user.id,
+        telegram_id=payload.telegram_id,
+        username=payload.telegram_username,
+    )
+
+    return LinkTelegramResponse(
+        linked=True,
+        telegram_id=payload.telegram_id,
+        plan=tenant.plan if tenant else None,
+        subscription_status=tenant.subscription_status if tenant else None,
+        message="Telegram 계정이 연결되었습니다. 이제 봇에서도 대시보드 정보를 확인할 수 있습니다.",
     )
 
 
