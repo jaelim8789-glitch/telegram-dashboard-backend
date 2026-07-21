@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     # This backend's own public URL — used to build callback/webhook URLs we hand
     # to third parties (e.g. NOWPayments' ipn_callback_url) who need to reach us,
     # not the frontend.
-    base_url: str = "http://localhost:8000"
+    api_base_url: str = "http://localhost:8000"
 
     # DeepSeek API (bot "AI Chat" menu). Empty key => feature degrades gracefully
     # (ai_chat_service returns a "not configured" server_error instead of crashing).

@@ -62,22 +62,25 @@ async def set_toggle_state(
     macro = await macro_crud.get_or_create_for_account(db, account_id)
 
     # 요청 본문을 직접 파싱
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=422, detail="요청 본문 파싱 실패: {}".format(str(e)))
+
     is_active = bool(body.get("is_active", macro.is_active))
     message_content = body.get("message_content")
-    
-    if is_active and not (message_content if message_content is not None else macro.message_content):
+
+    if is_active and not (message_content or macro.message_content):
         raise HTTPException(status_code=422, detail="메시지 내용을 입력해야 켤 수 있습니다.")
 
     macro.is_active = is_active
     if message_content is not None:
         macro.message_content = message_content
-        
-    # DB에 변경사항 저장
+
+    # DB에 변경사항 반영
     await db.commit()
     await db.refresh(macro)
-    
-    logger.info("random_reply_toggled", account_id=account_id, macro_id=macro.id, is_active=macro.is_active)
+
     return {"is_active": macro.is_active, "message_content": macro.message_content}
 
 
