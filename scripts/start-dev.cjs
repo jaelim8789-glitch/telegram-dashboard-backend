@@ -1,4 +1,5 @@
 const { execFile, spawn } = require("node:child_process");
+const http = require("node:http");
 const net = require("node:net");
 const { promisify } = require("node:util");
 const killPort = require("kill-port");
@@ -28,6 +29,29 @@ function isPortAvailable(port) {
   });
 }
 
+function isTelemonBackendHealthy(port) {
+  return new Promise((resolve) => {
+    const request = http.get(
+      { hostname: "127.0.0.1", port, path: "/health", timeout: 1500 },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          resolve(response.statusCode === 200 && body.includes('"status":"ok"'));
+        });
+      },
+    );
+    request.on("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.on("error", () => resolve(false));
+  });
+}
+
 async function releaseWindowsPort(port) {
   const command = `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`;
   const { stdout } = await execFileAsync("powershell.exe", [
@@ -46,14 +70,14 @@ async function releaseWindowsPort(port) {
     try {
       await execFileAsync("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
     } catch {
-      // The listener may exit between PID discovery and taskkill. Port verification
-      // below determines whether another termination attempt is necessary.
+      // The process may exit between PID discovery and taskkill.
     }
   }
 }
 
-async function releasePort(port) {
-  if (await isPortAvailable(port)) return;
+async function preparePort(port) {
+  if (await isPortAvailable(port)) return "start";
+  if (await isTelemonBackendHealthy(port)) return "reuse";
 
   if (process.platform === "win32") {
     await releaseWindowsPort(port);
@@ -63,24 +87,29 @@ async function releasePort(port) {
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await delay(100);
-    if (await isPortAvailable(port)) return;
+    if (await isPortAvailable(port)) return "start";
+    if (await isTelemonBackendHealthy(port)) return "reuse";
   }
 
-  throw new Error(`Port ${port} is still occupied after terminating its previous listener.`);
+  throw new Error(`Port ${port} is occupied by a process that is not the Telemon backend.`);
 }
 
-async function start() {
-  try {
-    await releasePort(requestedPort);
-  } catch (error) {
-    console.error(`Unable to release port ${requestedPort}: ${error.message}`);
-    process.exit(1);
-  }
+function keepLauncherAlive(port) {
+  console.log(`Telemon backend is already running on port ${port}; reusing it.`);
+  const keepAlive = setInterval(() => {}, 60_000);
+  const stop = () => {
+    clearInterval(keepAlive);
+    process.exit(0);
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+}
 
+function startUvicorn(port) {
   const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
   const child = spawn(
     python,
-    ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", String(requestedPort)],
+    ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", String(port)],
     { stdio: "inherit" },
   );
 
@@ -95,6 +124,20 @@ async function start() {
     process.exit(1);
   });
   child.on("exit", (code) => process.exit(code ?? 0));
+}
+
+async function start() {
+  try {
+    const action = await preparePort(requestedPort);
+    if (action === "reuse") {
+      keepLauncherAlive(requestedPort);
+      return;
+    }
+    startUvicorn(requestedPort);
+  } catch (error) {
+    console.error(`Unable to prepare port ${requestedPort}: ${error.message}`);
+    process.exit(1);
+  }
 }
 
 start();
