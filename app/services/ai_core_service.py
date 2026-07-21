@@ -78,41 +78,54 @@ async def call_deepseek(
     messages: list[dict],
     max_tokens: int = _MAX_TOKENS,
     model: str | None = None,
-) -> tuple[str | None, int]:
-    """Call DeepSeek API and return (reply_text, tokens_used).
+    tools: list[dict] | None = None,
+) -> tuple[str | None, int, list[dict] | None]:
+    """Call DeepSeek API and return (reply_text, tokens_used, tool_calls).
 
-    Returns (None, 0) on any failure.
+    Returns (None, 0, None) on any failure.
+    If tools are provided, the response may include tool_calls instead of content.
     """
     if not settings.deepseek_api_key:
         logger.warning("deepseek_api_key not configured")
-        return None, 0
+        return None, 0, None
+
+    payload: dict = {
+        "model": model or settings.deepseek_model or _DEFAULT_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
                 f"{settings.deepseek_api_base}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-                json={
-                    "model": model or settings.deepseek_model or _DEFAULT_MODEL,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                },
+                json=payload,
             )
             response.raise_for_status()
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            message = choice["message"]
+
+            content = message.get("content", "") or ""
+            tool_calls = message.get("tool_calls")
             usage = data.get("usage", {})
             tokens = usage.get("total_tokens", 0)
-            return content, tokens
+
+            return content, tokens, tool_calls
     except httpx.TimeoutException:
         logger.error("ai_deepseek_timeout")
-        return None, 0
+        return None, 0, None
     except httpx.HTTPStatusError as exc:
         logger.error("ai_deepseek_http_error", status=exc.response.status_code, body=exc.response.text[:500])
-        return None, 0
+        return None, 0, None
     except (httpx.HTTPError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
         logger.error("ai_deepseek_call_failed", error=str(exc))
-        return None, 0
+        return None, 0, None
+
 
 
 async def _call_deepseek_stream(

@@ -1,9 +1,11 @@
 import json
+import time
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.ai_tools import TOOLS, TOOL_META, execute_tool, ToolResult
 from app.api.deps import get_current_identity, Identity
 from app.core.logging import get_logger
 from app.database import get_db
@@ -13,6 +15,24 @@ from app.services.usage_tracker import get_monthly_usage, record_usage
 
 router = APIRouter(prefix="/api/ai", tags=["ai-agent"])
 logger = get_logger(__name__)
+
+# ── Write tool rate limiter (in-memory, per-tenant) ──────────────────────
+
+_WRITE_TOOL_COOLDOWN_SECONDS = 30  # 같은 tenant가 write tool을 다시 호출하려면 30초 대기
+_write_tool_last_used: dict[str, float] = {}  # tenant_id -> last timestamp
+
+def _check_write_tool_rate_limit(tenant_id: str) -> None:
+    """발송 등 write tool 호출에 rate limit 적용. 30초 내 재호출 차단."""
+    now = time.monotonic()
+    last = _write_tool_last_used.get(tenant_id, 0)
+    elapsed = now - last
+    if elapsed < _WRITE_TOOL_COOLDOWN_SECONDS:
+        remaining = _WRITE_TOOL_COOLDOWN_SECONDS - elapsed
+        raise HTTPException(
+            status_code=429,
+            detail=f"발송 도구는 {_WRITE_TOOL_COOLDOWN_SECONDS}초에 한 번만 실행할 수 있습니다. {remaining:.0f}초 후에 다시 시도해주세요.",
+        )
+    _write_tool_last_used[tenant_id] = now
 
 TOOL_PER_TOKEN = 3
 MSG_PER_TOKEN = 1
@@ -231,8 +251,63 @@ async def send_message(
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend({"role": m.role, "content": m.content} for m in history)
 
-    # AI 호출 (비스트리밍 — 프론트에서 StreamingResponse로 전환 가능)
-    answer, tokens = await call_deepseek(messages, max_tokens=2000)
+    # AI 호출 (with Function Calling tools)
+    answer, tokens, tool_calls = await call_deepseek(messages, max_tokens=2000, tools=TOOLS)
+
+    # ── Handle tool_calls ──────────────────────────────────────────
+    pending_confirmation = None
+
+    if tool_calls:
+        # AI가 tool 호출을 요청함
+        tool_results = []
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            tool_name = fn.get("name", "")
+            try:
+                arguments = json.loads(fn.get("arguments", "{}"))
+            except json.JSONDecodeError:
+                arguments = {}
+
+            meta = TOOL_META.get(tool_name, {})
+            requires_confirmation = meta.get("requires_confirmation", False)
+
+            if requires_confirmation:
+                # Write tool — 보류, 사용자 확인 필요
+                pending_confirmation = {
+                    "tool_name": tool_name,
+                    "label": meta.get("label", tool_name),
+                    "arguments": arguments,
+                    "tc_id": tc.get("id"),
+                }
+                # AI 설명 저장을 위해 plain content 생성
+                if not answer:
+                    answer = f"[📨 발송 요청]\n`{tool_name}` 도구를 실행하려면 확인이 필요합니다.\n메시지: {arguments.get('message', '')[:200]}"
+            else:
+                # Read tool — 즉시 실행
+                tr = await execute_tool(tool_name, arguments, identity)
+                if tr.success:
+                    tool_results.append(tr)
+                    # 실행 결과를 messages에 tool 메시지로 추가하고 재호출
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [tc],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps(tr.result, ensure_ascii=False, default=str),
+                    })
+                else:
+                    tool_results.append(tr)
+
+        # Read tool 결과가 있으면 AI 재호출하여 자연어 응답 생성
+        if tool_results and not pending_confirmation:
+            follow_up, follow_tokens, _ = await call_deepseek(messages, max_tokens=1500)
+            if follow_up:
+                answer = follow_up
+                tokens += follow_tokens
+
     if not answer:
         answer = "죄송합니다. 응답 생성에 실패했습니다."
 
@@ -261,11 +336,16 @@ async def send_message(
 
     await record_usage(identity.tenant_id, "ai_chat", MSG_PER_TOKEN)
 
-    return {
+    response = {
         "role": "agent", "content": cleaned_answer, "tokens_used": tokens,
         "exp_gained": exp_gained, "level_up": level_up,
         "new_level": agent.level, "exp": agent.exp,
     }
+
+    if pending_confirmation:
+        response["pending_confirmation"] = pending_confirmation
+
+    return response
 
 
 @router.post("/chats/{chat_id}/message/stream")
@@ -523,6 +603,64 @@ async def execute_tool(
     await db.commit()
 
     return {"status": "executed", "tool": msg.tool_name, "result": result}
+
+
+# ─── Confirm tool (사용자 승인 후 write tool 실행) ──────────────────────
+
+@router.post("/chats/{chat_id}/confirm-tool")
+async def confirm_tool(
+    chat_id: str, body: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """사용자가 승인한 write tool을 실제 실행합니다."""
+    chat = await db.get(AiChat, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없습니다.")
+
+    tool_name = body.get("tool_name", "")
+    arguments = body.get("arguments", {})
+
+    meta = TOOL_META.get(tool_name)
+    if not meta or not meta.get("requires_confirmation"):
+        raise HTTPException(status_code=400, detail="확인이 필요하지 않은 도구이거나 알 수 없는 도구입니다.")
+
+    # Rate limit: write tool cooldown (30s per tenant)
+    _check_write_tool_rate_limit(identity.tenant_id)
+
+    # 토큰 차감
+    used = await get_monthly_usage(db, identity.tenant_id, "ai_chat")
+    from app.core.plans import get_plan_limits
+    from app.models.tenant import Tenant
+    tenant = await db.get(Tenant, identity.tenant_id)
+    limit = get_plan_limits(tenant.plan if tenant else "free").get("monthly_ai_chat_limit", 0)
+    if limit > 0 and used + TOOL_PER_TOKEN > limit:
+        raise HTTPException(status_code=429, detail="월간 AI 채팅 한도를 초과했습니다.")
+
+    try:
+        if tool_name == "send_broadcast":
+            result = await _execute_send_tool(db, arguments)
+        else:
+            raise HTTPException(status_code=400, detail=f"지원하지 않는 Tool입니다: {tool_name}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("ai_agent_confirm_tool_failed", tool=tool_name, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Tool 실행 중 오류가 발생했습니다: {str(exc)}")
+
+    await record_usage(identity.tenant_id, "ai_chat", TOOL_PER_TOKEN)
+
+    # Tool 실행 결과 DB 저장
+    db.add(AiMessage(
+        chat_id=chat_id, role="tool",
+        content=f"✅ {tool_name} 실행 완료",
+        tool_name=tool_name,
+        tool_payload={"arguments": arguments, "result": result},
+        tokens_used=TOOL_PER_TOKEN,
+    ))
+    await db.commit()
+
+    return {"status": "executed", "tool": tool_name, "result": result}
 
 
 # ─── 템플릿 마켓 ──────────────────────────────────────────────────────────
