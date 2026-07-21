@@ -68,6 +68,9 @@ class Tenant(Base):
     referral_code_uses: Mapped[int] = mapped_column(Integer, default=0)
     referral_earnings: Mapped[int] = mapped_column(Integer, default=0)  # cents, referrer's commission ledger
     referral_rewarded: Mapped[bool] = mapped_column(Boolean, default=False)  # guards against double-award on renewals
+    
+    # Distributor status
+    is_distributor: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Daily check-in (bot menu)
     checkin_streak: Mapped[int] = mapped_column(Integer, default=0)

@@ -142,6 +142,72 @@ async def get_referral_stats(
     }
 
 
+@router.post("/register-distributor")
+async def register_distributor(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """로그인된 사용자를 총판으로 등록합니다."""
+    tenant_id = identity.tenant_id or (await _resolve_tenant_id_by_identity(db, identity))
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+
+    # 이미 총판인 경우 멱등 처리
+    if getattr(tenant, 'is_distributor', False):
+        return {
+            "success": True,
+            "message": "이미 총판으로 등록되어 있습니다.",
+            "is_distributor": True
+        }
+
+    # 총판으로 전환
+    tenant.is_distributor = True
+    
+    # 추천 코드가 없으면 생성
+    referral_code = (await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant_id))).scalar_one_or_none()
+    if not referral_code:
+        import secrets
+        new_code = secrets.token_urlsafe(8).upper()
+        while (await db.execute(select(ReferralCode).where(ReferralCode.code == new_code))).scalar_one_or_none():
+            new_code = secrets.token_urlsafe(8).upper()
+
+        tenant.referral_code = new_code
+        referral_code = ReferralCode(code=new_code, owner_id=tenant_id, is_active=True)
+        db.add(referral_code)
+    
+    await db.commit()
+    await db.refresh(tenant)
+
+    return {
+        "success": True,
+        "message": "총판으로 성공적으로 등록되었습니다.",
+        "is_distributor": True
+    }
+
+
+@router.get("/distributor-status")
+async def get_distributor_status(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """현재 사용자의 총판 상태를 확인합니다."""
+    tenant_id = identity.tenant_id or (await _resolve_tenant_id_by_identity(db, identity))
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+
+    return {
+        "is_distributor": tenant.is_distributor
+    }
+
+
 async def _resolve_tenant_id_by_identity(db: AsyncSession, identity: Identity) -> str | None:
     if identity.kind == "user" and identity.user is not None:
         from sqlalchemy import select
