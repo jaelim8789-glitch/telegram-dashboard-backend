@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 
 from app.api.account_health import router as account_health_router
@@ -71,7 +72,7 @@ from app.api.nowpayments import router as nowpayments_router
 from app.api.referral import router as referral_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
-from app.database import async_session_maker
+from app.database import Base, async_session_maker
 from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
@@ -108,6 +109,13 @@ async def lifespan(app: FastAPI):
     does not prevent the HTTP server from starting — the app is degraded
     but still serving health checks and API calls.
     """
+    # SQLite is used only as a zero-configuration local preview database. Production
+    # PostgreSQL schema changes continue to be managed exclusively by Alembic.
+    if engine.dialect.name == "sqlite":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("development_database_schema_ready")
+
     # ── Database sanity check ─────────────────────────────────────────
     try:
         async with engine.begin() as conn:
@@ -303,6 +311,14 @@ app.include_router(ai_events_router, dependencies=_auth_required)
 app.include_router(ai_schedules_router, dependencies=_auth_required)
 app.include_router(ai_plugins_router, dependencies=_auth_required)
 app.include_router(ai_providers_router, dependencies=_auth_required)
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Open the interactive API in local/backend-only deployments."""
+    if settings.debug:
+        return RedirectResponse(url="/docs")
+    return {"name": app.title, "status": "ok", "health": "/health"}
 
 
 @app.get("/metrics")
