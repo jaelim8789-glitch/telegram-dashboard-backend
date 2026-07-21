@@ -17,7 +17,7 @@ from app.crud import telegram_verification as verification_crud
 from app.database import async_session_maker
 from app.models.tenant import PaymentRecord
 from app.models.referral import ReferralCommission
-from app.services import ai_chat_service, billing, bot_account_service, purchase_service
+from app.services import billing, bot_account_service, bot_ai_agent_service, purchase_service
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
@@ -76,6 +76,18 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
 
 def _back_to_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")]])
+
+
+def _aichat_confirmation_keyboard(request_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("실행", callback_data=f"aichat:confirm:run:{request_id}"),
+                InlineKeyboardButton("취소", callback_data=f"aichat:confirm:cancel:{request_id}"),
+            ],
+            [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+        ]
+    )
 
 
 def _pay_menu_keyboard() -> InlineKeyboardMarkup:
@@ -687,10 +699,17 @@ async def ai_chat_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     async with async_session_maker() as db:
-        result = await ai_chat_service.send_message(db, telegram_user_id, update.message.text or "")
+        result = await bot_ai_agent_service.send_message(db, telegram_user_id, update.message.text or "")
 
     if result.status == "ok":
         await update.message.reply_text(result.reply)
+        return
+
+    if result.status == "pending_confirmation" and result.pending is not None:
+        await update.message.reply_text(
+            result.reply or "실행 전 확인이 필요합니다.",
+            reply_markup=_aichat_confirmation_keyboard(result.pending.request_id),
+        )
         return
 
     if result.status == "quota_exceeded":
@@ -703,8 +722,54 @@ async def ai_chat_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         "rate_limited": "⏳",
         "too_long": "✂️",
         "server_error": "⚠️",
+        "expired": "⌛",
+        "cancelled": "🚫",
+        "no_pending": "ℹ️",
     }.get(result.status, "⚠️")
     await update.message.reply_text(f"{prefix} {result.detail}")
+
+
+async def aichat_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is None:
+        await query.edit_message_text("⚠️ 사용자 정보를 확인할 수 없습니다.")
+        return
+
+    parts = (query.data or "").split(":")
+    if len(parts) != 5:
+        await query.edit_message_text("⚠️ 잘못된 확인 요청입니다.", reply_markup=_back_to_main_keyboard())
+        return
+
+    action = parts[3]
+    request_id = parts[4]
+    approved = action == "run"
+
+    async with async_session_maker() as db:
+        result = await bot_ai_agent_service.confirm_pending_action(db, telegram_user_id, request_id, approved)
+
+    if result.status == "executed":
+        await query.edit_message_text(result.reply or "✅ 실행 완료", reply_markup=_back_to_main_keyboard())
+        return
+
+    if result.status == "cancelled":
+        await query.edit_message_text("요청을 취소했습니다.", reply_markup=_back_to_main_keyboard())
+        return
+
+    if result.status == "quota_exceeded":
+        await query.edit_message_text(f"📊 {result.detail}", reply_markup=_pay_menu_keyboard())
+        return
+
+    prefix = {
+        "rate_limited": "⏳",
+        "expired": "⌛",
+        "no_pending": "ℹ️",
+        "server_error": "⚠️",
+        "not_linked": "🔗",
+    }.get(result.status, "⚠️")
+    await query.edit_message_text(f"{prefix} {result.detail}", reply_markup=_back_to_main_keyboard())
 
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -719,6 +784,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     telegram_user_id = _effective_telegram_user_id(update)
     if telegram_user_id is not None:
         _active_ai_chat_users.discard(telegram_user_id)
+        bot_ai_agent_service.clear_pending_action(telegram_user_id)
 
     await query.edit_message_text("안녕하세요! 아래 메뉴에서 원하는 기능을 선택해주세요.", reply_markup=_main_menu_keyboard())
 
@@ -842,7 +908,8 @@ async def start_bot() -> None:
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^support:"))
     application.add_handler(CallbackQueryHandler(notice_callback, pattern=r"^notice:"))
-    application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:"))
+    application.add_handler(CallbackQueryHandler(aichat_confirm_callback, pattern=r"^aichat:confirm:"))
+    application.add_handler(CallbackQueryHandler(aichat_callback, pattern=r"^aichat:start$"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=r"^menu:main$"))
     application.add_handler(CommandHandler("start", start_command))
     # No other flow reads free text today, so this is safe to add unconditionally —
