@@ -5,7 +5,10 @@
   "description": "FastAPI backend for the Telegram Management Dashboard",
   "scripts": {
     "postinstall": "python -m pip install -r requirements.txt",
-    "dev": "python -m uvicorn app.main:app --host 0.0.0.0",
+    "dev": "node scripts/start-dev.cjs",
     "start": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  },
+  "dependencies": {
+    "kill-port": "^2.0.1"
   }
 }
