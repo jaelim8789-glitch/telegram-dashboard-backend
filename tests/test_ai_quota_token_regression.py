@@ -166,7 +166,7 @@ async def test_ai_endpoints_accept_pro_tenant_high_volume(client, db_session, mo
     app.dependency_overrides[get_current_identity] = lambda: Identity(
         kind="user", tenant_id="t-pro3"
     )
-    monkeypatch.setattr(ai_module, "call_deepseek", AsyncMock(return_value=("{}", 10)))
+    monkeypatch.setattr(ai_module, "call_deepseek", AsyncMock(return_value=("{}", 10, None)))
 
     # chat
     r = await client.post("/api/ai/chat", json={"message": "안녕"})

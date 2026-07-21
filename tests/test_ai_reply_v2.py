@@ -289,6 +289,7 @@ class TestSuggestionGeneration:
                 ],
             }),
             150,
+            None,
         )
         # Mock memory search - no context
         mock_search_memory.return_value = []
@@ -313,7 +314,7 @@ class TestSuggestionGeneration:
     async def test_generate_suggestions_deepseek_failure(
         self, mock_call_deepseek, db_session, sample_suggestion_request,
     ):
-        mock_call_deepseek.return_value = (None, 0)
+        mock_call_deepseek.return_value = (None, 0, None)
 
         suggestion = await generate_suggestions(db_session, "test-tenant", sample_suggestion_request)
         assert suggestion is None
@@ -329,6 +330,7 @@ class TestSuggestionGeneration:
                 "alternatives": [],
             }),
             100,
+            None,
         )
 
         request = SuggestionGenerateRequest(
@@ -357,6 +359,7 @@ class TestSuggestionGeneration:
                 "alternatives": [],
             }),
             100,
+            None,
         )
 
         request = SuggestionGenerateRequest(
@@ -387,6 +390,7 @@ class TestReviewWorkflow:
                 "alternatives": [],
             }),
             100,
+            None,
         )
 
         request = SuggestionGenerateRequest(
@@ -419,6 +423,7 @@ class TestReviewWorkflow:
                 "alternatives": [],
             }),
             100,
+            None,
         )
 
         request = SuggestionGenerateRequest(
@@ -456,6 +461,7 @@ class TestFeedback:
                 "alternatives": [],
             }),
             100,
+            None,
         )
 
         request = SuggestionGenerateRequest(
