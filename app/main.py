@@ -65,6 +65,7 @@ from app.routers.stars_payments import router as stars_payments_router
 from app.routers.trigger_routes import router as trigger_routes_router
 from app.routers.draft_routes import router as draft_routes_router
 from app.api.ai_group_intel import router as ai_group_intel_router
+from app.api.ai_growth_coach import router as ai_growth_coach_router
 from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.api.nowpayments import router as nowpayments_router
@@ -88,6 +89,7 @@ from app.ai.routers import (
     providers_router as ai_providers_router,
 )
 from app.ai.tools.builtin_tools import register_builtin_tools
+from app.api.operator import router as operator_router
 from app.ai.tools.registry import get_tool_registry
 from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
@@ -298,12 +300,14 @@ app.include_router(draft_routes_router, dependencies=_auth_required)
 app.include_router(ai_tools_router, dependencies=_auth_required)
 app.include_router(ai_workflows_router, dependencies=_auth_required)
 app.include_router(ai_group_intel_router, dependencies=_auth_required)
+app.include_router(ai_growth_coach_router, dependencies=_auth_required)
 app.include_router(ai_employee_admin_router, dependencies=_auth_required)
 app.include_router(ai_tasks_router, dependencies=_auth_required)
 app.include_router(ai_events_router, dependencies=_auth_required)
 app.include_router(ai_schedules_router, dependencies=_auth_required)
 app.include_router(ai_plugins_router, dependencies=_auth_required)
 app.include_router(ai_providers_router, dependencies=_auth_required)
+app.include_router(operator_router, dependencies=_auth_required)
 
 
 @app.get("/metrics")

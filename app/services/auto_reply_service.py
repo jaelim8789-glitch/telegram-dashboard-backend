@@ -9,7 +9,10 @@ from app.crud import account as account_crud
 from app.crud import auto_reply as auto_reply_crud
 from app.database import async_session_maker
 from app.models.auto_reply import AutoReplyRule
+from app.models.tenant import Tenant
 from app.services.ai_reply_service import record_auto_reply_suggestion
+from app.services.delivery import DeliveryRequest, DeliveryStatus, deliver_message
+from app.services.ai_spam_guard_service import inspect_and_moderate_message
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 from app.services.telethon_pool import pool
 
@@ -56,6 +59,21 @@ async def _handle_incoming_message(event, account_id: str) -> None:
         except AccountNotAuthenticatedError:
             logger.warning("auto_reply_skip_disconnected", account_id=account_id)
             return
+
+        try:
+            spam_result = await inspect_and_moderate_message(client, event, account_id)
+            if spam_result.is_spam:
+                logger.info(
+                    "auto_reply_spam_blocked",
+                    account_id=account_id,
+                    chat_id=event.chat_id,
+                    sender_id=event.sender_id,
+                    score=spam_result.score,
+                    action=spam_result.action_taken,
+                )
+                return
+        except Exception as exc:
+            logger.warning("auto_reply_spam_check_failed", account_id=account_id, error=str(exc))
 
         rules = await auto_reply_crud.list_active_rules(db, account_id)
         matched = next((rule for rule in rules if _matches(rule, text)), None)
@@ -120,7 +138,44 @@ async def _handle_incoming_message(event, account_id: str) -> None:
             return
 
         try:
-            await event.reply(matched.reply_content)
+            tenant = None
+            if account.tenant_id:
+                tenant = await db.get(Tenant, account.tenant_id)
+            tenant_plan = getattr(tenant, "plan", None)
+
+            request = DeliveryRequest(
+                account_id=account_id,
+                recipients=[chat_id],
+                message=matched.reply_content,
+                source="auto_reply",
+                source_id=str(matched.id),
+                reply_to_msg_id=event.message.id if event.message else None,
+                tenant_plan=tenant_plan,
+            )
+            results = await deliver_message(request, client=client)
+            result = results[0] if results else None
+            is_success = result is not None and result.status == DeliveryStatus.SUCCESS
+            await auto_reply_crud.create_log(
+                db,
+                rule_id=matched.id,
+                account_id=account_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                user_name=user_name,
+                trigger_message=text,
+                reply_sent=matched.reply_content if is_success else "",
+                status="success" if is_success else "failed",
+            )
+            if is_success:
+                logger.info("auto_reply_sent", rule_id=matched.id, account_id=account_id, chat_id=chat_id)
+            else:
+                logger.error(
+                    "auto_reply_failed",
+                    rule_id=matched.id,
+                    account_id=account_id,
+                    chat_id=chat_id,
+                    error=result.error_message if result else "no_result",
+                )
         except Exception as exc:
             await auto_reply_crud.create_log(
                 db,
@@ -134,20 +189,6 @@ async def _handle_incoming_message(event, account_id: str) -> None:
                 status="failed",
             )
             logger.error("auto_reply_failed", rule_id=matched.id, account_id=account_id, error=str(exc))
-            return
-
-        await auto_reply_crud.create_log(
-            db,
-            rule_id=matched.id,
-            account_id=account_id,
-            chat_id=chat_id,
-            user_id=user_id,
-            user_name=user_name,
-            trigger_message=text,
-            reply_sent=matched.reply_content,
-            status="success",
-        )
-        logger.info("auto_reply_sent", rule_id=matched.id, account_id=account_id, chat_id=chat_id)
 
 
 def _register(client: TelegramClient, account_id: str) -> None:

@@ -19,6 +19,7 @@ from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
 from app.database import async_session_maker
 from app.services.ai_ops_service import generate_and_store_ops_report
+from app.services.ai_growth_coach_service import run_daily_growth_coach
 from app.services.ai_content_studio_service import FEATURE_CONTENT_STUDIO
 from app.services.billing import downgrade_expired_tenants, notify_expiring_trials
 from app.services.broadcast_processor import process_broadcast, process_recurring_parent
@@ -217,6 +218,12 @@ def start_scheduler() -> None:
         generate_and_store_ops_report,
         IntervalTrigger(hours=24),
         id="generate_ai_ops_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_daily_growth_coach,
+        IntervalTrigger(hours=24),
+        id="run_daily_growth_coach",
         replace_existing=True,
     )
     # 랜덤 답장 on/off 토글 — 켜진 계정은 이 주기로 자동 실행 (대상 그룹은 매번 새로 조회).
