@@ -267,9 +267,13 @@ async def _send_single(
             send_coro = client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id, buttons=buttons)
         else:
             send_coro = client.send_message(target, message, reply_to=reply_to_msg_id, buttons=buttons)
+        
+        # 타임아웃 시간을 줄여서 빠르게 실패 처리
         result = await asyncio.wait_for(send_coro, timeout=PER_MESSAGE_TIMEOUT_SECONDS)
         msg_id = result.id if hasattr(result, "id") else None
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        
+        # 로그 기록 시 시간이 오래 걸리는 경우 표시
         if elapsed > 5.0:
             logger.warning("delivery_slow_send", recipient=str(target), elapsed_seconds=round(elapsed, 1))
         return (DeliveryStatus.SUCCESS, msg_id, None, None)
@@ -661,11 +665,22 @@ async def deliver_message(
                 await asyncio.sleep(request.inter_message_delay)
     else:
         # Sequential mode (default): send one at a time with pacing
+        tasks = []
         for i, recipient in enumerate(request.recipients):
-            result = await _send_one(recipient)
-            results.append(result)
-            # Pacing delay between recipients
+            # Create tasks with delays built in to ensure proper timing
+            task = asyncio.create_task(_send_one(recipient))
+            tasks.append(task)
+            
+            # Add delay between tasks to ensure 5-second interval
             if i < len(request.recipients) - 1:
                 await asyncio.sleep(request.inter_message_delay)
+        
+        # Wait for all tasks to complete
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in task_results:
+            if isinstance(r, Exception):
+                logger.error("sequential_send_exception", error=str(r))
+                continue
+            results.append(r)
 
     return results
