@@ -14,6 +14,8 @@ from app.models.audit_log import AdminAuditLog
 from app.models.tenant import Tenant
 from app.models.telegram_verification import TelegramChannelVerification
 from app.schemas.admin import (
+    AdminAuditLogListResponse,
+    AdminAuditLogRead,
     AdminUserBillingUpdateRequest,
     AdminUserBillingUpdateResponse,
     AdminDashboardStatusResponse,
@@ -40,6 +42,32 @@ from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
+
+
+async def append_admin_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    target_type: str,
+    target_id: str | None,
+    target_phone: str | None,
+    detail: str,
+    memo: str | None = None,
+    result: str = "success",
+    admin_username: str | None = None,
+) -> None:
+    db.add(
+        AdminAuditLog(
+            admin_username=admin_username or settings.admin_username,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            target_phone=target_phone,
+            detail=detail,
+            memo=memo,
+            result=result,
+        )
+    )
 
 
 @router.post("/login", response_model=AdminTokenResponse)
@@ -160,6 +188,15 @@ async def toggle_user(user_id: str, payload: UserToggleRequest, db: AsyncSession
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
     user = await user_crud.set_active(db, user, payload.is_active)
+    await append_admin_audit(
+        db,
+        action="user_toggle",
+        target_type="user",
+        target_id=user.id,
+        target_phone=user.phone,
+        detail=f"User active toggled to {payload.is_active}",
+    )
+    await db.commit()
     logger.info("user_toggled", user_id=user_id, is_active=payload.is_active)
     return user
 
@@ -482,6 +519,17 @@ async def admin_topup_tokens(
     db.add(tx)
     await db.commit()
 
+    await append_admin_audit(
+        db,
+        action="token_topup",
+        target_type="user",
+        target_id=user.id,
+        target_phone=user.phone,
+        detail=f"Admin token top-up amount={amount}, balance_after={balance.balance}",
+        memo=memo,
+    )
+    await db.commit()
+
     logger.info("admin_token_topup", user_id=user_id, amount=amount, memo=memo)
     return {"user_id": user_id, "amount": amount, "new_balance": balance.balance}
 
@@ -530,6 +578,19 @@ async def admin_update_user_billing(
     await db.commit()
     await db.refresh(tenant)
 
+    await append_admin_audit(
+        db,
+        action="user_billing_update",
+        target_type="tenant",
+        target_id=tenant.id,
+        target_phone=user.phone,
+        detail=(
+            f"Billing updated plan={tenant.plan}, subscription_status={tenant.subscription_status}, "
+            f"trial_expires_at={tenant.trial_expires_at.isoformat() if tenant.trial_expires_at else None}"
+        ),
+    )
+    await db.commit()
+
     return AdminUserBillingUpdateResponse(
         user_id=user.id,
         tenant_id=tenant.id,
@@ -576,6 +637,14 @@ async def delete_user_by_phone(
     )
 
     # 사용자 삭제
+    await append_admin_audit(
+        db,
+        action="user_delete_by_phone",
+        target_type="user",
+        target_id=user.id,
+        target_phone=phone,
+        detail="Admin hard-deleted user, tenant, sessions and linked account rows by phone",
+    )
     await db.delete(user)
     await db.commit()
 
@@ -600,6 +669,36 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
             func.count(MessageLog.id).label("total"),
             func.sum(case((MessageLog.success.is_(False), 1), else_=0)).label("failed"),
         ).where(MessageLog.created_at >= since)
+    )
+
+
+@router.get("/audit-logs", response_model=AdminAuditLogListResponse, dependencies=[Depends(require_admin)])
+async def list_admin_audit_logs(
+    limit: int = Query(default=50, ge=1, le=200),
+    action: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit)
+    if action:
+        query = query.where(AdminAuditLog.action == action)
+    result = await db.execute(query)
+    rows = result.scalars().all()
+    return AdminAuditLogListResponse(
+        items=[
+            AdminAuditLogRead(
+                id=row.id,
+                admin_username=row.admin_username,
+                action=row.action,
+                target_type=row.target_type,
+                target_id=row.target_id,
+                target_phone=row.target_phone,
+                detail=row.detail,
+                memo=row.memo,
+                result=row.result,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
     )
     row = result.one_or_none()
     recent_total = row.total or 0 if row else 0
@@ -683,6 +782,16 @@ async def approve_referral_commission(
     commission.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(commission)
+
+    await append_admin_audit(
+        db,
+        action="referral_commission_approve",
+        target_type="referral_commission",
+        target_id=commission.id,
+        target_phone=None,
+        detail=f"Commission approved with payment_tx_id={commission.payment_tx_id}",
+    )
+    await db.commit()
 
     logger.info("referral_commission_approved", commission_id=commission.id)
     return {"ok": True, "commission_id": commission.id, "status": "paid"}

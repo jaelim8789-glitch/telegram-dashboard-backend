@@ -111,3 +111,20 @@ class AdminUserBillingUpdateResponse(BaseModel):
     plan: str
     subscription_status: str
     trial_expires_at: datetime | None
+
+
+class AdminAuditLogRead(BaseModel):
+    id: str
+    admin_username: str
+    action: str
+    target_type: str
+    target_id: str | None
+    target_phone: str | None
+    detail: str | None
+    memo: str | None
+    result: str
+    created_at: datetime
+
+
+class AdminAuditLogListResponse(BaseModel):
+    items: list[AdminAuditLogRead]
