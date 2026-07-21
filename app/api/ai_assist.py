@@ -26,6 +26,7 @@ from app.services.ai_chat_service import _call_deepseek
 from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.ai_reply_service import generate_reply_suggestion
 from app.services.lead_capture import get_lead_count, get_leads
+from app.services.telemon_memory_service import build_telemon_memory_context
 
 router = APIRouter(prefix="/api/ai", tags=["ai-assist"])
 
@@ -154,14 +155,21 @@ class AiOpsReportRead(BaseModel):
 
 
 @router.post("/generate-message", response_model=GenerateMessageResponse)
-async def api_generate_message(payload: GenerateMessageRequest) -> GenerateMessageResponse:
+async def api_generate_message(
+    payload: GenerateMessageRequest,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> GenerateMessageResponse:
     """Generate a Telegram broadcast message draft using DeepSeek."""
+    memory = await build_telemon_memory_context(db, identity, payload.prompt)
     messages = [
         {
             "role": "system",
             "content": (
                 "너는 TeleMon 서비스의 메시지 작성 도우미야. "
                 "사용자의 요청에 따라 텔레그램 그룹/채널 발송용 메시지를 작성해줘.\n\n"
+                "아래 TeleMon 전용 Memory를 반드시 참고해 더 나은 문구를 만든다.\n"
+                "사용자가 재홍보/다시 요청하면 '지난 성과 높은 글을 참고했다'는 취지를 자연스럽게 포함한다.\n\n"
                 "규칙:\n"
                 "- 결과는 반드시 한국어로 출력\n"
                 "- 메시지만 출력 (설명/코멘트 없이)\n"
@@ -171,6 +179,7 @@ async def api_generate_message(payload: GenerateMessageRequest) -> GenerateMessa
                 "- 톤은 기본적으로 친근하고 전문적으로"
             ),
         },
+        {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": payload.prompt},
     ]
     reply = await _call_deepseek(messages)
@@ -180,7 +189,10 @@ async def api_generate_message(payload: GenerateMessageRequest) -> GenerateMessa
 
 
 @router.post("/analyze-delivery", response_model=AnalyzeDeliveryResponse)
-async def api_analyze_delivery(payload: AnalyzeDeliveryRequest) -> AnalyzeDeliveryResponse:
+async def api_analyze_delivery(
+    payload: AnalyzeDeliveryRequest,
+    identity: Identity = Depends(get_current_identity),
+) -> AnalyzeDeliveryResponse:
     data_lines = [f"[요약] {payload.summary}"]
     if payload.failures:
         data_lines.append(f"[실패 분석] {payload.failures}")
@@ -197,7 +209,10 @@ async def api_analyze_delivery(payload: AnalyzeDeliveryRequest) -> AnalyzeDelive
 
 
 @router.post("/suggest-reply", response_model=SuggestReplyResponse)
-async def api_suggest_reply(payload: SuggestReplyRequest) -> SuggestReplyResponse:
+async def api_suggest_reply(
+    payload: SuggestReplyRequest,
+    identity: Identity = Depends(get_current_identity),
+) -> SuggestReplyResponse:
     """Draft a reply suggestion with optional conversation context.
     
     The system prompt uses the conversation context to craft more relevant replies.
@@ -231,7 +246,11 @@ async def api_suggest_reply(payload: SuggestReplyRequest) -> SuggestReplyRespons
 
 
 @router.post("/optimize-broadcast", response_model=OptimizeBroadcastResponse)
-async def api_optimize_broadcast(payload: OptimizeBroadcastRequest) -> OptimizeBroadcastResponse:
+async def api_optimize_broadcast(
+    payload: OptimizeBroadcastRequest,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> OptimizeBroadcastResponse:
     """Improve a broadcast message for higher engagement.
     
     Returns an improved version plus 3 tone variations (professional, casual,
@@ -240,9 +259,11 @@ async def api_optimize_broadcast(payload: OptimizeBroadcastRequest) -> OptimizeB
     audience_line = f"대상 청중: {payload.target_audience}" if payload.target_audience else ""
     goal_line = f"목표: {payload.goal}" if payload.goal else ""
 
+    memory = await build_telemon_memory_context(db, identity, payload.original_message)
     system_prompt = (
         "너는 TeleMon 서비스의 메시지 최적화 도우미야. "
         "사용자가 작성한 발송 메시지를 분석하고 더 높은 참여율을 위한 개선 버전을 제시해줘.\n\n"
+        "반드시 TeleMon 전용 Memory의 과거 고성과 문구 패턴을 반영해 개선한다.\n\n"
         "반드시 아래 JSON 형식으로만 응답 (다른 텍스트 없이):\n"
         '{\n'
         '  "improved": "개선된 메시지 전체",\n'
@@ -261,6 +282,7 @@ async def api_optimize_broadcast(payload: OptimizeBroadcastRequest) -> OptimizeB
 
     messages = [
         {"role": "system", "content": system_prompt},
+        {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": user_content},
     ]
     reply = await _call_deepseek(messages)
@@ -284,23 +306,28 @@ async def api_optimize_broadcast(payload: OptimizeBroadcastRequest) -> OptimizeB
 
 @router.post("/generate-broadcast", response_model=GenerateBroadcastResponse)
 async def api_generate_broadcast(
-    payload: GenerateBroadcastRequest, db: AsyncSession = Depends(get_db)
+    payload: GenerateBroadcastRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
 ) -> GenerateBroadcastResponse:
     """Draft a broadcast message and recommend recipients from candidates."""
     candidates_text = (
         "\n".join(f"- {c.chat_id}: {c.name}" for c in payload.candidate_recipients)
         if payload.candidate_recipients else "(제공된 후보 없음)"
     )
+    memory = await build_telemon_memory_context(db, identity, payload.prompt)
     system_prompt = (
         "너는 TeleMon 서비스의 발송(Broadcast) 도우미야. "
         "사용자의 요청에 맞는 발송 메시지를 작성하고, 아래 '후보 대상 목록'에 있는 chat_id 중에서만 "
         "적합한 대상을 추천해줘. 목록에 없는 chat_id는 절대 만들어내지 마.\n\n"
+        "또한 TeleMon 전용 Memory에서 과거 성과가 높았던 문구 패턴을 참고해 품질을 개선한다.\n\n"
         "반드시 아래 JSON 형식으로만 응답 (다른 텍스트 없이):\n"
         '{"message": "발송 메시지", "recommended_chat_ids": ["id1", "id2"], "reasoning": "선정 이유 한 줄"}\n\n'
         f"[후보 대상 목록]\n{candidates_text}"
     )
     messages = [
         {"role": "system", "content": system_prompt},
+        {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": payload.prompt},
     ]
     reply = await _call_deepseek(messages)

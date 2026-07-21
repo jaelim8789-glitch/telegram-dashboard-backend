@@ -25,6 +25,7 @@ from app.database import get_db
 from app.services.ai_chat_service import _call_deepseek
 from app.services.delivery_analytics import get_account_performance, get_failure_breakdown, get_summary
 from app.services.lead_capture import get_lead_count, get_leads
+from app.services.telemon_memory_service import build_telemon_memory_context
 
 router = APIRouter(prefix="/api/copilot", tags=["ai-copilot"])
 
@@ -254,6 +255,7 @@ async def copilot_chat(
 
     tenant_id = identity.tenant_id or "anonymous"
     memory_context = await _get_memory_context(tenant_id, payload.message, limit=3)
+    telemon_memory = await build_telemon_memory_context(db, identity, payload.message)
 
     system_prompt = _SYSTEM_COPILOT_PROMPT + (
         "\n\n[현재 TeleMon 운영 컨텍스트]\n"
@@ -263,6 +265,8 @@ async def copilot_chat(
     )
     if memory_context:
         system_prompt += f"\n\n{memory_context}"
+    if telemon_memory.text:
+        system_prompt += f"\n\n{telemon_memory.text}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -315,6 +319,9 @@ async def one_click_action(
 
     if tenant_id:
         memory_ctx = await _get_memory_context(tenant_id, payload.action, limit=3)
+        telemon_memory = await build_telemon_memory_context(db, identity, payload.action)
+        if telemon_memory.text:
+            context_text = f"{telemon_memory.text}\n\n{context_text}" if context_text else telemon_memory.text
         if memory_ctx:
             context_text = f"{memory_ctx}\n\n{context_text}" if context_text else memory_ctx
 
