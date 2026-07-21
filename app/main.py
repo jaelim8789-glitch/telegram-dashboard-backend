@@ -28,7 +28,7 @@ from app.api.ai_copilot import router as ai_copilot_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
-from app.api.billing import router as billing_router
+from app.api.billing import router as billing_router, public_router as billing_public_router
 from app.api.delivery_analytics import router as delivery_analytics_router
 from app.api.features import router as features_router
 from app.api.free_api_key import router as free_api_key_router
@@ -260,6 +260,7 @@ app.include_router(link_inspector_router, dependencies=_auth_required)
 app.include_router(auto_reply_router, dependencies=_auth_required)
 app.include_router(reply_macro_router, dependencies=_auth_required)
 app.include_router(billing_router, dependencies=_auth_required)
+app.include_router(billing_public_router)
 app.include_router(usdt_payment_router)
 app.include_router(nowpayments_router)
 app.include_router(referral_router, dependencies=_auth_required)

@@ -22,11 +22,17 @@ from app.services.usage_tracker import add_stars_credit
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 logger = get_logger(__name__)
 
+# Registered separately in main.py WITHOUT the blanket auth dependency applied
+# to `router` — plan/pricing info must be readable by logged-out visitors
+# (public pricing page) and by the account-limit upgrade modal before any
+# tenant-scoped auth is available.
+public_router = APIRouter(prefix="/api/billing", tags=["billing"])
+
 
 # ─── Plans ────────────────────────────────────────────────────────────
 
 
-@router.get("/plans")
+@public_router.get("/plans")
 async def api_get_plans():
     """Get all plan info with USDT prices from canonical PLAN_CATALOG."""
     plans = []
