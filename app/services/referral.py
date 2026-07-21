@@ -100,11 +100,13 @@ async def create_commission(
     if not tenant or not tenant.referred_by:
         return None
 
-    ref_code = await db.get(ReferralCode, tenant.referred_by)
+    referrer_id = tenant.referred_by
+    result = await db.execute(
+        select(ReferralCode).where(ReferralCode.owner_id == referrer_id)
+    )
+    ref_code = result.scalar_one_or_none()
     if not ref_code:
         return None
-
-    referrer_id = ref_code.owner_id
     if referrer_id == referred_tenant_id:
         return None
 

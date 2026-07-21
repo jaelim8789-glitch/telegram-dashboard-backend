@@ -3,7 +3,7 @@ import json
 import random
 import string
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,7 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip
 from app.database import get_db
-from app.models.referral import ReferralCode, ReferralCommission, ReferralConfig, ReferralPayout
+from app.models.referral import ReferralAuditLog, ReferralCode, ReferralCommission, ReferralConfig, ReferralPayout
 from app.models.tenant import Tenant
 from app.schemas.referral import (
     AdminCodeStatsItem,
@@ -25,6 +25,9 @@ from app.schemas.referral import (
     ChangeCodeRequest,
     CommissionItem,
     DailyStatsItem,
+    DistributorListItem,
+    DistributorListResponse,
+    DistributorStatusResponse,
     GenerateReferralCodeResponse,
     LeaderboardEntry,
     LeaderboardResponse,
@@ -34,8 +37,14 @@ from app.schemas.referral import (
     ReferralDashboardResponse,
     ReferralReferredUser,
     ReferralStatsResponse,
+    RegisterDistributorResponse,
+    RejectPayoutRequest,
     SetChatIdRequest,
+    SetDistributorRateRequest,
+    SettlementAuditItem,
+    SettlementAuditResponse,
     SetWalletRequest,
+    SuspendDistributorRequest,
     UpdateSettingsRequest,
 )
 from app.services.referral import (
@@ -117,6 +126,7 @@ async def generate_referral_code(
     return GenerateReferralCodeResponse(code=ref_code.code, referral_code_id=ref_code.id)
 
 
+@router.get("/code", response_model=GenerateReferralCodeResponse)
 @router.get("/my-code", response_model=GenerateReferralCodeResponse)
 async def get_my_referral_code(
     identity: Identity = Depends(get_current_identity),
@@ -154,6 +164,40 @@ async def get_my_referral_link(
     return {"link": link, "code": ref_code.code}
 
 
+@router.get("/distributor-status")
+async def check_distributor_status(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    return DistributorStatusResponse(is_distributor=tenant.is_distributor)
+
+
+@router.post("/register-distributor", response_model=RegisterDistributorResponse)
+async def register_as_distributor(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    if tenant.is_distributor:
+        return RegisterDistributorResponse(
+            success=True,
+            message="이미 총판으로 등록되어 있습니다.",
+            is_distributor=True,
+        )
+
+    tenant.is_distributor = True
+    await _get_or_create_referral_code(db, tenant.id)
+    await db.commit()
+    await db.refresh(tenant)
+    return RegisterDistributorResponse(
+        success=True,
+        message="총판 등록이 완료되었습니다.",
+        is_distributor=True,
+    )
+
+
+@router.get("/commissions", response_model=MyCommissionsResponse)
 @router.get("/my-commissions", response_model=MyCommissionsResponse)
 async def get_my_commissions_endpoint(
     page: int = 1,
@@ -190,7 +234,7 @@ async def get_referral_dashboard(
     ref_code = ref_code_result.scalar_one_or_none()
 
     referred_result = await db.execute(
-        select(Tenant).where(Tenant.referred_by == (ref_code.id if ref_code else None))
+        select(Tenant).where(Tenant.referred_by == tenant.id)
     )
     referred_tenants = list(referred_result.scalars().all())
 
@@ -510,6 +554,237 @@ async def update_admin_settings(
     await log_audit(db, "settings.update", actor_id=identity.tenant_id, details=f"Settings updated: {[s.key for s in payload.settings]}")
 
     return {"success": True, "message": "설정이 저장되었습니다."}
+
+
+@router.get("/admin/distributors", response_model=DistributorListResponse)
+async def list_distributors(
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import get_config
+
+    codes_result = await db.execute(
+        select(ReferralCode.owner_id).distinct()
+    )
+    owner_ids = [row[0] for row in codes_result.all()]
+
+    items = []
+    for owner_id in owner_ids:
+        tenant = await db.get(Tenant, owner_id)
+        if not tenant:
+            continue
+
+        ref_code_result = await db.execute(
+            select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
+        )
+        ref_code = ref_code_result.scalar_one_or_none()
+
+        count_result = await db.execute(
+            select(func.count())
+            .select_from(ReferralCommission)
+            .where(
+                ReferralCommission.referrer_id == tenant.id,
+                ReferralCommission.status.in_(["pending", "paid"]),
+            )
+        )
+        referral_count = count_result.scalar_one() or 0
+
+        amount_result = await db.execute(
+            select(func.coalesce(func.sum(ReferralCommission.amount), 0))
+            .where(
+                ReferralCommission.referrer_id == tenant.id,
+                ReferralCommission.status.in_(["pending", "paid"]),
+            )
+        )
+        total_revenue = amount_result.scalar_one() or 0
+
+        commission_result = await db.execute(
+            select(func.coalesce(func.sum(ReferralCommission.commission_amount), 0))
+            .where(
+                ReferralCommission.referrer_id == tenant.id,
+                ReferralCommission.status.in_(["pending", "paid"]),
+            )
+        )
+        total_commission = commission_result.scalar_one() or 0
+
+        payout_result = await db.execute(
+            select(func.coalesce(func.sum(ReferralPayout.amount), 0))
+            .where(
+                ReferralPayout.referrer_id == tenant.id,
+                ReferralPayout.status == "completed",
+            )
+        )
+        total_payout = payout_result.scalar_one() or 0
+
+        rate_raw = await get_config(db, f"commission_rate:{tenant.id}")
+        commission_rate_override = float(rate_raw) if rate_raw else None
+
+        status_raw = await get_config(db, f"distributor_status:{tenant.id}")
+        status = "suspended" if status_raw == "suspended" else "active"
+
+        items.append(DistributorListItem(
+            tenant_id=tenant.id,
+            phone=tenant.phone,
+            plan=tenant.plan,
+            referral_code=ref_code.code if ref_code else "",
+            referral_count=referral_count,
+            total_revenue=total_revenue,
+            total_commission=total_commission,
+            total_payout=total_payout,
+            commission_rate_override=commission_rate_override,
+            status=status,
+            created_at=tenant.created_at,
+        ))
+
+    items.sort(key=lambda x: x.referral_count, reverse=True)
+    return DistributorListResponse(items=items, total_count=len(items))
+
+
+@router.post("/admin/distributors/{tenant_id}/rate")
+async def set_distributor_rate(
+    tenant_id: str,
+    payload: SetDistributorRateRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import log_audit
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    key = f"commission_rate:{tenant_id}"
+    if payload.rate == 0.0:
+        result = await db.execute(select(ReferralConfig).where(ReferralConfig.key == key))
+        existing = result.scalar_one_or_none()
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+    else:
+        result = await db.execute(select(ReferralConfig).where(ReferralConfig.key == key))
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.value = str(payload.rate)
+        else:
+            db.add(ReferralConfig(key=key, value=str(payload.rate)))
+        await db.commit()
+
+    await log_audit(db, "rate.override", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Commission rate set to {payload.rate}")
+    return {"success": True, "rate": payload.rate}
+
+
+@router.post("/admin/distributors/{tenant_id}/suspend")
+async def suspend_distributor(
+    tenant_id: str,
+    payload: SuspendDistributorRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import log_audit
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    key = f"distributor_status:{tenant_id}"
+    if payload.suspended:
+        result = await db.execute(select(ReferralConfig).where(ReferralConfig.key == key))
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.value = "suspended"
+        else:
+            db.add(ReferralConfig(key=key, value="suspended"))
+        await db.commit()
+        await log_audit(db, "distributor.suspend", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Distributor suspended. Reason: {payload.reason}")
+        return {"success": True, "status": "suspended", "reason": payload.reason}
+    else:
+        result = await db.execute(select(ReferralConfig).where(ReferralConfig.key == key))
+        existing = result.scalar_one_or_none()
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+        await log_audit(db, "distributor.unsuspend", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Distributor unsuspended. Reason: {payload.reason}")
+        return {"success": True, "status": "active", "reason": payload.reason}
+
+
+@router.post("/admin/payouts/{payout_id}/reject")
+async def reject_payout(
+    payout_id: str,
+    payload: RejectPayoutRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import log_audit
+
+    payout = await db.get(ReferralPayout, payout_id)
+    if not payout:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payout not found")
+    if payout.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payout is not in pending status")
+
+    payout.status = "rejected"
+    await db.commit()
+    await log_audit(db, "payout.reject", actor_id=identity.tenant_id, target_id=payout_id, details=f"Payout rejected. Reason: {payload.reason}")
+    return {"success": True, "message": "Payout has been rejected."}
+
+
+@router.get("/admin/audit/settlements", response_model=SettlementAuditResponse)
+async def get_settlement_audit_logs(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+):
+    result = await db.execute(
+        select(ReferralAuditLog)
+        .where(
+            ReferralAuditLog.action.contains("payout"),
+        )
+        .order_by(ReferralAuditLog.created_at.desc())
+        .limit(limit)
+    )
+    payout_logs = list(result.scalars().all())
+
+    result2 = await db.execute(
+        select(ReferralAuditLog)
+        .where(
+            ReferralAuditLog.action.contains("commission"),
+            ~ReferralAuditLog.action.contains("payout"),
+        )
+        .order_by(ReferralAuditLog.created_at.desc())
+        .limit(limit)
+    )
+    commission_logs = list(result2.scalars().all())
+
+    result3 = await db.execute(
+        select(ReferralAuditLog)
+        .where(
+            ReferralAuditLog.action.contains("rate"),
+            ~ReferralAuditLog.action.contains("payout"),
+            ~ReferralAuditLog.action.contains("commission"),
+        )
+        .order_by(ReferralAuditLog.created_at.desc())
+        .limit(limit)
+    )
+    rate_logs = list(result3.scalars().all())
+
+    combined = sorted(
+        payout_logs + commission_logs + rate_logs,
+        key=lambda x: x.created_at,
+        reverse=True,
+    )[:limit]
+
+    items = [SettlementAuditItem(
+        id=entry.id,
+        action=entry.action,
+        actor_id=entry.actor_id,
+        target_id=entry.target_id,
+        details=entry.details,
+        created_at=entry.created_at,
+    ) for entry in combined]
+    return SettlementAuditResponse(items=items)
 
 
 @router.get("/admin/codes", response_model=AdminCodeStatsResponse)

@@ -136,7 +136,7 @@ async def test_self_referral_prevention(db_session):
     db_session.add(ref_code)
     await db_session.flush()
 
-    owner.referred_by = ref_code.id
+    owner.referred_by = owner.id
     await db_session.commit()
 
     from app.services.referral import create_commission
@@ -377,7 +377,7 @@ async def test_duplicate_commission_prevention(db_session):
     db_session.add(ref_code)
     await db_session.flush()
 
-    referred = Tenant(phone="+821099999992", plan="free", referred_by=ref_code.id)
+    referred = Tenant(phone="+821099999992", plan="free", referred_by=referrer.id)
     db_session.add(referred)
     await db_session.flush()
 

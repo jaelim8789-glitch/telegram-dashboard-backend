@@ -139,3 +139,58 @@ class AdminCodeStatsItem(BaseModel):
 
 class AdminCodeStatsResponse(BaseModel):
     items: list[AdminCodeStatsItem] = []
+
+
+class RegisterDistributorResponse(BaseModel):
+    success: bool
+    message: str
+    is_distributor: bool
+
+
+class DistributorStatusResponse(BaseModel):
+    is_distributor: bool
+
+
+class DistributorListItem(BaseModel):
+    tenant_id: str
+    phone: str
+    plan: str
+    referral_code: str
+    referral_count: int
+    total_revenue: int
+    total_commission: int
+    total_payout: int
+    commission_rate_override: float | None = None
+    status: str
+    created_at: datetime | None = None
+
+
+class DistributorListResponse(BaseModel):
+    items: list[DistributorListItem] = []
+    total_count: int = 0
+
+
+class SetDistributorRateRequest(BaseModel):
+    rate: float = Field(ge=0.0, le=1.0)
+
+
+class SuspendDistributorRequest(BaseModel):
+    reason: str = Field(max_length=500)
+    suspended: bool = True
+
+
+class RejectPayoutRequest(BaseModel):
+    reason: str = Field(max_length=500)
+
+
+class SettlementAuditItem(BaseModel):
+    id: str
+    action: str
+    actor_id: str | None = None
+    target_id: str | None = None
+    details: str
+    created_at: datetime
+
+
+class SettlementAuditResponse(BaseModel):
+    items: list[SettlementAuditItem] = []
