@@ -43,7 +43,12 @@ async function releaseWindowsPort(port) {
     .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
 
   for (const pid of pids) {
-    await execFileAsync("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
+    try {
+      await execFileAsync("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
+    } catch {
+      // The listener may exit between PID discovery and taskkill. Port verification
+      // below determines whether another termination attempt is necessary.
+    }
   }
 }
 
