@@ -73,7 +73,7 @@ async def analyze_style(
         if not allowed:
             raise ValueError(reason)
 
-    reply, _ = await call_deepseek(
+    reply, _, _ = await call_deepseek(
         messages=[
             {"role": "system", "content": "You are a precise writing style analyst. Always respond with valid JSON only."},
             {"role": "user", "content": _STYLE_ANALYSIS_PROMPT.format(text=source_text)},

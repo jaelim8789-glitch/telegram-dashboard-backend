@@ -209,7 +209,7 @@ async def _update_session_summary(
         {"role": "user", "content": f"Conversation:\n{text}"},
     ]
 
-    reply, _ = await call_deepseek(prompt, max_tokens=150)
+    reply, _, _ = await call_deepseek(prompt, max_tokens=150)
     if reply:
         session.summary = reply.strip()
         session.summary_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)

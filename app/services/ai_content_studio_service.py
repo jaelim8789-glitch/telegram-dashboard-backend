@@ -272,7 +272,7 @@ async def generate_content(
         {"role": "user", "content": "위 지시에 따라 메시지를 생성해줘."},
     ]
 
-    reply, tokens = await call_deepseek(messages)
+    reply, tokens, _ = await call_deepseek(messages)
     if reply is None:
         return None, 0, None
 

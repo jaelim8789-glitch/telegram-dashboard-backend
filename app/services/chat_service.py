@@ -48,13 +48,13 @@ async def create_conversation(db: AsyncSession, tenant_id: str, title: str = "�
     await db.refresh(c)
     return c
 
-async def update_conversation_title(db: AsyncSession, conv_id: str, title: str) -> None:
-    await db.execute(update(Conversation).where(Conversation.id == conv_id).values(title=title))
+async def update_conversation_title(db: AsyncSession, conv_id: str, tenant_id: str, title: str) -> None:
+    await db.execute(update(Conversation).where(Conversation.id == conv_id, Conversation.tenant_id == tenant_id).values(title=title))
     await db.commit()
 
-async def delete_conversation(db: AsyncSession, conv_id: str) -> None:
-    await db.execute(delete(Message).where(Message.conversation_id == conv_id))
-    await db.execute(delete(Conversation).where(Conversation.id == conv_id))
+async def delete_conversation(db: AsyncSession, conv_id: str, tenant_id: str) -> None:
+    await db.execute(delete(Message).where(Message.conversation_id == conv_id, Message.tenant_id == tenant_id))
+    await db.execute(delete(Conversation).where(Conversation.id == conv_id, Conversation.tenant_id == tenant_id))
     await db.commit()
 
 async def get_messages(db: AsyncSession, conversation_id: str) -> list[Message]:
@@ -82,7 +82,7 @@ async def ask_ai(db: AsyncSession, conversation_id: str, tenant_id: str, questio
     history.extend({"role": m.role, "content": m.content} for m in msgs)
 
     # 3. AI 호출
-    answer, _ = await call_deepseek(history, max_tokens=2000)
+    answer, _, _ = await call_deepseek(history, max_tokens=2000)
 
     # 4. AI 응답 저장
     if answer:
@@ -91,7 +91,7 @@ async def ask_ai(db: AsyncSession, conversation_id: str, tenant_id: str, questio
         # 5. 대화 제목 자동 생성 (첫 대화)
         if len(msgs) <= 1:
             title = question[:60] + ("..." if len(question) > 60 else "")
-            await update_conversation_title(db, conversation_id, title)
+            await update_conversation_title(db, conversation_id, tenant_id, title)
 
         return answer
     return "죄송합니다. 응답을 생성하는 중에 오류가 발생했습니다."
@@ -120,6 +120,6 @@ async def ask_ai_stream(conversation_id: str, tenant_id: str, question: str):
         await add_message(db, conversation_id, tenant_id, "assistant", full)
         if len(msgs) <= 1:
             title = question[:60] + ("..." if len(question) > 60 else "")
-            await update_conversation_title(db, conversation_id, title)
+            await update_conversation_title(db, conversation_id, tenant_id, title)
 
     yield json.dumps({"done": True, "full": full}) + "\n"

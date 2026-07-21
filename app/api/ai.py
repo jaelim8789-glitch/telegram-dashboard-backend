@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Identity, get_current_identity, require_account_tenant_access
+from app.api.deps import Identity, get_current_identity, require_account_tenant_access, require_admin
 from app.database import get_db
 from app.core.logging import get_logger
 from app.models.ai import (
@@ -226,7 +226,7 @@ async def ai_chat(
     messages.append({"role": "user", "content": payload.message})
 
     # Call DeepSeek
-    reply, tokens_used = await call_deepseek(messages)
+    reply, tokens_used, _ = await call_deepseek(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -386,7 +386,7 @@ async def ai_reply_assistant(
         {"role": "user", "content": f"다음 메시지에 대한 답장을 추천해줘:\n\n{payload.incoming_message}"},
     ]
 
-    reply, tokens_used = await call_deepseek(messages, max_tokens=500)
+    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -505,7 +505,7 @@ async def ai_broadcast_assistant(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply, tokens_used = await call_deepseek(messages, max_tokens=800)
+    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=800)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -592,7 +592,7 @@ async def ai_operations_report(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply, tokens_used = await call_deepseek(messages, max_tokens=1500)
+    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=1500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -758,7 +758,7 @@ async def get_plan_limits(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@router.get("/admin/logs", response_model=AiAdminLogResponse)
+@router.get("/admin/logs", response_model=AiAdminLogResponse, dependencies=[Depends(require_admin)])
 async def get_ai_admin_logs(
     feature: str | None = Query(default=None, description="AI 기능 필터"),
     tenant_id: str | None = Query(default=None, description="테넌트 ID 필터"),
@@ -770,10 +770,6 @@ async def get_ai_admin_logs(
     db: AsyncSession = Depends(get_db),
 ) -> AiAdminLogResponse:
     """Admin: Get all AI logs with search/filter."""
-    # Check admin permission
-    if identity.role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
     items = []
     total = 0
 
@@ -881,16 +877,13 @@ async def get_ai_admin_logs(
     )
 
 
-@router.get("/admin/logs/{tenant_id}/summary")
+@router.get("/admin/logs/{tenant_id}/summary", dependencies=[Depends(require_admin)])
 async def get_tenant_ai_summary(
     tenant_id: str,
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Admin: Get AI usage summary for a specific tenant."""
-    if identity.role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
     # Get usage summary
     usage = await get_ai_usage_summary(db, tenant_id, days=30)
 
@@ -937,15 +930,12 @@ async def get_tenant_ai_summary(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@router.get("/admin/plan-limits", response_model=list[AiPlanLimitResponse])
+@router.get("/admin/plan-limits", response_model=list[AiPlanLimitResponse], dependencies=[Depends(require_admin)])
 async def admin_list_plan_limits(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[AiPlanLimitResponse]:
     """Admin: List all AI plan limits."""
-    if identity.role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
     result = await db.execute(select(AiPlanLimit).order_by(AiPlanLimit.plan, AiPlanLimit.feature))
     limits = result.scalars().all()
 
@@ -963,7 +953,7 @@ async def admin_list_plan_limits(
     ]
 
 
-@router.put("/admin/plan-limits/{limit_id}", response_model=AiPlanLimitResponse)
+@router.put("/admin/plan-limits/{limit_id}", response_model=AiPlanLimitResponse, dependencies=[Depends(require_admin)])
 async def admin_update_plan_limit(
     limit_id: str,
     payload: AiPlanLimitUpdateRequest,
@@ -971,9 +961,6 @@ async def admin_update_plan_limit(
     db: AsyncSession = Depends(get_db),
 ) -> AiPlanLimitResponse:
     """Admin: Update an AI plan limit."""
-    if identity.role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
     result = await db.execute(select(AiPlanLimit).where(AiPlanLimit.id == limit_id))
     limit = result.scalar_one_or_none()
     if not limit:
@@ -1001,15 +988,12 @@ async def admin_update_plan_limit(
     )
 
 
-@router.post("/admin/plan-limits/seed")
+@router.post("/admin/plan-limits/seed", dependencies=[Depends(require_admin)])
 async def admin_seed_plan_limits(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Admin: Seed default AI plan limits for all plans."""
-    if identity.role not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
     default_limits = [
         # Free plan
         {"plan": "free", "feature": "chat", "max_requests_per_day": 10, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},

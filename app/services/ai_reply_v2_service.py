@@ -334,7 +334,7 @@ async def _generate_conversation_summary(
         {"role": "user", "content": f"Conversation:\n{messages_text}"},
     ]
 
-    reply, _ = await call_deepseek(prompt, max_tokens=200)
+    reply, _, _ = await call_deepseek(prompt, max_tokens=200)
     return reply
 
 
@@ -478,7 +478,7 @@ async def generate_suggestions(
     })
 
     # 6. Call DeepSeek
-    reply_text, tokens_used = await call_deepseek(messages, max_tokens=_DEFAULT_MAX_TOKENS)
+    reply_text, tokens_used, _ = await call_deepseek(messages, max_tokens=_DEFAULT_MAX_TOKENS)
     if reply_text is None:
         logger.error("ai_reply_v2_generation_failed", account_id=request.account_id)
         return None
