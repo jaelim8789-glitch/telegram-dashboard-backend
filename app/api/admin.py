@@ -14,6 +14,8 @@ from app.models.audit_log import AdminAuditLog
 from app.models.tenant import Tenant
 from app.models.telegram_verification import TelegramChannelVerification
 from app.schemas.admin import (
+    AdminUserBillingUpdateRequest,
+    AdminUserBillingUpdateResponse,
     AdminDashboardStatusResponse,
     AdminLoginRequest,
     AdminMeResponse,
@@ -482,6 +484,60 @@ async def admin_topup_tokens(
 
     logger.info("admin_token_topup", user_id=user_id, amount=amount, memo=memo)
     return {"user_id": user_id, "amount": amount, "new_balance": balance.balance}
+
+
+@router.patch(
+    "/users/{user_id}/billing",
+    response_model=AdminUserBillingUpdateResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def admin_update_user_billing(
+    user_id: str,
+    payload: AdminUserBillingUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin billing operation for a user: plan/subscription/trial adjustments."""
+    if payload.trial_expires_at is not None and payload.extend_trial_days is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="trial_expires_at와 extend_trial_days는 동시에 지정할 수 없습니다.",
+        )
+
+    user = await user_crud.get_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+
+    tresult = await db.execute(select(Tenant).where(Tenant.phone == user.phone).limit(1))
+    tenant = tresult.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자 테넌트를 찾을 수 없습니다.")
+
+    if payload.plan is not None:
+        try:
+            await apply_plan_limits(db, tenant, payload.plan)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="알 수 없는 플랜입니다.")
+
+    if payload.subscription_status is not None:
+        tenant.subscription_status = payload.subscription_status
+
+    if payload.trial_expires_at is not None:
+        tenant.trial_expires_at = payload.trial_expires_at
+    elif payload.extend_trial_days is not None:
+        base = tenant.trial_expires_at or utcnow_naive()
+        tenant.trial_expires_at = base + timedelta(days=payload.extend_trial_days)
+
+    await db.commit()
+    await db.refresh(tenant)
+
+    return AdminUserBillingUpdateResponse(
+        user_id=user.id,
+        tenant_id=tenant.id,
+        phone=user.phone,
+        plan=tenant.plan,
+        subscription_status=tenant.subscription_status,
+        trial_expires_at=tenant.trial_expires_at,
+    )
 
 
 # ── 사용자 삭제 (전화번호 기반) ──────────────────────────────────────

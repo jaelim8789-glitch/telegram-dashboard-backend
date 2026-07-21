@@ -93,3 +93,21 @@ class AdminDashboardStatusResponse(BaseModel):
     users: AdminDashboardUserStats
     accounts: AdminDashboardAccountStats
     broadcasts: AdminDashboardBroadcastStats
+
+
+class AdminUserBillingUpdateRequest(BaseModel):
+    plan: Literal["free", "pro", "team"] | None = None
+    subscription_status: Literal["active", "inactive", "pending", "past_due", "canceled"] | None = None
+    # Absolute timestamp override (optional).
+    trial_expires_at: datetime | None = None
+    # Relative extension from current trial expiry (or now when empty).
+    extend_trial_days: int | None = Field(None, ge=1, le=365)
+
+
+class AdminUserBillingUpdateResponse(BaseModel):
+    user_id: str
+    tenant_id: str
+    phone: str
+    plan: str
+    subscription_status: str
+    trial_expires_at: datetime | None
