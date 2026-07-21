@@ -479,7 +479,7 @@ async def delete_user_by_phone(
     phone: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """전화번호로 사용자를 완전히 삭제합니다. 관련 세션, 테넌트, API 키도 함께 정리합니다."""
+    """전화번호로 사용자를 완전히 삭제합니다. 관련 세션, 테넌트, Telegram 계정, API 키도 함께 정리합니다."""
     user = await user_crud.get_user_by_phone(db, phone)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 전화번호의 사용자를 찾을 수 없습니다.")
@@ -488,6 +488,13 @@ async def delete_user_by_phone(
     await db.execute(
         sa_text("DELETE FROM user_sessions WHERE user_id = :user_id"),
         {"user_id": user.id},
+    )
+
+    # 등록된 Telegram 계정(userbot) 삭제 — accounts.phone에 UNIQUE 제약이 있어서
+    # 이걸 지우지 않으면 같은 번호로 재등록 시 "이미 등록된 전화번호입니다" 409가 남는다.
+    await db.execute(
+        sa_text("DELETE FROM accounts WHERE phone = :phone"),
+        {"phone": phone},
     )
 
     # Tenant 삭제
