@@ -723,6 +723,41 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("안녕하세요! 아래 메뉴에서 원하는 기능을 선택해주세요.", reply_markup=_main_menu_keyboard())
 
 
+async def _check_web_account(telegram_id: int) -> dict | None:
+    """봇 /start 시 웹 백엔드에 telegram_id로 기존 계정이 있는지 조회.
+
+    같은 프로세스이므로 DB를 직접 조회 (HTTP 호출보다 빠르고 안정적).
+    """
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.models.tenant import Tenant
+
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                return None
+
+            tenant_result = await db.execute(
+                select(Tenant).where(Tenant.phone == user.phone)
+            )
+            tenant = tenant_result.scalar_one_or_none()
+
+            return {
+                "linked": True,
+                "telegram_id": telegram_id,
+                "phone": user.phone,
+                "plan": tenant.plan if tenant else None,
+                "subscription_status": tenant.subscription_status if tenant else None,
+            }
+    except Exception:
+        logger.debug("web_account_check_failed", telegram_id=telegram_id)
+    return None
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /start (bare) and the deep-link form /start <token> used by the
     free-trial official-channel verification flow (see app/api/telegram_verify.py).
@@ -731,7 +766,25 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     it comes straight from Telegram's own Update object for this bot's polling
     connection, so it cannot be forged by anything the frontend sends us.
     """
+    telegram_user_id = update.effective_user.id if update.effective_user else None
+
     if not context.args:
+        # ── Check if this Telegram user already has a linked web account ──
+        if telegram_user_id:
+            web_account = await _check_web_account(telegram_user_id)
+            if web_account and web_account.get("linked"):
+                plan = web_account.get("plan", "free")
+                status = web_account.get("subscription_status", "active")
+                await update.message.reply_text(
+                    f"👋 다시 오신 것을 환영합니다! TeleMon에 이미 가입된 계정입니다.\n\n"
+                    f"📱 요금제: {plan.upper()}\n"
+                    f"📊 상태: {status}\n"
+                    f"🌐 대시보드: https://app.telemon.online\n\n"
+                    f"아래 메뉴에서 원하는 기능을 선택해주세요.",
+                    reply_markup=_main_menu_keyboard(),
+                )
+                return
+
         await update.message.reply_text(
             "안녕하세요! TeleMon 봇입니다.\n아래 메뉴에서 원하는 기능을 선택해주세요.",
             reply_markup=_main_menu_keyboard(),
