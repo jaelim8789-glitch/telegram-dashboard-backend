@@ -1,8 +1,8 @@
+import os
+from typing import List
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Insecure default values that must be overridden before production deployment.
-# These match the shipped class-level defaults above.
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 _ADMIN_DEFAULTS = {"admin_username": "sksk2929", "admin_password": "ysjr0508"}
 _JWT_DEFAULT = "change-me-in-production"
@@ -245,6 +245,11 @@ class Settings(BaseSettings):
                 "https://my.telegram.org 에서 발급받아 .env에 입력하세요."
             )
         return int(self.telegram_api_id), self.telegram_api_hash
+
+    # NOWPayments configuration
+    NOWPAYMENTS_API_KEY: str = os.getenv("NOWPAYMENTS_API_KEY", "")
+    NOWPAYMENTS_PUBLIC_KEY: str = os.getenv("NOWPAYMENTS_PUBLIC_KEY", "")
+    NOWPAYMENTS_IPN_SECRET: str = os.getenv("NOWPAYMENTS_IPN_SECRET", "")
 
 
 settings = Settings()
