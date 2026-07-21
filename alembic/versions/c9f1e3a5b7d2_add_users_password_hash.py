@@ -1,6 +1,6 @@
 """add users.password_hash column
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: c9f1e3a5b7d2
 Revises: 1c4d2d63fd1b
 Create Date: 2026-07-22 01:35:00
 
@@ -8,7 +8,7 @@ Create Date: 2026-07-22 01:35:00
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a1b2c3d4e5f6"
+revision = "c9f1e3a5b7d2"
 down_revision = "1c4d2d63fd1b"
 branch_labels = None
 depends_on = None
