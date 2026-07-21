@@ -74,6 +74,20 @@ MAX_RETRIES = 3
 BASE_BACKOFF_SECONDS = 5.0
 MAX_WAIT_SECONDS = 60.0
 
+WATERMARK_AD = (
+    "\n\n━━━━━━━━━━━━━━━━━━\n"
+    "🤖 TeleMon AI\n\n"
+    "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
+    "AI 비서가\n"
+    "✅ 자동 홍보\n"
+    "✅ 자동 답장\n"
+    "✅ 채널 운영\n"
+    "✅ 그룹 관리\n\n"
+    "🌐 https://telemon.online"
+)
+
+FREE_PLANS = {"free"}
+
 # Per-recipient send timeout. Without this, a single Telethon call that hangs
 # (dead connection, DC migration stall, etc.) silently consumes the *entire*
 # broadcast-level timeout budget — the outer asyncio.wait_for in
@@ -112,9 +126,8 @@ class DeliveryRequest:
     reply_to_msg_id: int | None = None
     reply_to_map: dict[str, int] | None = None
     inline_buttons: list[dict] | None = None
-    # Number of parallel sends per batch (1~50). When set, recipients are
-    # processed in batches of this size concurrently via asyncio.gather.
     batch_size: int | None = None
+    tenant_plan: str | None = None
 
 
 def utcnow_naive() -> datetime:
@@ -537,6 +550,14 @@ async def deliver_message(
                 results.append(result)
             return results
 
+        tenant_plan = None
+        if account.tenant_id:
+            from app.models.tenant import Tenant
+            tenant = await db.get(Tenant, account.tenant_id)
+            if tenant is not None:
+                tenant_plan = tenant.plan
+        request.tenant_plan = tenant_plan
+
     # 2. Get authorized client (decrypts session, checks authorization)
     if client is None:
         try:
@@ -583,11 +604,14 @@ async def deliver_message(
             if request.reply_to_map is not None
             else request.reply_to_msg_id
         )
+        message_to_send = request.message
+        if request.tenant_plan in FREE_PLANS:
+            message_to_send = request.message + WATERMARK_AD
         result = await _deliver_with_retry(
             client=client,
             target=target,
             recipient=recipient,
-            message=request.message,
+            message=message_to_send,
             media_path=request.media_path,
             source=request.source,
             source_id=request.source_id,

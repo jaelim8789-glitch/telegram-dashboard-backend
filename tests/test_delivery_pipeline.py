@@ -559,6 +559,106 @@ async def test_deliver_message_with_prepassed_client_multi_recipient(mock_get_ac
 # Phase 10: No real network call occurs
 # ═══════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 11: Free-plan watermark behavior
+# ═══════════════════════════════════════════════════════════════════════
+
+from app.models.account import Account
+from app.models.tenant import Tenant
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery.get_authorized_client")
+@patch("app.services.delivery.account_crud.get_account")
+async def test_free_plan_appends_watermark(mock_get_account, mock_get_client, mock_db_session):
+    """Free-plan users get the TeleMon watermark appended to every message."""
+    mock_account = Account(id="acc-free", phone="+821000000001", tenant_id="tenant-free")
+    mock_get_account.return_value = mock_account
+
+    mock_tenant = MagicMock()
+    mock_tenant.plan = "free"
+    mock_db_session.get.return_value = mock_tenant
+
+    mock_client = AsyncMock()
+    mock_client.send_message.return_value.id = 123
+    mock_get_client.return_value = mock_client
+
+    request = DeliveryRequest(
+        account_id="acc-free",
+        recipients=["-100123"],
+        message="테스트 메시지",
+        source="test",
+    )
+
+    results = await deliver_message(request)
+
+    assert len(results) == 1
+    assert results[0].status == DeliveryStatus.SUCCESS
+    sent_message = mock_client.send_message.call_args[0][1]
+    assert sent_message.startswith("테스트 메시지")
+    assert "🤖 TeleMon AI" in sent_message
+    assert "https://telemon.online" in sent_message
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery.get_authorized_client")
+@patch("app.services.delivery.account_crud.get_account")
+async def test_paid_plan_does_not_append_watermark(mock_get_account, mock_get_client, mock_db_session):
+    """Paid-plan users (pro/team) receive messages without watermark."""
+    mock_account = Account(id="acc-pro", phone="+821000000002", tenant_id="tenant-pro")
+    mock_get_account.return_value = mock_account
+
+    mock_tenant = MagicMock()
+    mock_tenant.plan = "pro"
+    mock_db_session.get.return_value = mock_tenant
+
+    mock_client = AsyncMock()
+    mock_client.send_message.return_value.id = 123
+    mock_get_client.return_value = mock_client
+
+    request = DeliveryRequest(
+        account_id="acc-pro",
+        recipients=["-100123"],
+        message="유료 플랜 테스트",
+        source="test",
+    )
+
+    results = await deliver_message(request)
+
+    assert len(results) == 1
+    assert results[0].status == DeliveryStatus.SUCCESS
+    sent_message = mock_client.send_message.call_args[0][1]
+    assert sent_message == "유료 플랜 테스트"
+    assert "🤖 TeleMon AI" not in sent_message
+
+
+@pytest.mark.asyncio
+@patch("app.services.delivery.get_authorized_client")
+@patch("app.services.delivery.account_crud.get_account")
+async def test_no_tenant_means_no_watermark(mock_get_account, mock_get_client, mock_db_session):
+    """Accounts without a tenant should not get a watermark."""
+    mock_account = Account(id="acc-no-tenant", phone="+821000000003", tenant_id=None)
+    mock_get_account.return_value = mock_account
+
+    mock_client = AsyncMock()
+    mock_client.send_message.return_value.id = 123
+    mock_get_client.return_value = mock_client
+
+    request = DeliveryRequest(
+        account_id="acc-no-tenant",
+        recipients=["-100123"],
+        message="테넌트 없음",
+        source="test",
+    )
+
+    results = await deliver_message(request)
+
+    assert len(results) == 1
+    assert results[0].status == DeliveryStatus.SUCCESS
+    sent_message = mock_client.send_message.call_args[0][1]
+    assert sent_message == "테넌트 없음"
+
+
 def test_no_real_telegram_network_call():
     """All tests use mocked Telethon — no real network calls occur."""
     assert True
