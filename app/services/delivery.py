@@ -16,6 +16,8 @@ All Telegram send paths (broadcast, reply macro, auto reply, scheduled)
 should route through this pipeline.
 """
 
+from __future__ import annotations
+
 import asyncio
 import enum
 from datetime import datetime, timedelta, timezone
@@ -42,6 +44,7 @@ from telethon.errors import (
 from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl
 
 from app.core.logging import get_logger
+from app.core.time import utcnow_naive
 from app.crud import account as account_crud
 from app.database import async_session_maker
 from app.models.account import Account
@@ -130,10 +133,6 @@ class DeliveryRequest:
     tenant_plan: str | None = None
 
 
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     """Classify a Telethon exception into a DeliveryStatus.
 
@@ -195,7 +194,7 @@ RESTRICTION_WARNING = (
 def _record_forbidden_failure(account_id: str, recipient: str) -> bool:
     """Record a forbidden failure and return True if the account should be
     suspended (distinct-recipient threshold exceeded within the window)."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = utcnow_naive()
     cutoff = now - timedelta(minutes=RESTRICTION_WINDOW_MINUTES)
     burst = _forbidden_bursts.setdefault(account_id, [])
     burst.append((now, recipient))
@@ -286,6 +285,12 @@ async def _send_single(
         return (status, None, safe_error, flood_wait)
 
 
+# ─── Batch persist state (shared across calls within a single deliver_message run) ──
+# Collects log rows in memory and flushes in batches to avoid per-recipient DB sessions.
+
+_MAX_BATCH_SIZE = 100
+
+
 async def _persist_log(
     account_id: str,
     recipient: str,
@@ -300,7 +305,8 @@ async def _persist_log(
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
 ) -> None:
-    """Persist a delivery attempt to MessageLog."""
+    """Persist a single delivery attempt — used when persistence is needed outside
+    a batch context (e.g. fast-fail paths). Prefer the batch flush when possible."""
     async with async_session_maker() as db:
         log = MessageLog(
             account_id=account_id,
@@ -355,6 +361,7 @@ async def _deliver_with_retry(
     on_status_change: Callable | None = None,
     reply_to_msg_id: int | None = None,
     inline_buttons: list[dict] | None = None,
+    batch_persister: _BatchPersister | None = None,
 ) -> DeliveryResult:
     """Attempt delivery with retry for recoverable failures.
 
@@ -388,20 +395,37 @@ async def _deliver_with_retry(
 
         # Persist every attempt
         is_success = status == DeliveryStatus.SUCCESS
-        await _persist_log(
-            account_id=account_id,
-            recipient=recipient,
-            source=source,
-            source_id=source_id,
-            status=status,
-            success=is_success,
-            telegram_message_id=msg_id,
-            error_message=safe_error,
-            attempt_count=attempt,
-            message_content=message,
-            started_at=started_at,
-            completed_at=completed_at,
-        )
+        if batch_persister is not None:
+            await batch_persister.add(
+                account_id=account_id,
+                recipient=recipient,
+                source=source,
+                source_id=source_id,
+                status=status,
+                success=is_success,
+                telegram_message_id=msg_id,
+                error_message=safe_error,
+                attempt_count=attempt,
+                message_content=message,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            await batch_persister.flush()
+        else:
+            await _persist_log(
+                account_id=account_id,
+                recipient=recipient,
+                source=source,
+                source_id=source_id,
+                status=status,
+                success=is_success,
+                telegram_message_id=msg_id,
+                error_message=safe_error,
+                attempt_count=attempt,
+                message_content=message,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
 
         if is_success:
             _publish_event(EVENT_SENT, result, source, source_id, on_status_change)
@@ -437,20 +461,88 @@ async def _deliver_with_retry(
         error_message="모든 재시도가 실패했습니다.",
         attempt_count=MAX_RETRIES,
     )
-    await _persist_log(
-        account_id=account_id,
-        recipient=recipient,
-        source=source,
-        source_id=source_id,
-        status=DeliveryStatus.NETWORK_ERROR,
-        success=False,
-        telegram_message_id=None,
-        error_message=exhausted.error_message,
-        attempt_count=MAX_RETRIES,
-        message_content=message,
-    )
+    if batch_persister is not None:
+        await batch_persister.add(
+            account_id=account_id,
+            recipient=recipient,
+            source=source,
+            source_id=source_id,
+            status=DeliveryStatus.NETWORK_ERROR,
+            success=False,
+            telegram_message_id=None,
+            error_message=exhausted.error_message,
+            attempt_count=MAX_RETRIES,
+            message_content=message,
+        )
+        await batch_persister.flush()
+    else:
+        await _persist_log(
+            account_id=account_id,
+            recipient=recipient,
+            source=source,
+            source_id=source_id,
+            status=DeliveryStatus.NETWORK_ERROR,
+            success=False,
+            telegram_message_id=None,
+            error_message=exhausted.error_message,
+            attempt_count=MAX_RETRIES,
+            message_content=message,
+        )
     _publish_event(EVENT_FAILED, exhausted, source, source_id, on_status_change)
     return exhausted
+
+
+class _BatchPersister:
+    """Collects MessageLog rows in memory and flushes in batches to avoid
+    per-recipient DB sessions. Within a single deliver_message() call this
+    reduces DB round-trips from N to ceil(N/100)."""
+
+    def __init__(self) -> None:
+        self._rows: list[MessageLog] = []
+
+    async def add(
+        self,
+        account_id: str,
+        recipient: str,
+        source: str,
+        source_id: str | None,
+        status: DeliveryStatus,
+        success: bool,
+        telegram_message_id: int | None,
+        error_message: str | None,
+        attempt_count: int,
+        message_content: str | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        self._rows.append(MessageLog(
+            account_id=account_id,
+            recipient=recipient,
+            source=source,
+            source_id=source_id,
+            status=status.value,
+            success=success,
+            telegram_message_id=telegram_message_id,
+            error_message=error_message,
+            attempt_count=attempt_count,
+            message_content=message_content,
+            started_at=started_at,
+            completed_at=completed_at,
+        ))
+
+    async def flush(self, force: bool = False) -> None:
+        if not self._rows:
+            return
+        if not force and len(self._rows) < _MAX_BATCH_SIZE:
+            return
+        batch = self._rows
+        self._rows = []
+        async with async_session_maker() as db:
+            db.add_all(batch)
+            await db.commit()
+
+    async def flush_all(self) -> None:
+        await self.flush(force=True)
 
 
 async def deliver_message(
@@ -600,6 +692,7 @@ async def deliver_message(
     # 3. Send to each recipient with retry
     _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)
     entity_cache: dict[str, Any] = {}
+    batch_persister = _BatchPersister()
 
     async def _resolve_target_entity(recipient: str) -> Any:
         """Resolve recipient target once and cache it for retries/reuses.
@@ -644,6 +737,7 @@ async def deliver_message(
             on_status_change=on_status_change,
             reply_to_msg_id=reply_to,
             inline_buttons=request.inline_buttons,
+            batch_persister=batch_persister,
         )
 
         # If Telegram told us the account is banned, persist it so future
@@ -695,4 +789,5 @@ async def deliver_message(
             if i < total - 1 and request.inter_message_delay > 0:
                 await asyncio.sleep(request.inter_message_delay)
 
+    await batch_persister.flush_all()
     return results

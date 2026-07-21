@@ -1,18 +1,15 @@
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.limits import OTP_EXPIRE_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SECONDS
 from app.core.security import hash_otp_code
+from app.core.time import utcnow_naive
 from app.models.account import Account
 from app.models.tenant import Tenant
 from app.models.user import PhoneVerification, User
-
-
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def get_pending_verification(db: AsyncSession, phone: str) -> PhoneVerification | None:
@@ -135,7 +132,7 @@ class UserWithTenantInfo:
         self.stars_balance = stars_balance
 
 
-async def list_users_with_tenant_info(db: AsyncSession) -> list[UserWithTenantInfo]:
+async def list_users_with_tenant_info(db: AsyncSession, skip: int = 0, limit: int = 100) -> list[UserWithTenantInfo]:
     """Admin users list, enriched with plan/subscription/account-count so the admin
     console can show a real picture of each user instead of just phone + active flag."""
     account_counts_subq = (
@@ -148,6 +145,8 @@ async def list_users_with_tenant_info(db: AsyncSession) -> list[UserWithTenantIn
         .outerjoin(Tenant, Tenant.phone == User.phone)
         .outerjoin(account_counts_subq, account_counts_subq.c.tenant_id == Tenant.id)
         .order_by(User.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     rows = []
     for user, tenant, account_count in result.all():
