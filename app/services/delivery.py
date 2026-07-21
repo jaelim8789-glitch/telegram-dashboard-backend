@@ -20,7 +20,7 @@ import asyncio
 import enum
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from telethon import TelegramClient
 from telethon.errors import (
@@ -599,10 +599,31 @@ async def deliver_message(
 
     # 3. Send to each recipient with retry
     _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)
+    entity_cache: dict[str, Any] = {}
+
+    async def _resolve_target_entity(recipient: str) -> Any:
+        """Resolve recipient target once and cache it for retries/reuses.
+
+        Telethon usually caches entity lookups internally, but repeated send/retry
+        paths still pay resolver overhead in hot loops. Caching here keeps the
+        delivery loop stable under retry storms and large recipient sets.
+        """
+        cached = entity_cache.get(recipient)
+        if cached is not None:
+            return cached
+
+        base_target = _resolve_target(recipient)
+        try:
+            resolved = await client.get_input_entity(base_target)
+            entity_cache[recipient] = resolved
+            return resolved
+        except Exception:
+            # Fall back to the raw target when entity resolution is unavailable.
+            return base_target
 
     async def _send_one(recipient: str) -> DeliveryResult:
         """Send to a single recipient with post-send bookkeeping."""
-        target = _resolve_target(recipient)
+        target = await _resolve_target_entity(recipient)
         reply_to = (
             request.reply_to_map.get(recipient)
             if request.reply_to_map is not None
@@ -665,22 +686,13 @@ async def deliver_message(
                 await asyncio.sleep(request.inter_message_delay)
     else:
         # Sequential mode (default): send one at a time with pacing
-        tasks = []
         for i, recipient in enumerate(request.recipients):
-            # Create tasks with delays built in to ensure proper timing
-            task = asyncio.create_task(_send_one(recipient))
-            tasks.append(task)
-            
-            # Add delay between tasks to ensure 5-second interval
-            if i < len(request.recipients) - 1:
+            try:
+                result = await _send_one(recipient)
+                results.append(result)
+            except Exception as exc:
+                logger.error("sequential_send_exception", recipient=recipient, error=str(exc))
+            if i < total - 1 and request.inter_message_delay > 0:
                 await asyncio.sleep(request.inter_message_delay)
-        
-        # Wait for all tasks to complete
-        task_results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in task_results:
-            if isinstance(r, Exception):
-                logger.error("sequential_send_exception", error=str(r))
-                continue
-            results.append(r)
 
     return results

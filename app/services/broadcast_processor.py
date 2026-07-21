@@ -166,18 +166,23 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
             if account is not None:
                 pre_fetched_client = await get_authorized_client(account)
                 reply_to_map = {}
-                for recipient in recipients_local:
-                    try:
-                        target = int(recipient.lstrip("-")) if recipient.lstrip("-").isdigit() else recipient
-                        messages = await pre_fetched_client.get_messages(target, limit=1)
-                        if messages:
-                            reply_to_map[recipient] = messages[0].id
-                    except Exception as exc:
-                        logger.warning(
-                            "reply_fetch_failed",
-                            recipient=recipient,
-                            error=str(exc),
-                        )
+                sem = asyncio.Semaphore(8)
+
+                async def _fetch_reply_target(recipient: str) -> None:
+                    async with sem:
+                        try:
+                            target = int(recipient.lstrip("-")) if recipient.lstrip("-").isdigit() else recipient
+                            messages = await pre_fetched_client.get_messages(target, limit=1)
+                            if messages:
+                                reply_to_map[recipient] = messages[0].id
+                        except Exception as exc:
+                            logger.warning(
+                                "reply_fetch_failed",
+                                recipient=recipient,
+                                error=str(exc),
+                            )
+
+                await asyncio.gather(*(_fetch_reply_target(recipient) for recipient in recipients_local))
 
     request = DeliveryRequest(
         account_id=account_id_local,
