@@ -7,6 +7,7 @@ from app.models.ai_ops_report import AiOpsReport
 from app.models.api_key import APIKey
 from app.models.auto_reply import AutoReplyLog, AutoReplyRule, AutoReplySuggestion
 from app.models.broadcast import Broadcast
+from app.models.cryptomus_payment import CryptomusPayment
 from app.models.folder import Folder
 from app.models.group_search import GroupJoinLog, GroupSearchResult
 from app.models.guide_hub import GuideHubMessage
@@ -40,6 +41,7 @@ __all__ = [
     "AutoReplyRule",
     "AutoReplySuggestion",
     "Broadcast",
+    "CryptomusPayment",
     "Folder",
     "FollowUpRule",
     "GroupJoinLog",
