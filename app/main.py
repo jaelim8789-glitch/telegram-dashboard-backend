@@ -20,6 +20,7 @@ from sqlalchemy import text
 from app.api.account_health import router as account_health_router
 from app.api.account_health_summary import router as account_health_summary_router
 from app.api.accounts import router as accounts_router
+from app.api.account_self_reset import router as account_self_reset_router
 from app.api.batch import router as batch_router
 from app.api.admin import router as admin_router
 from app.api.ai_assist import router as ai_assist_router
@@ -246,6 +247,7 @@ app.include_router(telegram_verify_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
 app.include_router(accounts_router, dependencies=_auth_required)
+app.include_router(account_self_reset_router, dependencies=_auth_required)
 app.include_router(telegram_auth_router, dependencies=_auth_required)
 app.include_router(groups_router, dependencies=_auth_required)
 app.include_router(folder_router, dependencies=_auth_required)
