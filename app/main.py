@@ -91,6 +91,7 @@ from app.ai.routers import (
 )
 from app.ai.tools.builtin_tools import register_builtin_tools
 from app.api.operator import router as operator_router
+from app.api.growth_loop import router as growth_loop_router
 from app.ai.tools.registry import get_tool_registry
 from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
@@ -310,6 +311,7 @@ app.include_router(ai_schedules_router, dependencies=_auth_required)
 app.include_router(ai_plugins_router, dependencies=_auth_required)
 app.include_router(ai_providers_router, dependencies=_auth_required)
 app.include_router(operator_router, dependencies=_auth_required)
+app.include_router(growth_loop_router, dependencies=_auth_required)
 
 
 @app.get("/metrics")
