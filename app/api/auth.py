@@ -466,6 +466,39 @@ async def link_api_key(
     )
 
 
+@router.get("/check-telegram/{telegram_id}")
+async def check_telegram(
+    telegram_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """봇에서 /start 시 웹 가입 여부를 조회하는 경량 엔드포인트.
+
+    Returns:
+        200: {linked: true, plan: str, phone: str} — 이미 가입된 사용자
+        404: {linked: false} — 미가입 사용자
+    """
+    from sqlalchemy import select
+    result = await db.execute(
+        select(User).where(User.telegram_id == telegram_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"linked": False, "telegram_id": telegram_id}
+
+    tenant_result = await db.execute(
+        select(Tenant).where(Tenant.phone == user.phone)
+    )
+    tenant = tenant_result.scalar_one_or_none()
+
+    return {
+        "linked": True,
+        "telegram_id": telegram_id,
+        "phone": user.phone,
+        "plan": tenant.plan if tenant else None,
+        "subscription_status": tenant.subscription_status if tenant else None,
+    }
+
+
 @router.post("/link-telegram", response_model=LinkTelegramResponse)
 async def link_telegram(
     payload: LinkTelegramRequest,

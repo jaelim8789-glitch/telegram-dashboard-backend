@@ -29,6 +29,20 @@ class LoginWithApiKeyRequest(BaseModel):
     api_key: str = Field(min_length=1)
 
 
+class LinkTelegramRequest(BaseModel):
+    telegram_id: int = Field(..., description="Telegram 사용자 ID")
+    telegram_username: str | None = Field(default=None, max_length=255)
+    telegram_photo_url: str | None = Field(default=None, max_length=512)
+
+
+class LinkTelegramResponse(BaseModel):
+    linked: bool
+    telegram_id: int
+    plan: str | None
+    subscription_status: str | None
+    message: str = ""
+
+
 class LoginWithApiKeyResponse(BaseModel):
     access_token: str
     session_token: str | None = None
