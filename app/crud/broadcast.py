@@ -173,7 +173,7 @@ async def retry_broadcast(db: AsyncSession, broadcast_id: str) -> Broadcast | No
             Broadcast.retry_count < max_retries,
         )
         .values(
-            status="pending",
+            status="retrying",
             error_message=None,
             sent_at=None,
             retry_count=Broadcast.retry_count + 1,
@@ -291,7 +291,10 @@ async def list_logs(
     account_id: str | None = None,
     status: str | None = None,
     date: str | None = None,
+    page: int = 1,
+    limit: int = 50,
 ) -> list[Broadcast]:
+    offset = (page - 1) * limit
     query = select(Broadcast)
 
     if identity is not None and identity.kind != "admin" and account_id is None:
@@ -310,6 +313,7 @@ async def list_logs(
         day_start = datetime.strptime(date, "%Y-%m-%d")
         day_end = day_start + timedelta(days=1)
         query = query.where(Broadcast.created_at >= day_start, Broadcast.created_at < day_end)
+    query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
 

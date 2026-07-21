@@ -9,23 +9,29 @@ from app.services.chat_service import (
     list_conversations, create_conversation, update_conversation_title,
     delete_conversation, get_messages, ask_ai, ask_ai_stream,
 )
+from app.schemas.chat import (
+    ConversationCreateResponse, ConversationRead, MessageAddResponse,
+    MessageRead, StatusResponse,
+)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = get_logger(__name__)
 
 
-@router.get("/conversations")
+@router.get("/conversations", response_model=list[ConversationRead])
 async def get_conversations(
     search: str | None = Query(None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
     """대화 목록 조회 (search로 검색 가능)"""
-    convs = await list_conversations(db, identity.tenant_id, search=search)
-    return [{"id": c.id, "title": c.title, "updated_at": c.updated_at.isoformat()} for c in convs]
+    convs = await list_conversations(db, identity.tenant_id, search=search, limit=limit, offset=offset)
+    return convs
 
 
-@router.post("/conversations")
+@router.post("/conversations", response_model=ConversationCreateResponse)
 async def new_conversation(
     body: dict | None = None,
     db: AsyncSession = Depends(get_db),
@@ -37,7 +43,7 @@ async def new_conversation(
     return {"id": c.id, "title": c.title}
 
 
-@router.patch("/conversations/{conv_id}")
+@router.patch("/conversations/{conv_id}", response_model=StatusResponse)
 async def edit_conversation(
     conv_id: str,
     body: dict,
@@ -48,22 +54,22 @@ async def edit_conversation(
     title = body.get("title", "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="제목을 입력하세요")
-    await update_conversation_title(db, conv_id, title)
+    await update_conversation_title(db, conv_id, identity.tenant_id, title)
     return {"status": "updated"}
 
 
-@router.delete("/conversations/{conv_id}")
+@router.delete("/conversations/{conv_id}", response_model=StatusResponse)
 async def remove_conversation(
     conv_id: str,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
     """대화 삭제"""
-    await delete_conversation(db, conv_id)
+    await delete_conversation(db, conv_id, identity.tenant_id)
     return {"status": "deleted"}
 
 
-@router.get("/conversations/{conv_id}/messages")
+@router.get("/conversations/{conv_id}/messages", response_model=list[MessageRead])
 async def get_conversation_messages(
     conv_id: str,
     db: AsyncSession = Depends(get_db),
@@ -71,7 +77,7 @@ async def get_conversation_messages(
 ):
     """대화 메시지 조회"""
     msgs = await get_messages(db, conv_id)
-    return [{"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at.isoformat()} for m in msgs]
+    return msgs
 
 
 @router.post("/conversations/{conv_id}/ask")

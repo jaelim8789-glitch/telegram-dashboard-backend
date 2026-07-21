@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +28,9 @@ class GroupSearchResult(Base):
 class GroupJoinLog(Base):
     """Records every join action for auditing and daily-limit enforcement."""
     __tablename__ = "group_join_logs"
+    __table_args__ = (
+        sa.Index("ix_group_join_logs_account_created", "account_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)

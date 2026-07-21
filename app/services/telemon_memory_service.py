@@ -99,6 +99,7 @@ async def _top_broadcast_posts(db: AsyncSession, account_ids: list[str], *, star
         top_posts.append(
             {
                 "broadcast_id": str(bid),
+                "message_content": message,
                 "message_preview": _truncate_text(message, 160),
                 "attempted": attempted_i,
                 "successful": successful_i,

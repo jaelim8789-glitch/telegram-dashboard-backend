@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+import time
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.crud import account as account_crud
@@ -8,6 +9,27 @@ from app.schemas.group import GroupRead, GroupListParams, PaginatedGroups, Group
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_folders, list_groups
 
 router = APIRouter(prefix="/api/accounts", tags=["groups"])
+
+_groups_cache: dict = {}
+_groups_cache_ttl = 60
+
+
+def _cached_groups_key(account_id: str) -> str:
+    return f"groups:{account_id}"
+
+
+async def _get_cached_groups(account_id: str):
+    key = _cached_groups_key(account_id)
+    now = time.time()
+    if key in _groups_cache:
+        data, ts = _groups_cache[key]
+        if now - ts < _groups_cache_ttl:
+            return data
+    return None
+
+
+def _set_cached_groups(account_id: str, data):
+    _groups_cache[_cached_groups_key(account_id)] = (data, time.time())
 
 
 @router.get("/{account_id}/groups", response_model=PaginatedGroups)
@@ -29,7 +51,10 @@ async def read_groups(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
 
     try:
-        all_groups = await list_groups(account)
+        all_groups = await _get_cached_groups(account_id)
+        if all_groups is None:
+            all_groups = await list_groups(account)
+            _set_cached_groups(account_id, all_groups)
     except AccountNotAuthenticatedError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except RuntimeError as exc:

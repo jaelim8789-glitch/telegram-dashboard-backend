@@ -1,6 +1,7 @@
 import asyncio
 
 from telethon import TelegramClient, utils
+from telethon.errors import FloodWaitError
 from telethon.tl import functions
 from telethon.tl.types import Channel, Chat, DialogFilter
 
@@ -27,8 +28,6 @@ async def get_authorized_client(account: Account) -> TelegramClient:
         client = await pool.get_client(account.id, session_string)
     except SessionInvalidError as exc:
         raise AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.") from exc
-    if not await client.is_user_authorized():
-        raise AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.")
     return client
 
 
@@ -58,6 +57,12 @@ async def list_groups(account: Account) -> list[dict]:
     return groups
 
 
+import time as _time
+
+_member_cache: dict[str, tuple[list, float]] = {}
+_MEMBER_CACHE_TTL = 600  # 10 minutes
+
+
 async def list_group_members(account: Account, group_id: str) -> list:
     """Get all members/participants of a Telegram group or channel.
 
@@ -66,6 +71,13 @@ async def list_group_members(account: Account, group_id: str) -> list:
     Returns a list of Telethon User objects.
     Raises on permission errors or if the account cannot access the group.
     """
+    cache_key = f"{account.id}:{group_id}"
+    now = _time.time()
+    if cache_key in _member_cache:
+        members, ts = _member_cache[cache_key]
+        if now - ts < _MEMBER_CACHE_TTL:
+            return members
+
     from telethon.tl.functions.channels import GetParticipantsRequest
     from telethon.tl.types import ChannelParticipantsSearch
 
@@ -89,7 +101,9 @@ async def list_group_members(account: Account, group_id: str) -> list:
             # Fall back to simple participant fetch for basic groups
             try:
                 participants = await client.get_participants(entity)
-                return list(participants)
+                members = list(participants)
+                _member_cache[cache_key] = (members, now)
+                return members
             except Exception as exc:
                 logger.warning("list_group_members_failed", group_id=group_id, error=str(exc))
                 raise
@@ -101,8 +115,8 @@ async def list_group_members(account: Account, group_id: str) -> list:
             break
         offset += limit
 
+    _member_cache[cache_key] = (all_participants, now)
     return all_participants
-
 
 def _filter_title(f: DialogFilter) -> str:
     title = f.title
@@ -169,7 +183,12 @@ async def run_broadcast(
                 await client.send_file(target, media_path, caption=message)
             else:
                 await client.send_message(target, message)
-        except Exception as exc:  # noqa: BLE001 — recorded per-recipient, not swallowed
+        except FloodWaitError as e:
+            wait_sec = min(e.seconds, 60)
+            logger.warning("broadcast_flood_wait", recipient=recipient, seconds=e.seconds, capped_wait=wait_sec)
+            errors.append(f"{recipient}: FloodWait {e.seconds}s — {wait_sec}s 대기 후 계속")
+            await asyncio.sleep(wait_sec)
+        except Exception as exc:
             errors.append(f"{recipient}: {exc}")
 
         if index < len(recipients) - 1:

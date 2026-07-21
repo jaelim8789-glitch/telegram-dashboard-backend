@@ -12,12 +12,11 @@ which queries Trongrid directly — client-supplied tx data is NOT trusted here.
 Plan definitions sourced from canonical app.core.plans.
 """
 
-from datetime import datetime, timedelta, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import (
     PLAN_CATALOG,
@@ -34,9 +33,8 @@ from app.services.usage_tracker import apply_plan_limits
 router = APIRouter(prefix="/api/payment", tags=["payment"])
 logger = get_logger(__name__)
 
-USDT_WALLET = "TFyAKKLYH96T1NmL92Mr7vpK87EUNnkCSc"
+USDT_WALLET = settings.usdt_wallet_address
 
-# In-memory rate limit: {(phone_or_ip, endpoint): timestamp}
 _request_timestamps: dict[tuple[str, str], float] = {}
 
 
@@ -48,10 +46,6 @@ def _check_rate_limit(key: tuple[str, str], min_interval: float = 10.0) -> bool:
         return False
     _request_timestamps[key] = now
     return True
-
-
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/plans")

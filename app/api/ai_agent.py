@@ -196,6 +196,9 @@ async def get_messages(
     identity: Identity = Depends(get_current_identity),
 ):
     """채팅방 메시지 내역"""
+    chat = await db.get(AiChat, chat_id)
+    if chat is None or (identity.kind != "admin" and chat.tenant_id != identity.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 채팅방에 접근할 수 없습니다.")
     result = await db.execute(
         select(AiMessage).where(AiMessage.chat_id == chat_id).order_by(AiMessage.created_at)
     )
@@ -220,8 +223,8 @@ async def send_message(
         raise HTTPException(status_code=400, detail="내용을 입력하세요")
 
     chat = await db.get(AiChat, chat_id)
-    if chat is None:
-        raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없습니다.")
+    if chat is None or (identity.kind != "admin" and chat.tenant_id != identity.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 채팅방에 접근할 수 없습니다.")
 
     agent = await db.get(AiAgent, chat.agent_id)
     if agent is None:
@@ -360,8 +363,8 @@ async def send_message_stream(
         raise HTTPException(status_code=400, detail="내용을 입력하세요")
 
     chat = await db.get(AiChat, chat_id)
-    if chat is None:
-        raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없습니다.")
+    if chat is None or (identity.kind != "admin" and chat.tenant_id != identity.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 채팅방에 접근할 수 없습니다.")
 
     agent = await db.get(AiAgent, chat.agent_id)
     if agent is None:

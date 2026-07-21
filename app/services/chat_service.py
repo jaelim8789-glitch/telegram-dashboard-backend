@@ -33,11 +33,11 @@ def mask_sensitive(text: str) -> str:
 
 # ── CRUD ────────────────────────────────────────────────────────────────
 
-async def list_conversations(db: AsyncSession, tenant_id: str, search: str | None = None) -> list[Conversation]:
+async def list_conversations(db: AsyncSession, tenant_id: str, search: str | None = None, limit: int = 50, offset: int = 0) -> list[Conversation]:
     query = select(Conversation).where(Conversation.tenant_id == tenant_id)
     if search:
         query = query.where(Conversation.title.ilike(f"%{search}%"))
-    query = query.order_by(Conversation.updated_at.desc())
+    query = query.order_by(Conversation.updated_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
 

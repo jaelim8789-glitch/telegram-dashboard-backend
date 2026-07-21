@@ -3,11 +3,12 @@
 Plan data sourced from canonical app.core.plans.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.deps import get_current_identity, Identity, require_admin, require_tenant_access
 from app.core.logging import get_logger
 from app.core.plans import PLAN_CATALOG, validate_plan_id
+from app.core.rate_limiter import check_rate_limit, get_client_ip
 from app.services.billing import (
     cancel_subscription,
     confirm_usdt_payment,
@@ -33,8 +34,11 @@ public_router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
 @public_router.get("/plans")
-async def api_get_plans():
+async def api_get_plans(request: Request):
     """Get all plan info with USDT prices from canonical PLAN_CATALOG."""
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "billing_plans", max_attempts=30, window_seconds=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다")
     plans = []
     for plan_id, pdef in PLAN_CATALOG.items():
         entry = {

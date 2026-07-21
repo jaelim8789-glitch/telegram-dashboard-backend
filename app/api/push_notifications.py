@@ -16,10 +16,9 @@ from pydantic import BaseModel
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity
+from app.api.deps import get_current_identity, Identity, require_admin
 from app.database import get_db
 from app.core.logging import get_logger
-from app.core.security import require_admin
 
 router = APIRouter(prefix="/api/push", tags=["push"])
 logger = get_logger(__name__)
@@ -183,10 +182,10 @@ async def _send_fcm_push(token: str, title: str, body: str, url: str | None = No
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
             token=token,
-            data={"url": url or "/app"},                    ) if url else None,
+            data={"url": url or "/app"},
             android=messaging.AndroidConfig(
                 priority="high",
-            ) if url else None,
+            ),
         )
         messaging.send(message)
     except ImportError:

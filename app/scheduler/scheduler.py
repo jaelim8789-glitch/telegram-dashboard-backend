@@ -11,6 +11,8 @@ Reliability semantics (Sprint 22):
   dispatched twice simultaneously within the same process.
 """
 
+import asyncio
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -104,13 +106,13 @@ async def dispatch_due_broadcasts() -> None:
         logger.info("broadcast_tick_completed", due_count=0)
         return
 
-    # Dispatch one-time broadcasts (existing flow)
-    for broadcast_id in one_time_ids:
+    # Dispatch one-time broadcasts concurrently
+    async def _dispatch_one(broadcast_id: str) -> None:
         async with async_session_maker() as db:
             claimed = await broadcast_crud.claim_broadcast_dispatch(db, broadcast_id)
         if not claimed:
             logger.info("scheduled_broadcast_skipped_already_claimed", broadcast_id=broadcast_id)
-            continue
+            return
 
         _running_broadcasts.add(broadcast_id)
         try:
@@ -122,7 +124,6 @@ async def dispatch_due_broadcasts() -> None:
                 broadcast_id=broadcast_id,
                 error=str(exc),
             )
-            # Record the error on the broadcast so it's visible to the user
             try:
                 async with async_session_maker() as db:
                     await broadcast_crud.record_broadcast_error(db, broadcast_id, str(exc))
@@ -134,6 +135,10 @@ async def dispatch_due_broadcasts() -> None:
                 )
         finally:
             _running_broadcasts.discard(broadcast_id)
+
+    tasks = [asyncio.create_task(_dispatch_one(bid)) for bid in one_time_ids]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     logger.info("broadcast_tick_completed", one_time=len(one_time_ids), recurring=len(recurring_ids))
 

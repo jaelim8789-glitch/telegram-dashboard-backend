@@ -49,7 +49,8 @@ async def get_scheduler_status(
         from app.models.account import Account
         from sqlalchemy import select
 
-        account_ids = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+        account_ids_q = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+        account_ids = [r[0] for r in await db.execute(account_ids_q)]
         due = [b for b in due if b.account_id in account_ids]
 
     next_run_time = scheduler.get_job("dispatch_due_broadcasts")

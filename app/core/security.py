@@ -77,5 +77,9 @@ def generate_otp_code() -> str:
     return f"{secrets.randbelow(10**OTP_CODE_LENGTH):0{OTP_CODE_LENGTH}d}"
 
 
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
 def hash_otp_code(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()

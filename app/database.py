@@ -23,6 +23,7 @@ if not str(settings.database_url).startswith("sqlite"):
     _engine_kwargs.update({
         "pool_size": 5,
         "max_overflow": 10,
+        "pool_recycle": 3600,
     })
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)

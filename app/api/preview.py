@@ -32,6 +32,7 @@ def resolve_template(text: str, variables: dict[str, str]) -> str:
 async def resolve_message(
     message: Annotated[str, Form()],
     variables_json: Annotated[str, Form(description='JSON object of variable values, e.g. {"name":"홍길동","date":"7월 17일"}')],
+    identity: Identity = Depends(get_current_identity),
 ):
     import json
     try:
@@ -59,6 +60,7 @@ async def resolve_message(
 @router.post("/api/preview/validate")
 async def validate_message(
     message: Annotated[str, Form(max_length=4096)],
+    identity: Identity = Depends(get_current_identity),
 ):
     issues = []
 
@@ -103,6 +105,9 @@ async def preview_template(
     template = await template_crud.get_template(db, template_id)
     if template is None:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    if identity.kind != "admin" and template.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 템플릿을 미리볼 수 없습니다.")
 
     content = template.content
     detected = extract_variables(content)

@@ -12,13 +12,15 @@ from app.services.auto_reply_service import _handle_incoming_message, _matches
 import app.services.ai_reply_service as ai_reply_service_module
 
 
-def _fake_event(text: str, *, out: bool = False, sender_id: int = 111, chat_id: int = 222, username="tester"):
+def _fake_event(text: str, *, out: bool = False, sender_id: int = 111, chat_id: int = 222, username="tester", message_id: int = 333):
     sender = SimpleNamespace(username=username, first_name="Tester")
+    message = SimpleNamespace(id=message_id)
     return SimpleNamespace(
         out=out,
         raw_text=text,
         sender_id=sender_id,
         chat_id=chat_id,
+        message=message,
         get_sender=AsyncMock(return_value=sender),
         reply=AsyncMock(),
     )
@@ -83,11 +85,14 @@ async def test_handle_incoming_message_sends_reply_and_logs_success(db_session, 
     rule = await _make_rule(db_session, account.id)
     event = _fake_event("가격이 얼마인가요?")
 
-    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
+    fake_client = AsyncMock()
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=fake_client))
+    fake_deliver = AsyncMock(return_value=[MagicMock(status="success")])
+    monkeypatch.setattr("app.services.auto_reply_service.deliver_message", fake_deliver)
 
     await _handle_incoming_message(event, account.id)
 
-    event.reply.assert_awaited_once_with(rule.reply_content)
+    fake_deliver.assert_awaited_once()
     logs = await auto_reply_crud.list_logs(db_session, account.id)
     assert len(logs) == 1
     assert logs[0].status == "success"
@@ -235,9 +240,11 @@ async def test_handle_incoming_message_send_failure_logs_failed_status(db_sessio
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id)
     event = _fake_event("가격이 얼마인가요?")
-    event.reply = AsyncMock(side_effect=RuntimeError("network error"))
 
-    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
+    fake_client = AsyncMock()
+    monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=fake_client))
+    fake_result = MagicMock(status="failed", error_message="network error")
+    monkeypatch.setattr("app.services.auto_reply_service.deliver_message", AsyncMock(return_value=[fake_result]))
 
     await _handle_incoming_message(event, account.id)
 

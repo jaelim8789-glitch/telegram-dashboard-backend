@@ -78,6 +78,8 @@ async def get_style_profile(
     profile = await get_profile(db, profile_id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    if identity.kind != "admin" and profile.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 스타일 프로필에 접근할 수 없습니다.")
     return profile
 
 
@@ -92,6 +94,8 @@ async def update_style_profile(
     profile = await get_profile(db, profile_id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    if identity.kind != "admin" and profile.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 스타일 프로필을 수정할 수 없습니다.")
     if payload.name is not None:
         profile = await update_profile(db, profile, payload.name)
         await db.commit()
@@ -108,5 +112,7 @@ async def delete_style_profile(
     profile = await get_profile(db, profile_id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="스타일 프로필을 찾을 수 없습니다.")
+    if identity.kind != "admin" and profile.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 스타일 프로필을 삭제할 수 없습니다.")
     await delete_profile(db, profile)
     await db.commit()

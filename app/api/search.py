@@ -8,12 +8,13 @@ from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.database import get_db
 from app.services.failure_intel import classify_failure
+from app.schemas.search import BroadcastSearchItem, BroadcastSearchResponse
 
 router = APIRouter(tags=["search"])
 logger = get_logger(__name__)
 
 
-@router.get("/api/broadcast/search")
+@router.get("/api/broadcast/search", response_model=BroadcastSearchResponse)
 async def search_broadcasts(
     account_id: str | None = Query(None),
     status: str | None = Query(None, description="Comma-separated: pending,sending,sent,failed,cancelled"),
@@ -47,29 +48,29 @@ async def search_broadcasts(
 
     enriched = []
     for b in items:
-        item = {
-            "id": b.id,
-            "account_id": b.account_id,
-            "message": b.message[:200],
-            "status": b.status,
-            "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
-            "sent_at": b.sent_at.isoformat() if b.sent_at else None,
-            "created_at": b.created_at.isoformat() if b.created_at else None,
-            "error_message": b.error_message,
-            "retry_count": b.retry_count,
-            "recipient_count": len(b.recipients) if b.recipients else 0,
-            "delivery_mode": b.delivery_mode,
-            "campaign_id": b.campaign_id,
-            "is_recurring": b.recurring_interval_minutes is not None,
-        }
+        item_data = dict(
+            id=b.id,
+            account_id=b.account_id,
+            message=b.message[:200],
+            status=b.status,
+            scheduled_at=b.scheduled_at.isoformat() if b.scheduled_at else None,
+            sent_at=b.sent_at.isoformat() if b.sent_at else None,
+            created_at=b.created_at.isoformat() if b.created_at else None,
+            error_message=b.error_message,
+            retry_count=b.retry_count or 0,
+            recipient_count=len(b.recipients) if b.recipients else 0,
+            delivery_mode=b.delivery_mode,
+            campaign_id=b.campaign_id,
+            is_recurring=b.recurring_interval_minutes is not None,
+        )
         if b.status == "failed" and b.error_message:
-            item["failure_info"] = classify_failure(b.status, b.error_message)
-        enriched.append(item)
+            item_data["failure_info"] = classify_failure(b.status, b.error_message)
+        enriched.append(BroadcastSearchItem(**item_data))
 
-    return {
-        "items": enriched,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": max(1, (total + page_size - 1) // page_size),
-    }
+    return BroadcastSearchResponse(
+        items=enriched,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=max(1, (total + page_size - 1) // page_size),
+    )

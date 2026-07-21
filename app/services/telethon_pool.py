@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -7,6 +8,18 @@ from telethon.sessions import StringSession
 
 from app.config import settings
 from app.core.logging import get_logger
+
+_flood_wait_until: dict[str, float] = {}
+
+
+def is_account_flood_limited(account_id: str) -> tuple[bool, float]:
+    wait = _flood_wait_until.get(account_id, 0)
+    remaining = wait - time.time()
+    return remaining > 0, max(0, remaining)
+
+
+def record_flood_wait(account_id: str, seconds: float) -> None:
+    _flood_wait_until[account_id] = time.time() + seconds
 
 
 @dataclass
@@ -96,6 +109,45 @@ class TelethonClientPool:
                                 error=str(exc),
                             )
                             raise
+            else:
+                try:
+                    await client.get_me()
+                except Exception:
+                    logger.warning(
+                        "telethon_zombie_detected",
+                        account_id=account_id,
+                    )
+                    for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+                        attempt_start = datetime.now(timezone.utc)
+                        try:
+                            await client.connect()
+                            attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
+                            logger.info(
+                                "telethon_zombie_reconnect_succeeded",
+                                account_id=account_id,
+                                attempt=attempt,
+                                elapsed_seconds=round(attempt_elapsed, 4),
+                            )
+                            break
+                        except Exception as exc:
+                            attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
+                            logger.warning(
+                                "telethon_reconnect_attempt",
+                                account_id=account_id,
+                                attempt=attempt,
+                                max_attempts=self.MAX_RECONNECT_ATTEMPTS,
+                                error=str(exc),
+                                elapsed_seconds=round(attempt_elapsed, 4),
+                            )
+                            if attempt < self.MAX_RECONNECT_ATTEMPTS:
+                                await asyncio.sleep(self.RECONNECT_DELAY_SECONDS)
+                            else:
+                                logger.error(
+                                    "telethon_reconnect_exhausted",
+                                    account_id=account_id,
+                                    error=str(exc),
+                                )
+                                raise
             if require_authorized and session_string and not await client.is_user_authorized():
                 self._clients.pop(account_id, None)
                 self._pending_auth.pop(account_id, None)

@@ -1,11 +1,14 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Request, APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.account import Account
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_broadcast_capacity, require_linked_api_key
 from app.config import settings
 from app.core.logging import get_logger
@@ -507,6 +510,9 @@ async def retry_broadcast(
         )
 
     logger.info("broadcast_retried", broadcast_id=broadcast_id, account_id=broadcast.account_id)
+
+    asyncio.create_task(process_broadcast(broadcast_id, skip_rate_limit=True))
+
     return _enrich_broadcast(updated)
 
 
@@ -740,8 +746,15 @@ async def read_distribution_status(
 
     _enrich_broadcast_list(siblings)
     result = []
+    account_ids = list({b.account_id for b in siblings})
+    accounts_map = {}
+    if account_ids:
+        acc_result = await db.execute(
+            select(Account).where(Account.id.in_(account_ids))
+        )
+        accounts_map = {acc.id: acc for acc in acc_result.scalars().all()}
     for b in siblings:
-        acc = await account_crud.get_account(db, b.account_id)
+        acc = accounts_map.get(b.account_id)
         result.append(
             DistributionSiblingRead(
                 broadcast=b,

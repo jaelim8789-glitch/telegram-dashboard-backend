@@ -5,20 +5,21 @@ import time
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from app.api.deps import Identity, get_current_identity
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import get_plan
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
+from app.core.time import utcnow_naive
 from app.core.limits import (
     SEND_CODE_MAX_PER_IP,
     SEND_CODE_PER_IP_WINDOW,
     VERIFY_CODE_MAX_PER_IP,
     VERIFY_CODE_PER_IP_WINDOW,
 )
-from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key, mask_api_key
+from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key, hash_password, mask_api_key
 from app.crud import telegram_verification as verification_crud
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
@@ -28,11 +29,15 @@ from app.models.tenant import Tenant
 from app.models.referral import ReferralCode
 from app.models.user import User
 from app.schemas.auth import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LinkTelegramRequest,
     LinkTelegramResponse,
     LoginWithApiKeyRequest,
     LoginWithApiKeyResponse,
     MeResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     SendCodeRequest,
     SendCodeResponse,
     TelegramLoginRequest,
@@ -161,7 +166,7 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     if not tenant:
         plan_def = get_plan("free")
         trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
-        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
         referred_by = None
         if payload.referral_code:
             referred_by = await _resolve_referral_code(db, payload.referral_code, payload.phone)
@@ -270,7 +275,7 @@ async def telegram_login(
     if not tenant:
         plan_def = get_plan("free")
         trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
-        trial_expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=trial_hours)
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
         referred_by = None
         if payload.referral_code:
             referred_by = await _resolve_referral_code(db, payload.referral_code, user.phone)
@@ -469,6 +474,7 @@ async def link_api_key(
 @router.get("/check-telegram/{telegram_id}")
 async def check_telegram(
     telegram_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """봇에서 /start 시 웹 가입 여부를 조회하는 경량 엔드포인트.
@@ -477,6 +483,9 @@ async def check_telegram(
         200: {linked: true, plan: str, phone: str} — 이미 가입된 사용자
         404: {linked: false} — 미가입 사용자
     """
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "check_telegram", max_attempts=10, window_seconds=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다")
     from sqlalchemy import select
     result = await db.execute(
         select(User).where(User.telegram_id == telegram_id)
@@ -565,3 +574,46 @@ async def logout(
         if session is not None:
             await session_crud.deactivate_session(db, session)
     return {"ok": True}
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(payload: ForgotPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "send_code", max_attempts=SEND_CODE_MAX_PER_IP, window_seconds=SEND_CODE_PER_IP_WINDOW):
+        retry_after = get_retry_after_seconds(client_ip, "send_code", window_seconds=SEND_CODE_PER_IP_WINDOW)
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해주세요.", headers={"Retry-After": str(retry_after)})
+
+    user = await user_crud.get_user_by_phone(db, payload.phone)
+    if user is None:
+        logger.info("forgot_password_no_user", phone=payload.phone)
+        return ForgotPasswordResponse(message="인증 코드가 전송되었습니다")
+
+    wait_seconds = await user_crud.seconds_until_next_code_allowed(db, payload.phone)
+    if wait_seconds > 0:
+        return ForgotPasswordResponse(message="인증 코드가 전송되었습니다")
+
+    code = generate_otp_code()
+    await user_crud.upsert_verification_code(db, payload.phone, code)
+
+    if user.telegram_id:
+        from app.services.telegram_notify import send_telegram_message
+        await send_telegram_message(user.telegram_id, f"TeleMon 비밀번호 재설정 인증 코드: {code}")
+
+    logger.info("forgot_password_code_sent", phone=payload.phone)
+    return ForgotPasswordResponse(message="인증 코드가 전송되었습니다")
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(payload: ResetPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    if not await user_crud.verify_code(db, payload.phone, payload.code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
+
+    user = await user_crud.get_user_by_phone(db, payload.phone)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+
+    user.password_hash = hash_password(payload.new_password)
+    await db.commit()
+
+    logger.info("password_reset", user_id=user.id)
+    return ResetPasswordResponse(message="비밀번호가 재설정되었습니다")

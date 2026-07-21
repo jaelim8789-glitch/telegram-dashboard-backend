@@ -40,10 +40,12 @@ async def get_content_calendar_setting(db: AsyncSession, setting_id: str) -> Con
     return await db.get(ContentCalendarSetting, setting_id)
 
 
-async def list_content_calendar_settings(db: AsyncSession, account_id: str | None = None) -> list[ContentCalendarSetting]:
+async def list_content_calendar_settings(db: AsyncSession, account_id: str | None = None, tenant_id: str | None = None) -> list[ContentCalendarSetting]:
     query = select(ContentCalendarSetting).order_by(ContentCalendarSetting.created_at.desc())
     if account_id:
         query = query.where(ContentCalendarSetting.account_id == account_id)
+    if tenant_id:
+        query = query.where(ContentCalendarSetting.tenant_id == tenant_id)
     result = await db.execute(query)
     return list(result.scalars().all())
 

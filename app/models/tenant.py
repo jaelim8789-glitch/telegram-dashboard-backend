@@ -19,7 +19,7 @@ class Tenant(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(100), default="")
-    phone: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    phone: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     
     # Plan
     plan: Mapped[str] = mapped_column(String(20), default="free")  # free, pro, team

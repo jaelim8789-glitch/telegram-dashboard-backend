@@ -104,7 +104,7 @@ async def list_calendar_settings(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[ContentCalendarSettingRead]:
-    settings = await list_content_calendar_settings(db, account_id=account_id)
+    settings = await list_content_calendar_settings(db, account_id=account_id, tenant_id=identity.tenant_id)
     return [ContentCalendarSettingRead.model_validate(s) for s in settings]
 
 
@@ -117,6 +117,8 @@ async def get_calendar_setting(
     setting = await get_content_calendar_setting(db, setting_id)
     if setting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설정을 찾을 수 없습니다.")
+    if identity.kind != "admin" and setting.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 설정에 접근할 수 없습니다.")
     return ContentCalendarSettingRead.model_validate(setting)
 
 
@@ -130,6 +132,8 @@ async def update_calendar_setting(
     setting = await update_content_calendar_setting(db, setting_id, payload)
     if setting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설정을 찾을 수 없습니다.")
+    if identity.kind != "admin" and setting.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 설정을 수정할 수 없습니다.")
     return ContentCalendarSettingRead.model_validate(setting)
 
 
@@ -139,6 +143,11 @@ async def delete_calendar_setting(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    setting = await get_content_calendar_setting(db, setting_id)
+    if setting is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설정을 찾을 수 없습니다.")
+    if identity.kind != "admin" and setting.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="다른 테넌트의 설정을 삭제할 수 없습니다.")
     ok = await delete_content_calendar_setting(db, setting_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설정을 찾을 수 없습니다.")

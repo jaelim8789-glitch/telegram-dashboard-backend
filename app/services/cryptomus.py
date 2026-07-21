@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.plans import PLAN_CATALOG, validate_plan_id
 from app.core.security import generate_user_api_key, hash_api_key
+from app.core.time import utcnow_naive
 from app.database import async_session_maker
 from app.models.api_key import APIKey
 from app.models.cryptomus_payment import CryptomusPayment
@@ -113,7 +114,7 @@ async def create_payment_record(
         payment_address=payment_address,
         qr_code_url=qr_code_url,
         expires_at=expires_at,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        created_at=utcnow_naive(),
     )
     db.add(payment)
     await db.commit()
@@ -171,13 +172,13 @@ async def activate_tenant_plan(db: AsyncSession, tenant_id: str, plan: str) -> d
 
     tenant.subscription_status = "active"
     tenant.trial_expires_at = None
-    tenant.billing_period_start = datetime.now(timezone.utc).replace(tzinfo=None)
+    tenant.billing_period_start = utcnow_naive()
     plan_def = PLAN_CATALOG.get(plan, {})
     if "quarterly" in plan_def.get("prices_usdt", {}):
         days = 90
     else:
         days = 30
-    tenant.billing_period_end = datetime.now(timezone.utc).replace(tzinfo=None) + __import__("datetime").timedelta(days=days)
+    tenant.billing_period_end = utcnow_naive() + timedelta(days=days)
 
     await apply_plan_limits(db, tenant, plan)
 

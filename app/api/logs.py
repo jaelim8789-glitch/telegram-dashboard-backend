@@ -15,15 +15,14 @@ async def read_logs(
     account_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
     date: str | None = Query(default=None, description="YYYY-MM-DD"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    # Ownership is only checked when an account_id filter is given — that dependency
-    # requires an account_id (404s if it doesn't resolve to a real Account), so it
-    # can't run as a blanket Depends() here without breaking the "all logs" case
-    # (account_id omitted). When account_id is omitted, list_logs itself already
-    # scopes the query to the caller's tenant (see app/crud/broadcast.py), so
-    # tenant isolation still holds without this extra check.
     if account_id:
         await require_account_tenant_access(account_id=account_id, db=db, identity=identity)
-    return await broadcast_crud.list_logs(db, identity=identity, account_id=account_id, status=status, date=date)
+    return await broadcast_crud.list_logs(
+        db, identity=identity, account_id=account_id, status=status, date=date,
+        page=page, limit=limit,
+    )

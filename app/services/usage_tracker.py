@@ -7,21 +7,16 @@ It enables both subscription-based and usage-based (credit) billing models.
 Plan limits are sourced from app.core.plans (PLAN_CATALOG).
 """
 
-from datetime import datetime, timezone
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.plans import get_plan_limits, validate_plan_id
+from app.core.time import utcnow_naive
 from app.database import async_session_maker
 from app.models.tenant import Tenant, UsageRecord
 
 logger = get_logger(__name__)
-
-
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ─── Usage Tracking ───────────────────────────────────────────────────

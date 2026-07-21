@@ -3,6 +3,7 @@ import math
 
 from app.config import settings
 from app.core.logging import get_logger
+from app.core.time import utcnow_naive
 from app.crud import account as account_crud
 from app.crud import broadcast as broadcast_crud
 from app.database import async_session_maker
@@ -10,6 +11,16 @@ from app.services.delivery import DeliveryRequest, deliver_message
 from app.services.telegram_actions import get_authorized_client, list_group_members
 
 logger = get_logger(__name__)
+
+_account_locks: dict[str, asyncio.Lock] = {}
+_account_lock = asyncio.Lock()
+
+
+async def _acquire_account_send_lock(account_id: str) -> asyncio.Lock:
+    async with _account_lock:
+        if account_id not in _account_locks:
+            _account_locks[account_id] = asyncio.Lock()
+    return _account_locks[account_id]
 
 
 async def resolve_group_ids_to_recipients(account, group_ids: list[str]) -> list[str]:
@@ -132,12 +143,9 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         parent_id = broadcast.id if is_recurring_parent else broadcast.parent_broadcast_id
 
     if delivery_mode == "cycle":
-        async with async_session_maker() as db:
-            broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
-            if broadcast is not None:
-                await broadcast_crud.update_broadcast_status(db, broadcast, status="sent")
-                logger.info("broadcast_cycle_registered", broadcast_id=broadcast_id,
-                            total_recipients=len(recipients_local))
+        await broadcast_crud.update_broadcast_status(db, broadcast, status="sent")
+        logger.info("broadcast_cycle_registered", broadcast_id=broadcast_id,
+                    total_recipients=len(recipients_local))
         return
 
     if delivery_mode == "bulk":
@@ -149,10 +157,8 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
     if delivery_mode == "reply":
         timeout = min(timeout, 600)
-        async with async_session_maker() as db:
-            broadcast = await broadcast_crud.get_broadcast(db, broadcast_id)
-            if broadcast is not None:
-                explicit_reply_to_id = getattr(broadcast, "reply_to_msg_id", None)
+        if broadcast is not None:
+            explicit_reply_to_id = getattr(broadcast, "reply_to_msg_id", None)
         if explicit_reply_to_id is not None:
             logger.info(
                 "reply_using_explicit_id",
@@ -172,9 +178,17 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
                     async with sem:
                         try:
                             target = int(recipient.lstrip("-")) if recipient.lstrip("-").isdigit() else recipient
-                            messages = await pre_fetched_client.get_messages(target, limit=1)
+                            messages = await asyncio.wait_for(
+                                pre_fetched_client.get_messages(target, limit=1),
+                                timeout=10.0,
+                            )
                             if messages:
                                 reply_to_map[recipient] = messages[0].id
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "reply_fetch_timeout",
+                                recipient=recipient,
+                            )
                         except Exception as exc:
                             logger.warning(
                                 "reply_fetch_failed",
@@ -203,10 +217,12 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         request.inter_message_delay = float(delay_seconds_local)
 
     try:
-        results = await asyncio.wait_for(
-            deliver_message(request, client=pre_fetched_client),
-            timeout=timeout,
-        )
+        send_lock = await _acquire_account_send_lock(account_id_local)
+        async with send_lock:
+            results = await asyncio.wait_for(
+                deliver_message(request, client=pre_fetched_client),
+                timeout=timeout,
+            )
     except asyncio.TimeoutError:
         logger.error("broadcast_timeout", broadcast_id=broadcast_id, timeout_seconds=timeout)
         total = len(all_recipients_local)
@@ -262,7 +278,6 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
 
 
 async def process_recurring_parent(parent_broadcast_id: str) -> None:
-    from datetime import datetime, timezone
 
     async with async_session_maker() as db:
         parent = await broadcast_crud.get_broadcast(db, parent_broadcast_id)
@@ -283,7 +298,7 @@ async def process_recurring_parent(parent_broadcast_id: str) -> None:
             )
             return
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = utcnow_naive()
 
         child = await broadcast_crud.create_recurring_child_broadcast(db, parent, now)
         child_id = child.id

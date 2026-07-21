@@ -76,3 +76,21 @@ class TelegramLoginResponse(BaseModel):
     session_token: str
     token_type: str = "bearer"
     is_new_user: bool = False
+
+
+class ForgotPasswordRequest(BaseModel):
+    phone: str = Field(min_length=1, max_length=50)
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    phone: str = Field(min_length=1, max_length=50)
+    code: str = Field(min_length=1, max_length=10)
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str

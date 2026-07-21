@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import PLAN_CATALOG, get_plan
+from app.core.time import utcnow_naive
 from app.models.nowpayments import NowPaymentsTransaction
 from app.models.tenant import Tenant
 from app.services.cryptomus import activate_tenant_plan
@@ -80,9 +81,8 @@ class NOWPaymentsService:
                     
                 result = response.json()
                 
-                # 데이터베이스에 거래 정보 저장
                 transaction = NowPaymentsTransaction(
-                    id=result['payment_id'],  # Using payment_id as the primary key id
+                    id=result['payment_id'],
                     payment_id=result['payment_id'],
                     tenant_id=tenant_id,
                     plan_id=plan_id,
@@ -90,8 +90,12 @@ class NOWPaymentsService:
                     pay_currency=result['pay_currency'],
                     order_id=result['order_id'],
                     payment_status='created',
-                    created_at=datetime.utcnow()
+                    created_at=utcnow_naive()
                 )
+                from app.database import async_session_maker
+                async with async_session_maker() as db:
+                    db.add(transaction)
+                    await db.commit()
                 
                 return result
         except Exception as e:
@@ -179,7 +183,8 @@ class NOWPaymentsService:
                 logger.error(f"Invalid plan_id: {plan_id}")
                 return
                 
-            expected_amount = plan.price_usd
+            billing = "quarterly" if "quarterly" in plan["prices_usdt"] else "monthly"
+            expected_amount = plan["prices_usdt"].get(billing, 0)
             if abs(paid_amount - expected_amount) > 0.01:  # 소수점 오차 허용
                 logger.error(f"Amount mismatch for payment {payment_id}. Expected: {expected_amount}, Paid: {paid_amount}")
                 # 결제는 완료되었지만 금액이 일치하지 않음 - 수동 검토 필요

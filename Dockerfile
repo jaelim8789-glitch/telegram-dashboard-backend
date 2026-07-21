@@ -35,6 +35,9 @@ USER appuser
 
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
 # Exec form with explicit shell so $PORT expands — Render and similar free-tier
 # hosts assign the port dynamically via this env var instead of a fixed 8000.
 # Runs migrations before starting the app so a fresh database is always ready.

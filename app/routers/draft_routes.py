@@ -100,7 +100,7 @@ async def list_drafts(
     conn = _get_conn()
     try:
         query = "SELECT * FROM drafts WHERE user_id = ?"
-        params: list[Any] = [user_id]
+        params: list[Any] = [identity.user_id]
         if status:
             query += " AND status = ?"
             params.append(status)
@@ -135,7 +135,7 @@ async def create_draft(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 draft_id,
-                user_id,
+                identity.user_id,
                 body.get("account_id"),
                 body.get("title", "")[:200],
                 body.get("content", ""),
@@ -163,7 +163,7 @@ async def get_draft(
     try:
         row = conn.execute(
             "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
-            (draft_id, user_id),
+            (draft_id, identity.user_id),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Draft not found")
@@ -192,7 +192,7 @@ async def update_draft(
     updates.append("updated_at = ?")
     params.append(now)
     params.append(draft_id)
-    params.append(user_id)
+    params.append(identity.user_id)
 
     conn = _get_conn()
     try:
@@ -232,7 +232,7 @@ async def approve_draft(
         # 소유권 확인
         row = conn.execute(
             "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
-            (draft_id, user_id),
+            (draft_id, identity.user_id),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Draft not found")
@@ -252,7 +252,7 @@ async def approve_draft(
             params.append(feedback)
 
         params.append(draft_id)
-        params.append(user_id)
+        params.append(identity.user_id)
 
         conn.execute(
             f"UPDATE drafts SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
@@ -262,7 +262,7 @@ async def approve_draft(
 
         logger.info(
             "[draft] approved: id=%s user=%s → %s",
-            draft_id, user_id, new_status,
+            draft_id, identity.user_id, new_status,
         )
 
         # 승인된 draft → Broadcast 자동 생성
@@ -313,18 +313,18 @@ async def reject_draft(
     try:
         row = conn.execute(
             "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
-            (draft_id, user_id),
+            (draft_id, identity.user_id),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Draft not found")
 
         conn.execute(
             "UPDATE drafts SET status = 'rejected', feedback = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-            (feedback, now, draft_id, user_id),
+            (feedback, now, draft_id, identity.user_id),
         )
         conn.commit()
 
-        logger.info("[draft] rejected: id=%s user=%s", draft_id, user_id)
+        logger.info("[draft] rejected: id=%s user=%s", draft_id, identity.user_id)
         return {"id": draft_id, "status": "rejected"}
     finally:
         conn.close()
@@ -340,7 +340,7 @@ async def delete_draft(
     try:
         conn.execute(
             "DELETE FROM drafts WHERE id = ? AND user_id = ?",
-            (draft_id, user_id),
+            (draft_id, identity.user_id),
         )
         conn.commit()
         return {"deleted": True}
@@ -370,7 +370,7 @@ async def batch_approve_drafts(
         # Only approve drafts that belong to user AND are in 'draft' status
         rows = conn.execute(
             f"SELECT id, status, content, account_id FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
-            [*draft_ids, user_id],
+            [*draft_ids, identity.user_id],
         ).fetchall()
 
         approved = 0
@@ -402,7 +402,7 @@ async def batch_approve_drafts(
 
         logger.info(
             "[draft] batch approve: user=%s requested=%d approved=%d broadcasts=%d",
-            user_id, len(draft_ids), approved, broadcast_count,
+            identity.user_id, len(draft_ids), approved, broadcast_count,
         )
         return {"approved": approved, "broadcasts_created": broadcast_count, "total": len(draft_ids)}
     finally:
@@ -427,7 +427,7 @@ async def batch_reject_drafts(
         placeholders = ",".join(["?"] * len(draft_ids))
         rows = conn.execute(
             f"SELECT id, status FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
-            [*draft_ids, user_id],
+            [*draft_ids, identity.user_id],
         ).fetchall()
 
         rejected = 0
@@ -463,7 +463,7 @@ async def batch_delete_drafts(
         placeholders = ",".join(["?"] * len(draft_ids))
         conn.execute(
             f"DELETE FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
-            [*draft_ids, user_id],
+            [*draft_ids, identity.user_id],
         )
         conn.commit()
 

@@ -264,10 +264,11 @@ async def _verify_listeners_loop() -> None:
 async def verify_listeners() -> None:
     """Verify all registered listeners are still attached to live, connected clients."""
     async with async_session_maker() as db:
-        accounts = await account_crud.list_accounts(db)
+        from app.models.account import Account
+        from sqlalchemy import select
+        result = await db.execute(select(Account).where(Account.auto_reply_enabled == True))
+        accounts = result.scalars().all()
     for account in accounts:
-        if not account.auto_reply_enabled:
-            continue
         client = pool.peek_client(account.id)
         if client is None or not client.is_connected():
             try:

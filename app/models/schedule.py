@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -13,7 +13,7 @@ class BroadcastScheduleEntry(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), index=True)
     broadcast_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("broadcasts.id", ondelete="SET NULL"), nullable=True
+        String(36), ForeignKey("broadcasts.id", ondelete="SET NULL"), nullable=True, index=True
     )
     campaign_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True

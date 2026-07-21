@@ -98,16 +98,21 @@ async def get_account_health(
     since = utcnow_naive() - timedelta(days=7)
 
     async with async_session_maker() as db:
-        latest_rows = {}
-        for aid in account_ids:
-            latest_q = select(MessageLog).where(
-                MessageLog.account_id == aid,
-                MessageLog.created_at >= since,
-            ).order_by(MessageLog.created_at.desc()).limit(1)
-            latest_result = await db.execute(latest_q)
-            latest_list = list(latest_result.scalars().all())
-            if latest_list:
-                latest_rows[aid] = latest_list[0]
+        subq = (
+            select(
+                MessageLog.account_id,
+                func.max(MessageLog.created_at).label("max_ts"),
+            )
+            .where(MessageLog.account_id.in_(account_ids), MessageLog.created_at >= since)
+            .group_by(MessageLog.account_id)
+            .subquery()
+        )
+        latest_q = (
+            select(MessageLog)
+            .join(subq, (MessageLog.account_id == subq.c.account_id) & (MessageLog.created_at == subq.c.max_ts))
+        )
+        latest_result = await db.execute(latest_q)
+        latest_map = {row.account_id: row for row in latest_result.scalars().all()}
 
         counts_q = select(
             MessageLog.account_id,
@@ -127,7 +132,7 @@ async def get_account_health(
 
     items = []
     for account in accounts:
-        latest = latest_rows.get(account.id)
+        latest = latest_map.get(account.id)
         acct_counts = counts.get(account.id, {"total": 0, "successful": 0})
 
         has_session = account.session_data is not None and len(account.session_data) > 0

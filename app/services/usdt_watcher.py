@@ -8,7 +8,7 @@ Plan prices are derived from the canonical PLAN_CATALOG.
 
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -19,6 +19,7 @@ from app.core.plans import (
     get_plan,
     is_deprecated_plan,
 )
+from app.core.time import utcnow_naive
 from app.core.telegram_identity import parse_tg_identifier
 from app.database import async_session_maker
 from app.models.tenant import Tenant, PaymentRecord
@@ -38,10 +39,6 @@ REFERRAL_COMMISSION_RATE = 0.10
 # TRC20 USDT contract address on Tron mainnet
 USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 TRONGRID_API = "https://api.trongrid.io"
-
-
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # Plan prices in USDT cents (derived from PLAN_CATALOG)
@@ -199,7 +196,6 @@ async def process_incoming_tx(tx: dict) -> dict:
                 db.add(ReferralCommission(
                     referrer_id=referrer.id,
                     referred_id=tenant.id,
-                    payment_id=payment.id if payment else None,
                     amount_cents=commission_cents,
                     rate=int(REFERRAL_COMMISSION_RATE * 100),
                     status="pending",
