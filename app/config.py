@@ -6,13 +6,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 _ADMIN_DEFAULTS = {"admin_username": "sksk2929", "admin_password": "ysjr0508"}
 _JWT_DEFAULT = "change-me-in-production"
+_DATABASE_DEFAULT = "sqlite+aiosqlite:///./telegram_dashboard_dev.db"
+_ENCRYPTION_DEFAULT = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 
 class Settings(BaseSettings):
-    database_url: str
+    database_url: str = _DATABASE_DEFAULT
     cors_origins: str = "http://localhost:3000"
 
-    encryption_key: str
+    encryption_key: str = _ENCRYPTION_DEFAULT
     # Kept as strings (not int) so a missing/placeholder value doesn't crash the whole app
     # on startup — only the Telegram-auth endpoints fail, with a clear error, until configured.
     telegram_api_id: str = ""
@@ -172,6 +174,10 @@ class Settings(BaseSettings):
 
         if self.admin_jwt_secret == _JWT_DEFAULT:
             findings.append("admin_jwt_secret")
+        if self.database_url == _DATABASE_DEFAULT:
+            findings.append("database_url")
+        if self.encryption_key == _ENCRYPTION_DEFAULT:
+            findings.append("encryption_key")
 
         # In production, debug must be explicitly set to false.
         # The class default is True, which would expose /docs, /redoc, and
