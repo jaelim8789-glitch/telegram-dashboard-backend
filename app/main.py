@@ -30,6 +30,7 @@ from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
 from app.api.billing import router as billing_router, public_router as billing_public_router
 from app.api.delivery_analytics import router as delivery_analytics_router
+from app.api.fortune import router as fortune_router
 from app.api.features import router as features_router
 from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
@@ -92,6 +93,7 @@ from app.ai.routers import (
 from app.ai.tools.builtin_tools import register_builtin_tools
 from app.api.operator import router as operator_router
 from app.api.growth_loop import router as growth_loop_router
+from app.api.users import router as users_router
 from app.ai.tools.registry import get_tool_registry
 from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
@@ -250,6 +252,7 @@ app.include_router(auth_router)
 app.include_router(telegram_verify_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
+app.include_router(users_router, dependencies=_auth_required)
 app.include_router(accounts_router, dependencies=_auth_required)
 app.include_router(account_self_reset_router, dependencies=_auth_required)
 app.include_router(telegram_auth_router, dependencies=_auth_required)
@@ -270,6 +273,7 @@ app.include_router(nowpayments_router)
 app.include_router(referral_router, dependencies=_auth_required)
 app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)
+app.include_router(fortune_router, dependencies=_auth_required)
 app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(account_health_summary_router, dependencies=_auth_required)
 app.include_router(delivery_analytics_router, dependencies=_auth_required)
