@@ -18,8 +18,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_admin
-from app.config import settings
+from app.api.deps import get_current_identity, Identity, require_api_key_or_admin
 from app.core.logging import get_logger
 from app.core.plans import validate_plan_id
 from app.database import get_db
@@ -29,8 +28,15 @@ from app.models.nowpayments import NowPaymentsTransaction
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/payments/nowpayments", tags=["nowpayments-payments"])
 
+# NOWPayments' own servers call /webhook (IPN) — it can't carry our auth headers,
+# so it stays public and relies on its own signature verification instead. Every
+# other endpoint here handles money/tenant data and must require auth explicitly
+# (this router is NOT registered with router-level auth in main.py, precisely
+# because webhook needs to stay open).
+_auth_required = [Depends(require_api_key_or_admin)]
 
-@router.post("/create-invoice")
+
+@router.post("/create-invoice", dependencies=_auth_required)
 async def create_invoice(
     body: dict[str, Any],
     identity: Identity = Depends(get_current_identity),
@@ -110,7 +116,7 @@ async def nowpayments_webhook(
         raise HTTPException(status_code=500, detail="Webhook processing error")
 
 
-@router.get("/status/{payment_id}")
+@router.get("/status/{payment_id}", dependencies=_auth_required)
 async def get_payment_status(
     payment_id: str,
     identity: Identity = Depends(get_current_identity),
@@ -139,7 +145,7 @@ async def get_payment_status(
     }
 
 
-@router.get("/history")
+@router.get("/history", dependencies=_auth_required)
 async def get_payment_history(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db)
