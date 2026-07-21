@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
@@ -52,7 +52,7 @@ async def get_toggle_state(
 @router.put("/toggle")
 async def set_toggle_state(
     account_id: str,
-    body: dict,
+    request: Request,  # FastAPI Request 객체를 사용하여 body를 직접 가져옴
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
@@ -61,16 +61,22 @@ async def set_toggle_state(
     await _get_account_or_404(account_id, db)
     macro = await macro_crud.get_or_create_for_account(db, account_id)
 
+    # 요청 본문을 직접 파싱
+    body = await request.json()
     is_active = bool(body.get("is_active", macro.is_active))
     message_content = body.get("message_content")
+    
     if is_active and not (message_content if message_content is not None else macro.message_content):
         raise HTTPException(status_code=422, detail="메시지 내용을 입력해야 켤 수 있습니다.")
 
     macro.is_active = is_active
     if message_content is not None:
         macro.message_content = message_content
+        
+    # DB에 변경사항 저장
     await db.commit()
     await db.refresh(macro)
+    
     logger.info("random_reply_toggled", account_id=account_id, macro_id=macro.id, is_active=macro.is_active)
     return {"is_active": macro.is_active, "message_content": macro.message_content}
 
