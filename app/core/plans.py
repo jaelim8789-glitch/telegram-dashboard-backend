@@ -34,7 +34,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "can_export_data": False,
         },
         "features": [
-            "1 account",
+            "3 accounts",  # 변경된 계정 수 반영
             "3 auto-reply rules",
             "100 replies/month",
             "60 min cooldown",
