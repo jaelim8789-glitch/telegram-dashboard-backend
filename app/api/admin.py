@@ -486,7 +486,7 @@ async def delete_user_by_phone(
 
     # 세션 삭제
     await db.execute(
-        sa_text("DELETE FROM sessions WHERE user_id = :user_id"),
+        sa_text("DELETE FROM user_sessions WHERE user_id = :user_id"),
         {"user_id": user.id},
     )
 
