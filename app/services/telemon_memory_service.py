@@ -16,6 +16,7 @@ from app.models.message_log import MessageLog
 class TeleMonMemoryBundle:
     text: str
     top_posts: list[dict]
+    periods: dict[str, dict] | None = None
 
 
 def _utcnow_naive() -> datetime:
@@ -110,11 +111,11 @@ async def _top_broadcast_posts(db: AsyncSession, account_ids: list[str], *, star
 
 async def build_telemon_memory_context(db: AsyncSession, identity: Identity, user_request: str, *, top_n: int = 3) -> TeleMonMemoryBundle:
     if identity.tenant_id is None:
-        return TeleMonMemoryBundle(text="", top_posts=[])
+        return TeleMonMemoryBundle(text="", top_posts=[], periods={})
 
     account_ids = await _resolve_account_ids(db, identity)
     if not account_ids:
-        return TeleMonMemoryBundle(text="", top_posts=[])
+        return TeleMonMemoryBundle(text="", top_posts=[], periods={})
 
     now = _utcnow_naive()
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -149,3 +150,28 @@ async def build_telemon_memory_context(db: AsyncSession, identity: Identity, use
         lines.append("- 지시: 사용자가 재홍보를 요청하면 위 고성과 글 3개를 참고했다고 먼저 밝힌 뒤 개선안을 제시할 것")
 
     return TeleMonMemoryBundle(text="\n".join(lines), top_posts=top_posts)
+
+
+async def build_telemon_memory_snapshot(db: AsyncSession, identity: Identity) -> dict:
+    bundle = await build_telemon_memory_context(db, identity, "memory snapshot")
+    if identity.tenant_id is None:
+        return {"generated_at": _utcnow_naive().isoformat(), "periods": {}, "top_posts": [], "memory_text": ""}
+
+    account_ids = await _resolve_account_ids(db, identity)
+    now = _utcnow_naive()
+    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_week_start = now - timedelta(days=7)
+    this_year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_year_start = this_year_start.replace(year=this_year_start.year - 1)
+
+    periods = {
+        "this_month": await _period_summary(db, account_ids, this_month_start),
+        "last_week": await _period_summary(db, account_ids, last_week_start),
+        "last_year": await _period_summary(db, account_ids, last_year_start, this_year_start),
+    }
+    return {
+        "generated_at": now.isoformat(),
+        "periods": periods,
+        "top_posts": bundle.top_posts,
+        "memory_text": bundle.text,
+    }

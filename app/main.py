@@ -66,6 +66,7 @@ from app.routers.trigger_routes import router as trigger_routes_router
 from app.routers.draft_routes import router as draft_routes_router
 from app.api.ai_group_intel import router as ai_group_intel_router
 from app.api.ai_growth_coach import router as ai_growth_coach_router
+from app.api.telemon_memory import router as telemon_memory_router
 from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.api.nowpayments import router as nowpayments_router
@@ -301,6 +302,7 @@ app.include_router(ai_tools_router, dependencies=_auth_required)
 app.include_router(ai_workflows_router, dependencies=_auth_required)
 app.include_router(ai_group_intel_router, dependencies=_auth_required)
 app.include_router(ai_growth_coach_router, dependencies=_auth_required)
+app.include_router(telemon_memory_router, dependencies=_auth_required)
 app.include_router(ai_employee_admin_router, dependencies=_auth_required)
 app.include_router(ai_tasks_router, dependencies=_auth_required)
 app.include_router(ai_events_router, dependencies=_auth_required)
