@@ -94,6 +94,8 @@ from app.ai.tools.builtin_tools import register_builtin_tools
 from app.api.operator import router as operator_router
 from app.api.growth_loop import router as growth_loop_router
 from app.api.users import router as users_router
+from app.api.chats import router as chats_router
+from app.api.push_notifications import router as push_router
 from app.ai.tools.registry import get_tool_registry
 from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
@@ -301,6 +303,8 @@ app.include_router(guest_routes_router, dependencies=_auth_required)
 app.include_router(stars_payments_router, dependencies=_auth_required)
 app.include_router(trigger_routes_router, dependencies=_auth_required)
 app.include_router(draft_routes_router, dependencies=_auth_required)
+app.include_router(chats_router, dependencies=_auth_required)
+app.include_router(push_router, dependencies=_auth_required)
 
 # ── AI Platform Routers ───────────────────────────────────────────────
 app.include_router(ai_tools_router, dependencies=_auth_required)
