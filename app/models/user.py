@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -15,7 +15,7 @@ class User(Base):
     # SHA-256 hex digest of the issued API key — the raw key is shown once, at issuance,
     # and never stored or logged.
     api_key_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
-    telegram_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, nullable=True)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
