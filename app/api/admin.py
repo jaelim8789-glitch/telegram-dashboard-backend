@@ -7,12 +7,13 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.core.security import create_access_token, generate_user_api_key, hash_api_key, mask_api_key, verify_admin_credentials
+from app.core.time import utcnow_naive
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.audit_log import AdminAuditLog
 from app.models.tenant import Tenant
-from app.models.telegram_verification import TelegramChannelVerification
+from app.models.system_setting import SystemSetting
 from app.schemas.admin import (
     AdminAuditLogListResponse,
     AdminAuditLogRead,
@@ -38,7 +39,7 @@ from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
 from app.models.referral import ReferralCommission
 from app.models.token import TokenBalance, TokenTransaction
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
@@ -162,9 +163,13 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])
-async def list_users(db: AsyncSession = Depends(get_db)):
+async def list_users(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
     """List all users with plan/subscription/account-count info."""
-    users_with_info = await user_crud.list_users_with_tenant_info(db)
+    users_with_info = await user_crud.list_users_with_tenant_info(db, skip=skip, limit=limit)
     return [
         UserRead(
             id=u.user.id,
@@ -214,10 +219,6 @@ async def reissue_user_key(user_id: str, db: AsyncSession = Depends(get_db)):
     await user_crud.set_api_key_hash(db, user, hash_api_key(raw_key))
     logger.info("user_api_key_reissued", user_id=user_id)
     return UserApiKeyReissued(id=user.id, api_key=raw_key)
-
-
-def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/user-lookup", response_model=UserLookupResponse | None, dependencies=[Depends(require_admin)])
@@ -663,7 +664,7 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
 
     summary = await get_health_summary(identity)
 
-    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+    since = utcnow_naive() - timedelta(hours=24)
     result = await db.execute(
         select(
             func.count(MessageLog.id).label("total"),
@@ -779,7 +780,7 @@ async def approve_referral_commission(
 
     commission.status = "paid"
     commission.payment_tx_id = body.get("payment_tx_id")
-    commission.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    commission.paid_at = utcnow_naive()
     await db.commit()
     await db.refresh(commission)
 
@@ -795,3 +796,57 @@ async def approve_referral_commission(
 
     logger.info("referral_commission_approved", commission_id=commission.id)
     return {"ok": True, "commission_id": commission.id, "status": "paid"}
+
+
+
+# ── System Settings ─────────────────────────────────────────────────
+
+@router.get("/settings/watermark", dependencies=[Depends(require_admin)])
+async def get_watermark_setting(
+    db: AsyncSession = Depends(get_db),
+):
+    """워터마크 광고 문구 조회"""
+    stmt = select(SystemSetting).where(SystemSetting.key == "watermark_ad")
+    result = await db.execute(stmt)
+    setting = result.scalar_one_or_none()
+    if setting:
+        return {"key": "watermark_ad", "value": setting.value, "description": setting.description}
+    # Return default watermark text
+    default = (
+        "\n\n━━━━━━━━━━━━━━━━━━\n"
+        "🤖 TeleMon AI\n\n"
+        "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
+        "AI 비서가\n"
+        "✅ 자동 홍보\n"
+        "✅ 자동 답장\n"
+        "✅ 채널 운영\n"
+        "✅ 그룹 관리\n\n"
+        "🌐 https://telemon.online"
+    )
+    return {"key": "watermark_ad", "value": default, "description": "무료 요금제 발송 시 하단에 자동 추가되는 광고 문구. 빈 문자열로 설정하면 비활성화됩니다."}
+
+
+@router.put("/settings/watermark", dependencies=[Depends(require_admin)])
+async def update_watermark_setting(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """워터마크 광고 문구 수정 (빈 문자열 = 비활성화)"""
+    value = body.get("value", "")
+    stmt = select(SystemSetting).where(SystemSetting.key == "watermark_ad")
+    result = await db.execute(stmt)
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        setting.value = value
+    else:
+        setting = SystemSetting(
+            key="watermark_ad",
+            value=value,
+            description="무료 요금제 발송 시 하단에 자동 추가되는 광고 문구",
+        )
+        db.add(setting)
+
+    await db.commit()
+    logger.info("watermark_ad_updated", length=len(value))
+    return {"ok": True, "key": "watermark_ad", "value": value}

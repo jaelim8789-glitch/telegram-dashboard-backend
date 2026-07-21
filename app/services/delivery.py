@@ -41,7 +41,7 @@ from telethon.errors import (
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
-from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl
+from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl, InputFile
 
 from app.core.logging import get_logger
 from app.core.time import utcnow_naive
@@ -50,6 +50,7 @@ from app.database import async_session_maker
 from app.models.account import Account
 from app.models.message_log import MessageLog
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
+from app.services.telethon_pool import is_account_flood_limited, record_flood_wait
 
 logger = get_logger(__name__)
 
@@ -90,6 +91,44 @@ WATERMARK_AD = (
 )
 
 FREE_PLANS = {"free"}
+
+_watermark_ad_cache: str | None = None
+_watermark_cache_expiry: float = 0.0
+
+async def _get_watermark_ad() -> str:
+    """Load watermark from DB setting, with fallback to default. Cached for 60s."""
+    global _watermark_ad_cache, _watermark_cache_expiry
+    now = __import__("time").time()
+    if _watermark_ad_cache is not None and now < _watermark_cache_expiry:
+        return _watermark_ad_cache
+
+    default = (
+        "\n\n━━━━━━━━━━━━━━━━━━\n"
+        "🤖 TeleMon AI\n\n"
+        "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
+        "AI 비서가\n"
+        "✅ 자동 홍보\n"
+        "✅ 자동 답장\n"
+        "✅ 채널 운영\n"
+        "✅ 그룹 관리\n\n"
+        "🌐 https://telemon.online"
+    )
+    try:
+        async with async_session_maker() as session:
+            from app.models.system_setting import SystemSetting
+            from sqlalchemy import select as sa_sel
+            stmt = sa_sel(SystemSetting).where(SystemSetting.key == "watermark_ad")
+            result = await session.execute(stmt)
+            setting = result.scalar_one_or_none()
+            if setting and setting.value is not None:
+                _watermark_ad_cache = setting.value if setting.value.strip() else ""
+            else:
+                _watermark_ad_cache = default
+    except Exception:
+        _watermark_ad_cache = default
+
+    _watermark_cache_expiry = now + 60.0
+    return _watermark_ad_cache
 
 # Per-recipient send timeout. Without this, a single Telethon call that hangs
 # (dead connection, DC migration stall, etc.) silently consumes the *entire*
@@ -244,6 +283,7 @@ async def _send_single(
     target: int | str,
     message: str,
     media_path: str | None,
+    uploaded_file: InputFile | None = None,
     reply_to_msg_id: int | None = None,
     inline_buttons: list[dict] | None = None,
 ) -> tuple[DeliveryStatus, int | None, str | None, int | None]:
@@ -262,7 +302,9 @@ async def _send_single(
             if rows:
                 buttons = ReplyInlineMarkup(rows=rows)
 
-        if media_path:
+        if uploaded_file is not None:
+            send_coro = client.send_file(target, uploaded_file, caption=message, reply_to=reply_to_msg_id, buttons=buttons)
+        elif media_path:
             send_coro = client.send_file(target, media_path, caption=message, reply_to=reply_to_msg_id, buttons=buttons)
         else:
             send_coro = client.send_message(target, message, reply_to=reply_to_msg_id, buttons=buttons)
@@ -355,9 +397,10 @@ async def _deliver_with_retry(
     recipient: str,
     message: str,
     media_path: str | None,
-    source: str,
-    source_id: str | None,
-    account_id: str,
+    uploaded_file: InputFile | None = None,
+    source: str = "",
+    source_id: str | None = None,
+    account_id: str = "",
     on_status_change: Callable | None = None,
     reply_to_msg_id: int | None = None,
     inline_buttons: list[dict] | None = None,
@@ -380,7 +423,7 @@ async def _deliver_with_retry(
 
         started_at = utcnow_naive()
         status, msg_id, safe_error, flood_wait = await _send_single(
-            client, target, message, media_path, reply_to_msg_id, inline_buttons,
+            client, target, message, media_path, uploaded_file, reply_to_msg_id, inline_buttons,
         )
         completed_at = utcnow_naive()
 
@@ -410,7 +453,6 @@ async def _deliver_with_retry(
                 started_at=started_at,
                 completed_at=completed_at,
             )
-            await batch_persister.flush()
         else:
             await _persist_log(
                 account_id=account_id,
@@ -474,7 +516,6 @@ async def _deliver_with_retry(
             attempt_count=MAX_RETRIES,
             message_content=message,
         )
-        await batch_persister.flush()
     else:
         await _persist_log(
             account_id=account_id,
@@ -654,7 +695,32 @@ async def deliver_message(
                 tenant_plan = tenant.plan
         request.tenant_plan = tenant_plan
 
-    # 2. Get authorized client (decrypts session, checks authorization)
+    # 2. Fast-fail if account is globally flood-limited
+    limited, remaining = is_account_flood_limited(request.account_id)
+    if limited:
+        for recipient in request.recipients:
+            result = DeliveryResult(
+                status=DeliveryStatus.FLOOD_WAIT,
+                recipient=recipient,
+                error_message=f"텔레그램 속도 제한: {remaining:.0f}초 대기 필요",
+                flood_wait_seconds=int(remaining),
+            )
+            await _persist_log(
+                account_id=request.account_id,
+                recipient=recipient,
+                source=request.source,
+                source_id=request.source_id,
+                status=DeliveryStatus.FLOOD_WAIT,
+                success=False,
+                telegram_message_id=None,
+                error_message=result.error_message,
+                attempt_count=1,
+                message_content=request.message,
+            )
+            results.append(result)
+        return results
+
+    # 3. Get authorized client (decrypts session, checks authorization)
     if client is None:
         try:
             client = await get_authorized_client(account)
@@ -689,7 +755,19 @@ async def deliver_message(
                 results.append(result)
             return results
 
-    # 3. Send to each recipient with retry
+    # 4. Upload media once so all recipients share the same server-side file handle
+    uploaded_file: InputFile | None = None
+    if request.media_path:
+        upload_start = datetime.now(timezone.utc)
+        uploaded_file = await client.upload_file(request.media_path)
+        upload_elapsed = (datetime.now(timezone.utc) - upload_start).total_seconds()
+        logger.info(
+            "media_uploaded_once",
+            media_path=request.media_path,
+            elapsed_seconds=round(upload_elapsed, 2),
+        )
+
+    # 5. Send to each recipient with retry
     _publish_event(EVENT_SENDING, None, request.source, request.source_id, on_status_change)
     entity_cache: dict[str, Any] = {}
     batch_persister = _BatchPersister()
@@ -714,8 +792,14 @@ async def deliver_message(
             # Fall back to the raw target when entity resolution is unavailable.
             return base_target
 
+    # 6. Adaptive throttling state (FloodWait-aware pacing)
+    adaptive_delay = request.inter_message_delay
+    original_delay = request.inter_message_delay
+    consecutive_ok = 0
+
     async def _send_one(recipient: str) -> DeliveryResult:
         """Send to a single recipient with post-send bookkeeping."""
+        nonlocal adaptive_delay, consecutive_ok
         target = await _resolve_target_entity(recipient)
         reply_to = (
             request.reply_to_map.get(recipient)
@@ -724,13 +808,15 @@ async def deliver_message(
         )
         message_to_send = request.message
         if request.tenant_plan in FREE_PLANS:
-            message_to_send = request.message + WATERMARK_AD
+            watermark = await _get_watermark_ad()
+            message_to_send = request.message + watermark
         result = await _deliver_with_retry(
             client=client,
             target=target,
             recipient=recipient,
             message=message_to_send,
             media_path=request.media_path,
+            uploaded_file=uploaded_file,
             source=request.source,
             source_id=request.source_id,
             account_id=request.account_id,
@@ -739,6 +825,26 @@ async def deliver_message(
             inline_buttons=request.inline_buttons,
             batch_persister=batch_persister,
         )
+
+        # Adaptive throttling: adjust pacing based on FloodWait feedback
+        if result.status == DeliveryStatus.FLOOD_WAIT and result.flood_wait_seconds and result.flood_wait_seconds > 0:
+            record_flood_wait(request.account_id, result.flood_wait_seconds)
+            adaptive_delay = min(adaptive_delay * 1.5, 15.0)
+            consecutive_ok = 0
+            logger.info(
+                "adaptive_delay_increased",
+                new_delay=round(adaptive_delay, 2),
+                flood_wait=result.flood_wait_seconds,
+            )
+        elif result.status == DeliveryStatus.SUCCESS:
+            consecutive_ok += 1
+            if consecutive_ok >= 5:
+                adaptive_delay = max(adaptive_delay * 0.9, original_delay)
+                consecutive_ok = 0
+                logger.info(
+                    "adaptive_delay_decayed",
+                    new_delay=round(adaptive_delay, 2),
+                )
 
         # If Telegram told us the account is banned, persist it so future
         # deliveries fast-fail without a network call.
@@ -777,7 +883,7 @@ async def deliver_message(
                 results.append(r)
             # Pacing delay between batches (not between individual sends)
             if start + batch_size < total:
-                await asyncio.sleep(request.inter_message_delay)
+                await asyncio.sleep(adaptive_delay)
     else:
         # Sequential mode (default): send one at a time with pacing
         for i, recipient in enumerate(request.recipients):
@@ -786,8 +892,8 @@ async def deliver_message(
                 results.append(result)
             except Exception as exc:
                 logger.error("sequential_send_exception", recipient=recipient, error=str(exc))
-            if i < total - 1 and request.inter_message_delay > 0:
-                await asyncio.sleep(request.inter_message_delay)
+            if i < total - 1 and adaptive_delay > 0:
+                await asyncio.sleep(adaptive_delay)
 
     await batch_persister.flush_all()
     return results
