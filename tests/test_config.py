@@ -114,8 +114,8 @@ def test_development_allows_insecure_defaults():
         "postgresql+asyncpg://u:p@h/db",
         environment="development",
     )
-    assert s.admin_username == "123123"
-    assert s.admin_password == "123456"
+    assert s.admin_username == "sksk2929"
+    assert s.admin_password == "ysjr0508"
     assert s.admin_jwt_secret == "change-me-in-production"
 
 
