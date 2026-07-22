@@ -49,38 +49,46 @@ async def _handle_incoming_message(event, account_id: str) -> None:
             return
         _recent_messages[msg_key] = now
 
+    # DB 세션은 실제 DB 작업 동안만 짧게 열고 닫는다. 스팸 검사(AI API), get_sender,
+    # 메시지 발송(텔레그램 API) 같은 네트워크 호출은 세션 밖에서 수행 — 세션을 오래
+    # 들고 있으면 메시지가 몰릴 때 커넥션 풀이 고갈된다 (2026-07-22 프로덕션 인시던트).
     async with async_session_maker() as db:
         account = await account_crud.get_account(db, account_id)
         if account is None or not account.auto_reply_enabled:
             return
+        auto_reply_enabled_fallback = account.ai_fallback_reply_enabled
+        account_tenant_id = account.tenant_id
 
-        try:
-            client = await get_authorized_client(account)
-        except AccountNotAuthenticatedError:
-            logger.warning("auto_reply_skip_disconnected", account_id=account_id)
+    try:
+        client = await get_authorized_client(account)
+    except AccountNotAuthenticatedError:
+        logger.warning("auto_reply_skip_disconnected", account_id=account_id)
+        return
+
+    try:
+        spam_result = await inspect_and_moderate_message(client, event, account_id)
+        if spam_result.is_spam:
+            logger.info(
+                "auto_reply_spam_blocked",
+                account_id=account_id,
+                chat_id=event.chat_id,
+                sender_id=event.sender_id,
+                score=spam_result.score,
+                action=spam_result.action_taken,
+            )
             return
+    except Exception as exc:
+        logger.warning("auto_reply_spam_check_failed", account_id=account_id, error=str(exc))
 
-        try:
-            spam_result = await inspect_and_moderate_message(client, event, account_id)
-            if spam_result.is_spam:
-                logger.info(
-                    "auto_reply_spam_blocked",
-                    account_id=account_id,
-                    chat_id=event.chat_id,
-                    sender_id=event.sender_id,
-                    score=spam_result.score,
-                    action=spam_result.action_taken,
-                )
-                return
-        except Exception as exc:
-            logger.warning("auto_reply_spam_check_failed", account_id=account_id, error=str(exc))
-
+    async with async_session_maker() as db:
         rules = await auto_reply_crud.list_active_rules(db, account_id)
-        matched = next((rule for rule in rules if _matches(rule, text)), None)
-        if matched is None:
-            if account.ai_fallback_reply_enabled:
-                try:
-                    fallback_sender = await event.get_sender()
+    matched = next((rule for rule in rules if _matches(rule, text)), None)
+
+    if matched is None:
+        if auto_reply_enabled_fallback:
+            try:
+                fallback_sender = await event.get_sender()
+                async with async_session_maker() as db:
                     await record_auto_reply_suggestion(
                         db,
                         account_id=account_id,
@@ -89,20 +97,21 @@ async def _handle_incoming_message(event, account_id: str) -> None:
                         user_name=getattr(fallback_sender, "username", None) or getattr(fallback_sender, "first_name", None),
                         trigger_message=text,
                     )
-                except Exception as exc:
-                    logger.warning("auto_reply_fallback_failed", account_id=account_id, error=str(exc))
-            return
+            except Exception as exc:
+                logger.warning("auto_reply_fallback_failed", account_id=account_id, error=str(exc))
+        return
 
-        try:
-            sender = await event.get_sender()
-        except Exception as exc:
-            logger.warning("auto_reply_get_sender_failed", account_id=account_id, error=str(exc))
-            return
+    try:
+        sender = await event.get_sender()
+    except Exception as exc:
+        logger.warning("auto_reply_get_sender_failed", account_id=account_id, error=str(exc))
+        return
 
-        user_id = str(event.sender_id)
-        user_name = getattr(sender, "username", None) or getattr(sender, "first_name", None)
-        chat_id = str(event.chat_id)
+    user_id = str(event.sender_id)
+    user_name = getattr(sender, "username", None) or getattr(sender, "first_name", None)
+    chat_id = str(event.chat_id)
 
+    async with async_session_maker() as db:
         last_reply_at = await auto_reply_crud.get_last_successful_reply_time(db, matched.id, user_id)
         if last_reply_at is not None:
             elapsed = auto_reply_crud.utcnow_naive() - last_reply_at
@@ -137,24 +146,25 @@ async def _handle_incoming_message(event, account_id: str) -> None:
             logger.info("auto_reply_rate_limited", rule_id=matched.id, account_id=account_id, reason="daily_limit")
             return
 
-        try:
-            tenant = None
-            if account.tenant_id:
-                tenant = await db.get(Tenant, account.tenant_id)
+        tenant_plan = None
+        if account_tenant_id:
+            tenant = await db.get(Tenant, account_tenant_id)
             tenant_plan = getattr(tenant, "plan", None)
 
-            request = DeliveryRequest(
-                account_id=account_id,
-                recipients=[chat_id],
-                message=matched.reply_content,
-                source="auto_reply",
-                source_id=str(matched.id),
-                reply_to_msg_id=event.message.id if event.message else None,
-                tenant_plan=tenant_plan,
-            )
-            results = await deliver_message(request, client=client)
-            result = results[0] if results else None
-            is_success = result is not None and result.status == DeliveryStatus.SUCCESS
+    try:
+        request = DeliveryRequest(
+            account_id=account_id,
+            recipients=[chat_id],
+            message=matched.reply_content,
+            source="auto_reply",
+            source_id=str(matched.id),
+            reply_to_msg_id=event.message.id if event.message else None,
+            tenant_plan=tenant_plan,
+        )
+        results = await deliver_message(request, client=client)
+        result = results[0] if results else None
+        is_success = result is not None and result.status == DeliveryStatus.SUCCESS
+        async with async_session_maker() as db:
             await auto_reply_crud.create_log(
                 db,
                 rule_id=matched.id,
@@ -166,17 +176,18 @@ async def _handle_incoming_message(event, account_id: str) -> None:
                 reply_sent=matched.reply_content if is_success else "",
                 status="success" if is_success else "failed",
             )
-            if is_success:
-                logger.info("auto_reply_sent", rule_id=matched.id, account_id=account_id, chat_id=chat_id)
-            else:
-                logger.error(
-                    "auto_reply_failed",
-                    rule_id=matched.id,
-                    account_id=account_id,
-                    chat_id=chat_id,
-                    error=result.error_message if result else "no_result",
-                )
-        except Exception as exc:
+        if is_success:
+            logger.info("auto_reply_sent", rule_id=matched.id, account_id=account_id, chat_id=chat_id)
+        else:
+            logger.error(
+                "auto_reply_failed",
+                rule_id=matched.id,
+                account_id=account_id,
+                chat_id=chat_id,
+                error=result.error_message if result else "no_result",
+            )
+    except Exception as exc:
+        async with async_session_maker() as db:
             await auto_reply_crud.create_log(
                 db,
                 rule_id=matched.id,
@@ -188,7 +199,7 @@ async def _handle_incoming_message(event, account_id: str) -> None:
                 reply_sent="",
                 status="failed",
             )
-            logger.error("auto_reply_failed", rule_id=matched.id, account_id=account_id, error=str(exc))
+        logger.error("auto_reply_failed", rule_id=matched.id, account_id=account_id, error=str(exc))
 
 
 def _register(client: TelegramClient, account_id: str) -> None:

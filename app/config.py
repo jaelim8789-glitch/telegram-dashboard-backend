@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
