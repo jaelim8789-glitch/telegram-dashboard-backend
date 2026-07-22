@@ -327,19 +327,18 @@ async def create_recurring_commission(
 async def process_payouts(
     db: AsyncSession,
     min_amount: int | None = None,
+    tenant_id: str | None = None,
 ) -> tuple[int, int]:
     if min_amount is None:
         min_amount = await get_min_payout(db)
 
-    result = await db.execute(
-        select(
-            ReferralCommission.referrer_id,
-            func.sum(ReferralCommission.commission_amount).label("total"),
-        )
-        .where(ReferralCommission.status == "pending")
-        .group_by(ReferralCommission.referrer_id)
-        .having(func.sum(ReferralCommission.commission_amount) >= min_amount)
-    )
+    query = select(
+        ReferralCommission.referrer_id,
+        func.sum(ReferralCommission.commission_amount).label("total"),
+    ).where(ReferralCommission.status == "pending")
+    if tenant_id:
+        query = query.where(ReferralCommission.referrer_id == tenant_id)
+    result = await db.execute(query.group_by(ReferralCommission.referrer_id).having(func.sum(ReferralCommission.commission_amount) >= min_amount))
     rows = result.all()
 
     payouts_created = 0

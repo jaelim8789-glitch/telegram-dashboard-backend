@@ -273,7 +273,7 @@ async def request_payout_endpoint(
     tenant = await _get_tenant(db, identity)
     if not tenant.is_distributor:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="총판만 지급 요청할 수 있습니다.")
-    payouts_created, total_amount = await process_payouts(db)
+    payouts_created, total_amount = await process_payouts(db, tenant_id=tenant.id)
     if payouts_created == 0:
         min_amount = await get_min_payout_threshold(db)
         return {
@@ -751,7 +751,7 @@ async def set_distributor_rate(
             db.add(ReferralConfig(key=key, value=str(payload.rate)))
         await db.commit()
 
-    await log_audit(db, "rate.override", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Commission rate set to {payload.rate}")
+    await log_audit(db, "rate.set", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Commission rate set to {payload.rate}")
     return {"success": True, "rate": payload.rate}
 
 
@@ -778,7 +778,8 @@ async def suspend_distributor(
         else:
             db.add(ReferralConfig(key=key, value="suspended"))
         await db.commit()
-        await log_audit(db, "distributor.suspend", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Distributor suspended. Reason: {payload.reason}")
+        action = "distributor.suspend"
+        await log_audit(db, action, actor_id=identity.tenant_id, target_id=tenant_id, details=payload.reason)
         return {"success": True, "status": "suspended", "reason": payload.reason}
     else:
         result = await db.execute(select(ReferralConfig).where(ReferralConfig.key == key))
@@ -786,7 +787,8 @@ async def suspend_distributor(
         if existing:
             await db.delete(existing)
             await db.commit()
-        await log_audit(db, "distributor.unsuspend", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Distributor unsuspended. Reason: {payload.reason}")
+        action = "distributor.unsuspend"
+        await log_audit(db, action, actor_id=identity.tenant_id, target_id=tenant_id, details=payload.reason)
         return {"success": True, "status": "active", "reason": payload.reason}
 
 
@@ -866,3 +868,41 @@ async def get_admin_codes(
 ):
     items = await get_admin_code_stats(db)
     return AdminCodeStatsResponse(items=[AdminCodeStatsItem(**i) for i in items])
+
+
+@router.get("/admin/distributors/{tenant_id}/memo", response_model=GetDistributorMemoResponse)
+async def get_distributor_memo(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import get_config
+    memo = await get_config(db, f"distributor_memo:{tenant_id}", "")
+    return GetDistributorMemoResponse(memo=memo)
+
+
+@router.post("/admin/distributors/{tenant_id}/memo")
+async def set_distributor_memo(
+    tenant_id: str,
+    payload: SetDistributorMemoRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    _admin: None = Depends(require_admin),
+):
+    from app.services.referral import set_config, log_audit
+    await set_config(db, f"distributor_memo:{tenant_id}", payload.memo)
+    await log_audit(db, "distributor.memo", actor_id=identity.tenant_id, target_id=tenant_id, details=f"Memo updated: {payload.memo[:50]}")
+    return {"success": True}
+
+
+@router.get("/admin/payouts/pending-count", response_model=PendingPayoutCountResponse)
+async def get_pending_payout_count(
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+):
+    from sqlalchemy import func
+    result = await db.execute(
+        select(func.count()).select_from(ReferralPayout).where(ReferralPayout.status == "pending")
+    )
+    count = result.scalar_one() or 0
+    return PendingPayoutCountResponse(count=count)
