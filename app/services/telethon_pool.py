@@ -172,6 +172,19 @@ class TelethonClientPool:
     def clear_pending_auth(self, account_id: str) -> None:
         self._pending_auth.pop(account_id, None)
 
+    async def disconnect(self, account_id: str) -> None:
+        client = self._clients.pop(account_id, None)
+        if client is not None and client.is_connected():
+            try:
+                await asyncio.wait_for(
+                    client.disconnect(),
+                    timeout=self.DISCONNECT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("telethon_disconnect_timeout", account_id=account_id)
+            except Exception as exc:
+                logger.warning("telethon_disconnect_error", account_id=account_id, error=str(exc))
+
     async def remove_client(self, account_id: str) -> None:
         async with self._lock_for(account_id):
             client = self._clients.pop(account_id, None)

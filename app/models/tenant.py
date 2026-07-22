@@ -68,6 +68,8 @@ class Tenant(Base):
     referral_code_uses: Mapped[int] = mapped_column(Integer, default=0)
     referral_earnings: Mapped[int] = mapped_column(Integer, default=0)  # cents, referrer's commission ledger
     referral_rewarded: Mapped[bool] = mapped_column(Boolean, default=False)  # guards against double-award on renewals
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)  # for referral notifications
+    wallet_address: Mapped[str | None] = mapped_column(String(100), nullable=True)  # for referral payouts
     
     # Distributor status
     is_distributor: Mapped[bool] = mapped_column(Boolean, default=False)

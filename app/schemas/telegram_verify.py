@@ -21,3 +21,4 @@ class TelegramVerifyCheckResponse(BaseModel):
 class FreeApiKeyIssueRequest(BaseModel):
     token: str = Field(min_length=1, max_length=36)
     phone: str | None = None
+    referral_code: str | None = None

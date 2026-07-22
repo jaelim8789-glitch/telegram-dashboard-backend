@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class LinkInspectRequest(BaseModel):
     account_id: str
-    links: list[str] = Field(min_length=1, max_length=100, description="Raw t.me links, invite links, or @usernames")
+    links: list[str] = Field(min_length=1, max_length=500, description="Raw t.me links, invite links, or @usernames")
 
 
 class LinkInspectionItem(BaseModel):
