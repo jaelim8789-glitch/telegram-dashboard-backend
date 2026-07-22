@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import reflection
 
 
-revision: str = "a7b8c9d0e1f2"
+revision: str = "b3d9f1a2c4e6"
 down_revision: Union[str, None] = "merge_heads_20260713"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
