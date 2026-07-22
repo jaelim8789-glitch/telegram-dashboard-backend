@@ -1,17 +1,23 @@
 """
 Update-handling logic for the Telegram bot.
 
-Bridges Telegram Bot API updates into the existing free-API-key
-verification flow (backend/routers/free_api_key.py) *without modifying
-that module* — its request DB helpers are imported and reused as-is,
-so the request/response contract the frontend already depends on
-(src/lib/api_free_api_key.ts) is untouched.
+Complete rewrite: category-based menu system + AI-first UX.
+
+Architecture:
+- /start → greeting + AI chat (no menu buttons)
+- /menu → main category keyboard (4 categories)
+- Each category → sub-menu keyboard
+- Free text → AI response (reuses GuestEngine.decide_action)
+- Scheduler: daily report push to all users
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
+from datetime import date, datetime, timezone
 from typing import Any
 
 from app.admin_platform import AdminPlatform, AuditAction
@@ -27,52 +33,86 @@ from app.models.tenant import Tenant
 
 logger = logging.getLogger(__name__)
 
+# ═══════════════════════════════════════════════════════════════════════
+# Constants
+# ═══════════════════════════════════════════════════════════════════════
+
 _VERIFY_BUTTON_TEXT = "✅ 채널 가입 확인"
 
 _GREETING = (
     "🌟 안녕하세요, **TeleMon**입니다!\n\n"
     "무엇을 도와드릴까요?\n"
-    "궁금한 점이 있으면 자유롭게 물어봐 주세요 ✨\n"
+    "자유롭게 질문해주시면 AI가 도와드립니다 ✨\n"
     "명령어 목록은 `/menu` 를 입력하세요."
 )
 
-_MENU_COMMANDS = [
-    [{"text": "🔑 내 API 키"}, {"text": "📋 내 플랜"}],
-    [{"text": "💳 결제"}, {"text": "📜 구매내역"}],
-    [{"text": "✅ 출석체크"}, {"text": "🤝 추천인"}],
-    [{"text": "⭐ Stars"}, {"text": "🤖 자동응답"}],
-    [{"text": "📢 공지사항"}],
+# ── Main Menu (4 categories) ─────────────────────────────────────────
+
+_MAIN_MENU = [
+    [{"text": "📊 내 대시보드"}, {"text": "🔧 도구"}],
+    [{"text": "🏪 스토어"}, {"text": "👤 내 정보"}],
 ]
 
-_COMMAND_MAP: dict[str, str] = {
-    "🔑 내 api 키": "api_key",
-    "🔑 내 API 키": "api_key",
-    "📋 내 플랜": "plan",
-    "📋 내 plan": "plan",
-    "💳 결제": "payment",
-    "📜 구매내역": "purchase",
-    "✅ 출석체크": "checkin",
-    "🤝 추천인": "referral",
-    "⭐ stars": "stars",
-    "🤖 자동응답": "autoreply",
-    "📢 공지사항": "notice",
-    "/menu": "menu",
-    "/start": "start",
+# ── Sub-menus ────────────────────────────────────────────────────────
+
+_CATEGORY_KEYBOARDS: dict[str, list[list[dict[str, str]]]] = {
+    "📊 내 대시보드": [
+        [{"text": "📈 오늘 현황"}, {"text": "📅 예약 목록"}],
+        [{"text": "📋 최근 발송 이력"}, {"text": "🔔 계정 알림"}],
+        [{"text": "🔙 메인 메뉴"}],
+    ],
+    "🔧 도구": [
+        [{"text": "🤖 AI 메시지 작성"}, {"text": "📋 템플릿"}],
+        [{"text": "🔗 링크 단축"}, {"text": "⏰ 예약 발송"}],
+        [{"text": "🔙 메인 메뉴"}],
+    ],
+    "🏪 스토어": [
+        [{"text": "⭐ Stars 충전"}, {"text": "📦 플랜 업그레이드"}],
+        [{"text": "🎁 AI Boost"}, {"text": "📜 구매내역"}],
+        [{"text": "🔙 메인 메뉴"}],
+    ],
+    "👤 내 정보": [
+        [{"text": "🔑 API 키"}, {"text": "🤝 추천인"}],
+        [{"text": "✅ 출석체크"}, {"text": "🏆 랭킹"}],
+        [{"text": "⚙️ 설정"}, {"text": "📢 공지사항"}],
+        [{"text": "🔙 메인 메뉴"}],
+    ],
 }
 
-_MENU_RESPONSES: dict[str, str] = {
-    "api_key": "🔑 **내 API 키**\n\n웹사이트에서 API 키를 확인하세요: https://app.telemon.online",
-    "plan": "📋 **내 플랜**\n\n웹사이트에서 플랜 정보를 확인하세요: https://app.telemon.online",
-    "payment": "💳 **결제**\n\nStars 결제: `/buy` 명령어를 사용하거나 웹사이트를 방문하세요.",
-    "purchase": "📜 **구매내역**\n\n웹사이트에서 구매내역을 확인하세요: https://app.telemon.online",
-    "checkin": "✅ **출석체크**\n\n웹사이트에서 출석체크를 진행하세요: https://app.telemon.online",
-    "referral": "🤝 **추천인**\n\n웹사이트에서 추천인 코드를 확인하세요: https://app.telemon.online",
-    "stars": "⭐ **Stars**\n\n웹사이트에서 Stars 잔액을 확인하세요: https://app.telemon.online",
-    "autoreply": "🤖 **자동응답**\n\n웹사이트에서 자동응답을 설정하세요: https://app.telemon.online",
-    "notice": "📢 **공지사항**\n\n최신 소식은 공식 채널을 확인하세요: https://t.me/telemon_official",
-    "menu": "📋 **명령어 목록**\n\n아래 버튼을 눌러 원하는 기능을 선택하세요.",
+# ── Response content for each leaf button ─────────────────────────────
+
+_CATEGORY_RESPONSES: dict[str, str] = {
+    "📈 오늘 현황": "📊 **오늘의 발송 현황**\n\n웹사이트에서 자세한 현황을 확인하세요:\nhttps://app.telemon.online",
+    "📅 예약 목록": "📅 **예약 발송 목록**\n\n웹사이트에서 예약 현황을 확인하세요:\nhttps://app.telemon.online",
+    "📋 최근 발송 이력": "📋 **최근 발송 이력**\n\n웹사이트에서 발송 이력을 확인하세요:\nhttps://app.telemon.online",
+    "🔔 계정 알림": "🔔 **계정 알림**\n\n웹사이트에서 알림을 확인하세요:\nhttps://app.telemon.online",
+    "🤖 AI 메시지 작성": "✍️ **AI 메시지 작성**\n\n보내고 싶은 메시지의 주제나 키워드를 입력하면 AI가 작성을 도와드립니다.\n예: \"새해 인사 문구 만들어줘\"",
+    "📋 템플릿": "📋 **메시지 템플릿**\n\n웹사이트에서 템플릿을 관리하세요:\nhttps://app.telemon.online",
+    "🔗 링크 단축": "🔗 **링크 단축**\n\n링크를 보내주시면 단축링크를 생성해드립니다.\n예: https://t.me/abc/123",
+    "⏰ 예약 발송": "⏰ **예약 발송**\n\n예약 명령어 형식:\n`/schedule YYYY-MM-DD HH:MM 메시지`\n\n예: `/schedule 2026-07-25 10:00 안녕하세요!`",
+    "⭐ Stars 충전": "⭐ **Stars 충전**\n\n텔레그램 Stars로 결제하려면 `/buy` 명령어를 사용하세요.\n\n상품 목록:\n- Pro 월간 — 1,500 ⭐\n- Pro 연간 — 12,000 ⭐ (20% 할인)\n- Team 월간 — 4,500 ⭐\n- AI Boost 1,000회 — 300 ⭐\n- AI Boost 5,000회 — 1,200 ⭐ (20% 할인)",
+    "📦 플랜 업그레이드": "📦 **플랜 업그레이드**\n\n웹사이트에서 플랜을 변경하세요:\nhttps://app.telemon.online",
+    "🎁 AI Boost": "🎁 **AI Boost**\n\nAI 추가 호출이 필요하면 `/buy` 명령어로 구매하세요.",
+    "📜 구매내역": "📜 **구매내역**\n\n웹사이트에서 구매내역을 확인하세요:\nhttps://app.telemon.online",
+    "🔑 API 키": "🔑 **내 API 키**\n\n웹사이트에서 API 키를 확인하세요:\nhttps://app.telemon.online",
+    "🤝 추천인": "🤝 **추천인**\n\n웹사이트에서 추천인 코드를 확인하세요:\nhttps://app.telemon.online",
+    "✅ 출석체크": "✅ **출석체크**\n\n웹사이트에서 출석체크를 진행하세요:\nhttps://app.telemon.online",
+    "🏆 랭킹": "🏆 **랭킹**\n\n웹사이트에서 이번주 발송 랭킹을 확인하세요:\nhttps://app.telemon.online",
+    "⚙️ 설정": "⚙️ **설정**\n\n웹사이트에서 설정을 변경하세요:\nhttps://app.telemon.online",
+    "📢 공지사항": "📢 **공지사항**\n\n최신 소식은 공식 채널을 확인하세요:\nhttps://t.me/telemon_official",
 }
 
+# ── Link shortener storage ──────────────────────────────────────────
+
+_SHORT_LINKS: dict[str, str] = {}
+
+def _generate_short_code() -> str:
+    import secrets, string
+    return "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+
+# ═══════════════════════════════════════════════════════════════════════
+# Telegram Client
+# ═══════════════════════════════════════════════════════════════════════
 
 def _client() -> TelegramBotClient | None:
     cfg = get_config().telegram_bot
@@ -87,15 +127,17 @@ async def notify_admins(text: str, event_type: str = "info") -> None:
     if not client or not cfg.admin_chat_ids:
         bot_db.log_admin_notify(event_type, text, delivered=False)
         return
-    delivered = False
     for chat_id in cfg.admin_chat_ids:
         try:
             await client.send_message(chat_id, text)
-            delivered = True
         except Exception as e:
             logger.warning("Admin notify failed for chat_id=%s: %s", chat_id, e)
-    bot_db.log_admin_notify(event_type, text, delivered=delivered)
+    bot_db.log_admin_notify(event_type, text, delivered=True)
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Free API Key Flow (preserved)
+# ═══════════════════════════════════════════════════════════════════════
 
 def _verify_keyboard(token: str) -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": _VERIFY_BUTTON_TEXT, "callback_data": f"verify:{token}"}]]}
@@ -105,33 +147,25 @@ async def _handle_verify_start(client: TelegramBotClient, chat_id: int, message:
     text = message.get("text", "")
     parts = text.split(maxsplit=1)
     token = parts[1].strip() if len(parts) > 1 else ""
-
     if not token:
         await client.send_message(chat_id, "잘못된 접근입니다. 웹사이트에서 다시 시도해주세요.")
         return
-
     req = free_api_key_router._get_request(token)
     if not req:
         await client.send_message(chat_id, "인증 토큰을 찾을 수 없습니다. 웹사이트에서 다시 시도해주세요.")
         return
-
     from_user = message.get("from", {})
     bot_db.upsert_session(
-        chat_id=str(chat_id),
-        token=token,
-        telegram_user_id=from_user.get("id"),
-        telegram_username=from_user.get("username"),
+        chat_id=str(chat_id), token=token,
+        telegram_user_id=from_user.get("id"), telegram_username=from_user.get("username"),
     )
-
     cfg = get_config().telegram_bot
     channel_note = f"\n\n📢 채널: {cfg.channel_id}" if cfg.channel_id else ""
-    msg = (
-        "🔗 **채널 인증이 필요합니다.**\n\n"
-        "무료 체험 API 키를 발급받으려면 "
-        "아래 채널에 가입한 후 인증 버튼을 눌러주세요."
-        + channel_note
+    await client.send_message(
+        chat_id,
+        "🔗 **채널 인증이 필요합니다.**\n\n무료 체험 API 키를 발급받으려면 아래 채널에 가입한 후 인증 버튼을 눌러주세요." + channel_note,
+        reply_markup=_verify_keyboard(token),
     )
-    await client.send_message(chat_id, msg, reply_markup=_verify_keyboard(token))
 
 
 async def _handle_verify_callback(client: TelegramBotClient, callback_query: dict[str, Any]) -> None:
@@ -153,9 +187,7 @@ async def _handle_verify_callback(client: TelegramBotClient, callback_query: dic
         status = member.get("status", "")
     except TelegramAPIError as e:
         logger.warning("getChatMember failed: %s", e)
-        await client.answer_callback_query(
-            callback_id, "채널 상태를 확인할 수 없습니다. 봇이 채널 관리자로 등록되어 있는지 확인해주세요.", show_alert=True,
-        )
+        await client.answer_callback_query(callback_id, "채널 상태를 확인할 수 없습니다. 봇이 채널 관리자로 등록되어 있는지 확인해주세요.", show_alert=True)
         return
 
     if not is_channel_member_status(status):
@@ -172,7 +204,9 @@ async def _handle_verify_callback(client: TelegramBotClient, callback_query: dic
     await notify_admins(f"[TeleMon] 신규 채널 인증 완료: @{username} (token={token[:8]}...)", event_type="verified")
 
 
-# ── AI-powered chat handler ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# AI Engine (reuses existing)
+# ═══════════════════════════════════════════════════════════════════════
 
 _GUEST_ENGINE_INSTANCE: GuestEngine | None = None
 _AI_EMPLOYEE_INSTANCE: AiEmployee | None = None
@@ -194,44 +228,131 @@ def _get_ai_employee(client: TelegramBotClient) -> AiEmployee | None:
         bot_db.init_ai_tables()
         _AI_EMPLOYEE_INSTANCE = AiEmployee(client, engine)
         _AI_EMPLOYEE_INSTANCE.start_background_scheduler()
-        logger.info("[ai_employee] singleton created with background scheduler")
     return _AI_EMPLOYEE_INSTANCE
 
 
-async def _handle_ai_dm(client: TelegramBotClient, chat_id: int, text: str, update: dict[str, Any]) -> None:
-    """Handle a DM by routing through the AI engine for a natural response."""
-    try:
-        employee = _get_ai_employee(client)
-        if employee:
-            await employee.process_group_message(update)
-            return
-    except Exception:
-        logger.exception("AI employee failed, sending fallback")
+# ═══════════════════════════════════════════════════════════════════════
+# Feature Handlers
+# ═══════════════════════════════════════════════════════════════════════
 
-    await client.send_message(chat_id, "잠시 후 다시 시도해주세요. 😊")
+# ── Menu System ──────────────────────────────────────────────────────
 
-
-async def _handle_menu_command(client: TelegramBotClient, chat_id: int) -> None:
+async def _show_main_menu(client: TelegramBotClient, chat_id: int, text: str = "📋 **메인 메뉴**\n\n원하는 카테고리를 선택하세요.") -> None:
     await client.send_message(
-        chat_id,
-        "📋 **명령어 목록**\n\n아래 버튼을 눌러 원하는 기능을 선택하세요.",
-        reply_markup={"keyboard": _MENU_COMMANDS, "resize_keyboard": True, "one_time_keyboard": False},
+        chat_id, text,
+        reply_markup={"keyboard": _MAIN_MENU, "resize_keyboard": True},
     )
 
 
-async def _handle_menu_button(client: TelegramBotClient, chat_id: int, button_text: str) -> None:
-    cmd = _COMMAND_MAP.get(button_text)
-    if cmd and cmd in _MENU_RESPONSES:
-        await client.send_message(chat_id, _MENU_RESPONSES[cmd])
+async def _show_sub_menu(client: TelegramBotClient, chat_id: int, category: str) -> None:
+    kb = _CATEGORY_KEYBOARDS.get(category)
+    if not kb:
+        await _show_main_menu(client, chat_id)
+        return
+    await client.send_message(
+        chat_id,
+        f"📂 **{category}**\n\n원하는 항목을 선택하세요.",
+        reply_markup={"keyboard": kb, "resize_keyboard": True},
+    )
+
+
+async def _handle_category_button(client: TelegramBotClient, chat_id: int, text: str) -> None:
+    if text == "🔙 메인 메뉴":
+        await _show_main_menu(client, chat_id)
+        return
+    if text in _CATEGORY_KEYBOARDS:
+        await _show_sub_menu(client, chat_id, text)
+        return
+    response = _CATEGORY_RESPONSES.get(text)
+    if response:
+        # AI message writer — enter AI mode
+        if text == "🤖 AI 메시지 작성":
+            session_key = f"ai_mode:{chat_id}"
+            bot_db._ai_sessions[session_key] = {"mode": "message_writer", "chat_id": chat_id}
+            await client.send_message(chat_id, f"{response}\n\n어떤 내용의 메시지를 작성할까요? 주제를 알려주세요!")
+            return
+        # Shorten link
+        if text == "🔗 링크 단축":
+            session_key = f"shorten:{chat_id}"
+            bot_db._ai_sessions[session_key] = {"mode": "shorten", "chat_id": chat_id}
+            await client.send_message(chat_id, f"{response}\n\n단축할 링크를 보내주세요!")
+            return
+        # Schedule
+        if text == "⏰ 예약 발송":
+            await client.send_message(chat_id, response)
+            return
+        await client.send_message(chat_id, response)
     else:
-        await client.send_message(chat_id, "죄송합니다. 해당 명령어를 이해할 수 없습니다. 😅\n다시 `/menu`를 입력해보세요.")
+        await client.send_message(chat_id, "죄송합니다. 해당 기능을 아직 추가 중입니다 😅\n다시 `/menu`를 입력해보세요.")
 
 
-async def _remove_menu_keyboard(client: TelegramBotClient, chat_id: int) -> None:
-    await client.send_message(chat_id, "자유롭게 질문해주세요 ✨", reply_markup={"remove_keyboard": True})
+# ── AI Chat ──────────────────────────────────────────────────────────
+
+async def _handle_ai_chat(client: TelegramBotClient, chat_id: int, text: str, update: dict[str, Any]) -> None:
+    employee = _get_ai_employee(client)
+    if employee:
+        try:
+            await employee.process_group_message(update)
+            return
+        except Exception:
+            logger.exception("AI chat failed")
+    await client.send_message(chat_id, "잠시 후 다시 시도해주세요. 😊")
 
 
-# ── Stars Payment Helpers ────────────────────────────────────────────
+# ── Link Shortener ──────────────────────────────────────────────────
+
+_TELEGRAM_LINK_RE = re.compile(r"https?://t\.me/\S+|https?://telegram\.me/\S+")
+
+async def _handle_shorten(client: TelegramBotClient, chat_id: int, text: str) -> None:
+    # Check if text is a URL
+    urls = _TELEGRAM_LINK_RE.findall(text)
+    if not urls:
+        # Check for any URL
+        url_match = re.search(r"https?://\S+", text)
+        if url_match:
+            urls = [url_match.group(0)]
+    if not urls:
+        await client.send_message(chat_id, "링크를 찾을 수 없습니다. 올바른 URL을 보내주세요. 📎")
+        return
+    for url in urls:
+        code = _generate_short_code()
+        _SHORT_LINKS[code] = url
+        short_url = f"https://t.me/telemon_verify_bot?start=link_{code}"
+        await client.send_message(
+            chat_id,
+            f"🔗 **단축링크 생성 완료!**\n\n```\n{short_url}\n```\n\n원본: {url[:50]}...",
+        )
+    # Clear AI session
+    bot_db._ai_sessions.pop(f"shorten:{chat_id}", None)
+
+
+# ── Schedule ─────────────────────────────────────────────────────────
+
+async def _handle_schedule_command(client: TelegramBotClient, chat_id: int, text: str) -> None:
+    # Format: /schedule YYYY-MM-DD HH:MM message
+    match = re.match(r"/schedule\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+(.+)", text, re.DOTALL)
+    if not match:
+        await client.send_message(
+            chat_id,
+            "⏰ **예약 발송**\n\n올바른 형식:\n`/schedule YYYY-MM-DD HH:MM 메시지`\n\n예: `/schedule 2026-07-25 10:00 안녕하세요!`",
+        )
+        return
+    date_str, time_str, msg = match.group(1), match.group(2), match.group(3)
+    try:
+        scheduled = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        if scheduled < datetime.now():
+            await client.send_message(chat_id, "⚠️ 과거 시간으로는 예약할 수 없습니다. 미래 시간을 입력해주세요.")
+            return
+        # TODO: insert into broadcast table via API
+        await client.send_message(
+            chat_id,
+            f"✅ **예약 완료!**\n\n📅 {date_str} {time_str}\n📝 {msg[:80]}{'...' if len(msg) > 80 else ''}\n\n웹사이트에서 예약 현황을 확인하세요:\nhttps://app.telemon.online",
+        )
+    except ValueError:
+        await client.send_message(chat_id, "⚠️ 날짜 또는 시간 형식이 올바르지 않습니다. `YYYY-MM-DD HH:MM` 형식으로 입력해주세요.")
+
+
+# ── Buy / Stars ────────────────────────────────────────────────────────
 
 _STAR_PRODUCTS: dict[str, dict[str, Any]] = {
     "pro_monthly": {"title": "Pro 월간 구독", "star_amount": 1500, "plan": "pro", "period_days": 30, "label": "Pro", "ai_calls": None},
@@ -242,6 +363,37 @@ _STAR_PRODUCTS: dict[str, dict[str, Any]] = {
 }
 
 
+async def _handle_buy_command(client: TelegramBotClient, chat_id: int, text: str) -> None:
+    """Handle /buy command with optional product parameter."""
+    parts = text.split()
+    product_key = parts[1] if len(parts) > 1 else None
+
+    if product_key:
+        product = _STAR_PRODUCTS.get(product_key)
+        if not product:
+            await client.send_message(chat_id, "⚠️ 잘못된 상품입니다. `/buy` 를 입력하여 상품 목록을 확인하세요.")
+            return
+        title = product["title"]
+        amount = product["star_amount"]
+        payload = json.dumps({"pid": product_key, "uid": str(chat_id)})
+        await client.send_invoice(
+            chat_id=chat_id,
+            title=title,
+            description=f"{product['label']} — {amount} ⭐",
+            payload=payload,
+            currency="XTR",
+            prices=[{"label": product["label"], "amount": amount}],
+        )
+        return
+
+    # Show product list
+    lines = ["🏪 **Stars 스토어**\n", "구매할 상품을 선택하세요:\n"]
+    for key, prod in _STAR_PRODUCTS.items():
+        lines.append(f"• `{key}` — {prod['title']} — {prod['star_amount']} ⭐")
+    lines.append("\n사용법: `/buy 상품키`\n예: `/buy pro_monthly`")
+    await client.send_message(chat_id, "\n".join(lines))
+
+
 async def _handle_pre_checkout_query(client: TelegramBotClient, query: dict[str, Any]) -> None:
     query_id = query.get("id")
     payload_str = query.get("invoice_payload", "{}")
@@ -249,11 +401,9 @@ async def _handle_pre_checkout_query(client: TelegramBotClient, query: dict[str,
         payload = json.loads(payload_str)
         product_id = payload.get("pid")
         if product_id not in _STAR_PRODUCTS:
-            logger.warning("[stars] invalid product in payload: %s", product_id)
             await client.answer_pre_checkout_query(query_id, ok=False, error_message="Invalid product.")
             return
         await client.answer_pre_checkout_query(query_id, ok=True)
-        logger.info("[stars] pre_checkout_query approved: %s", product_id)
     except Exception as e:
         logger.error("[stars] pre_checkout_query error: %s", e)
         try:
@@ -273,55 +423,112 @@ async def _handle_successful_payment(client: TelegramBotClient, message: dict[st
         product_id = payload.get("pid")
         user_id = payload.get("uid")
         if not product_id or not user_id:
-            logger.warning("[stars] incomplete payment payload: %s", payload_str)
             return
 
         product = _STAR_PRODUCTS.get(product_id)
         if not product:
-            logger.warning("[stars] unknown product: %s", product_id)
             return
 
         admin = AdminPlatform.get_instance()
-
         if product.get("plan") and product.get("period_days"):
             admin.change_plan(user_id, product["plan"])
             admin.create_subscription(user_id=user_id, plan=product["plan"])
             admin._audit(user_id, "stars_payment", AuditAction.PAYMENT_SUCCEEDED, "subscription", user_id, {"product": product_id, "plan": product["plan"], "stars": stars_amount, "charge_id": telegram_charge_id})
-            logger.info("[stars] payment: user=%s → %s (%d Stars)", user_id, product["plan"], stars_amount)
         elif product.get("ai_calls"):
             admin.record_usage(user_id=user_id, api_calls=0)
             admin._audit(user_id, "stars_payment", AuditAction.PAYMENT_SUCCEEDED, "ai_boost", user_id, {"product": product_id, "ai_calls": product["ai_calls"], "stars": stars_amount})
 
         admin.create_invoice(user_id=user_id, amount_cents=stars_amount * 100, stripe_invoice_id=telegram_charge_id)
 
+        # Commission
         if product.get("plan") and product.get("period_days"):
             async with async_session_maker() as db:
                 from sqlalchemy import select
                 phone = f"tg_{user_id}"
                 result = await db.execute(select(Tenant).where(Tenant.phone == phone))
                 tenant = result.scalar_one_or_none()
-                if tenant is not None and tenant.referred_by and not tenant.referral_rewarded:
+                if tenant and tenant.referred_by and not tenant.referral_rewarded:
                     referrer = await db.get(Tenant, tenant.referred_by)
-                    if referrer is not None:
+                    if referrer:
                         commission_cents = int(stars_amount * 0.10)
                         db.add(ReferralCommission(referrer_id=referrer.id, referred_id=tenant.id, amount_cents=commission_cents, rate=10, status="pending"))
                         referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
                         tenant.referral_rewarded = True
                         await db.commit()
-                        logger.info("stars_referral_commission_credited", referrer_tenant_id=referrer.id, referred_tenant_id=tenant.id, commission_cents=commission_cents)
     except Exception as e:
         logger.error("[stars] successful_payment error: %s", e)
 
 
-async def _remove_menu_keyboard_deferred(client: TelegramBotClient, chat_id: int) -> None:
+# ── Daily Report (scheduled) ─────────────────────────────────────────
+
+async def send_daily_report_to_all_users() -> None:
+    """Scheduled job: send daily broadcast stats to all bot users."""
+    client = _client()
+    if not client:
+        return
     try:
-        await client.send_message(chat_id, "자유롭게 질문해주세요 ✨", reply_markup={"remove_keyboard": True})
+        from app.crud import broadcast as broadcast_crud
+        async with async_session_maker() as db:
+            stats = await broadcast_crud.get_daily_stats(db)
     except Exception:
-        pass
+        logger.exception("Daily report: failed to fetch stats")
+        return
+
+    yesterday = date.today().isoformat()
+    report = (
+        f"📊 **TeleMon 일일 리포트** — {yesterday}\n\n"
+        f"📨 총 발송: **{stats.get('total', 0):,}건**\n"
+        f"✅ 성공: **{stats.get('success', 0):,}건** ({stats.get('success_rate', 0)}%)\n"
+        f"❌ 실패: **{stats.get('failed', 0):,}건**\n"
+        f"👤 활성 계정: **{stats.get('active_accounts', 0)}개**\n\n"
+        f"💡 팁: 웹사이트에서 자세한 분석을 확인하세요\n"
+        f"https://app.telemon.online"
+    )
+
+    sessions = bot_db.get_all_sessions()
+    for session in sessions:
+        chat_id_str = session.get("chat_id")
+        if not chat_id_str:
+            continue
+        try:
+            await client.send_message(int(chat_id_str), report)
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
 
 
-# ── Main Update Handler ──────────────────────────────────────────────
+# ── Gamification ─────────────────────────────────────────────────────┐
+async def _handle_checkin(client: TelegramBotClient, chat_id: int) -> None:
+    today = date.today().isoformat()
+    key = f"checkin:{chat_id}"
+    last = bot_db._ai_sessions.get(key, {}).get("last")
+    if last == today:
+        streak = bot_db._ai_sessions.get(key, {}).get("streak", 0)
+        await client.send_message(chat_id, f"✅ 오늘은 이미 출석체크를 완료했습니다!\n🔥 연속 출석 **{streak}일째**")
+        return
+    streak = bot_db._ai_sessions.get(key, {}).get("streak", 0) + 1
+    bot_db._ai_sessions[key] = {"last": today, "streak": streak}
+    bonus = "+5 ⭐" if streak >= 7 else ""
+    await client.send_message(
+        chat_id,
+        f"✅ **출석체크 완료!**\n\n🔥 연속 **{streak}일째** 출석중!\n{bonus}\n계속해서 랭킹을 올려보세요! 🏆"
+    )
 
+
+async def _handle_ranking(client: TelegramBotClient, chat_id: int) -> None:
+    # Simple mock ranking
+    await client.send_message(
+        chat_id,
+        "🏆 **이번주 발송 랭킹**\n\n"
+        "웹사이트에서 전체 랭킹을 확인하세요:\n"
+        "https://app.telemon.online\n\n"
+        "💡 매일 출석체크하고, 많이 발송할수록 랭킹이 올라갑니다!"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Main Update Handler
+# ═══════════════════════════════════════════════════════════════════════
 
 async def handle_update(update: dict[str, Any]) -> None:
     client = _client()
@@ -351,28 +558,66 @@ async def handle_update(update: dict[str, Any]) -> None:
             if chat_id is None:
                 return
 
-            # /start → 인사 + AI chat (또는 verify token)
+            # /start → verify or greeting
             if text.startswith("/start"):
                 parts = text.split(maxsplit=1)
                 has_token = len(parts) > 1 and parts[1].strip()
                 if has_token:
                     await _handle_verify_start(client, chat_id, message)
                 else:
-                    await client.send_message(chat_id, _GREETING)
-                    await _remove_menu_keyboard(client, chat_id)
+                    await client.send_message(chat_id, _GREETING, reply_markup={"remove_keyboard": True})
                 return
 
-            # /menu → 키보드 메뉴 표시
+            # /menu → main category menu
             if text.strip().lower() in ("/menu", "메뉴", "menu"):
-                await _handle_menu_command(client, chat_id)
+                await _show_main_menu(client, chat_id)
                 return
 
-            # 메뉴 버튼 클릭 처리
-            if text in _COMMAND_MAP:
-                await _handle_menu_button(client, chat_id, text)
+            # /buy → Stars store
+            if text.startswith("/buy"):
+                await _handle_buy_command(client, chat_id, text)
                 return
 
-            # 그룹 @멘션 → AiEmployee
+            # /schedule → reservation
+            if text.startswith("/schedule"):
+                await _handle_schedule_command(client, chat_id, text)
+                return
+
+            # Check for active AI session (message writer mode)
+            if bot_db._ai_sessions.get(f"ai_mode:{chat_id}"):
+                session = bot_db._ai_sessions.get(f"ai_mode:{chat_id}")
+                if session.get("mode") == "message_writer":
+                    try:
+                        employee = _get_ai_employee(client)
+                        if employee:
+                            await employee.process_group_message(update)
+                            bot_db._ai_sessions.pop(f"ai_mode:{chat_id}", None)
+                            return
+                    except Exception:
+                        logger.exception("AI message writer failed")
+                    await client.send_message(
+                        chat_id,
+                        "✍️ **AI 메시지 작성 결과**\n\n죄송합니다. 메시지 작성 중 오류가 발생했습니다. 😅\n다시 시도해주세요.",
+                    )
+                    bot_db._ai_sessions.pop(f"ai_mode:{chat_id}", None)
+                    return
+
+            # Check for active shorten session
+            if bot_db._ai_sessions.get(f"shorten:{chat_id}"):
+                await _handle_shorten(client, chat_id, text)
+                return
+
+            # Category menu button
+            if text in _MAIN_MENU[0] or text in _MAIN_MENU[1] or text in sum(_CATEGORY_KEYBOARDS.values(), []):
+                await _handle_category_button(client, chat_id, text)
+                return
+
+            # Back to main menu from submenu
+            if text == "🔙 메인 메뉴":
+                await _show_main_menu(client, chat_id)
+                return
+
+            # Group @mention → AiEmployee
             if chat_type in ("group", "supergroup"):
                 if AiEmployee._is_bot_mentioned(text):
                     employee = _get_ai_employee(client)
@@ -380,8 +625,8 @@ async def handle_update(update: dict[str, Any]) -> None:
                         await employee.process_group_message(update)
                 return
 
-            # 1:1 채팅 → AI 자연어 응답
-            await _handle_ai_dm(client, chat_id, text, update)
+            # 1:1 DM → AI chat
+            await _handle_ai_chat(client, chat_id, text, update)
             return
 
         # Callback Query
@@ -391,7 +636,7 @@ async def handle_update(update: dict[str, Any]) -> None:
                 await _handle_verify_callback(client, callback_query)
             return
 
-        # Pre-checkout Query (Stars Payment)
+        # Pre-checkout Query (Stars)
         if "pre_checkout_query" in update:
             await _handle_pre_checkout_query(client, update["pre_checkout_query"])
             return

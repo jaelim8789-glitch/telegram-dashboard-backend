@@ -20,6 +20,22 @@ from typing import Any
 
 DB_PATH = os.environ.get("ADMIN_DB_PATH", "data/admin.db")
 
+# In-memory session store for AI state / link shorten / checkin
+_ai_sessions: dict[str, dict[str, Any]] = {}
+
+
+def get_all_sessions() -> list[dict[str, Any]]:
+    """Get all bot sessions from DB."""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM bot_sessions ORDER BY updated_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
 
 def init_bot_tables() -> None:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)

@@ -30,6 +30,7 @@ from app.services.broadcast_processor import process_broadcast, process_recurrin
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
 from app.services.random_reply_service import execute_random_reply
 from app.services.usdt_watcher import check_usdt_payments
+from app.bot.service import send_daily_report_to_all_users
 
 try:
     from app.api.content_studio import run_daily_content_generation
@@ -248,6 +249,13 @@ def start_scheduler() -> None:
             id="run_daily_content_generation",
             replace_existing=True,
         )
+    # 텔레그램 봇 일일 리포트 — 매일 오전 9시
+    scheduler.add_job(
+        send_daily_report_to_all_users,
+        IntervalTrigger(hours=24, start_date="2026-07-23 09:00:00"),
+        id="telegram_bot_daily_report",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("scheduler_started", interval_seconds=DISPATCH_INTERVAL_SECONDS)
 
