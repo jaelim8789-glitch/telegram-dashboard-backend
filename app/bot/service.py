@@ -526,6 +526,111 @@ async def _handle_ranking(client: TelegramBotClient, chat_id: int) -> None:
     )
 
 
+# ── #1 Sessions ──────────────────────────────────────────────────────
+
+async def _handle_sessions(client: TelegramBotClient, chat_id: int) -> None:
+    session = bot_db.get_session(str(chat_id))
+    if not session:
+        await client.send_message(
+            chat_id,
+            "🔐 **세션 정보**\n\n연결된 세션이 없습니다.\n웹사이트에서 봇 인증을 완료해주세요:\nhttps://app.telemon.online"
+        )
+        return
+    uid = session.get("telegram_user_id", "?")
+    username = session.get("telegram_username", "없음")
+    token = session.get("token", "")[:12]
+    created = session.get("created_at", "")[:10]
+    await client.send_message(
+        chat_id,
+        f"🔐 **내 세션 정보**\n\n"
+        f"👤 사용자 ID: `{uid}`\n"
+        f"📛 사용자명: @{username}\n"
+        f"🔑 토큰: `{token}...`\n"
+        f"📅 연결일: {created}\n\n"
+        f"웹사이트에서 전체 세션을 관리하세요:\n"
+        f"https://app.telemon.online"
+    )
+
+
+# ── #6 Group Cleaner ─────────────────────────────────────────────────
+
+async def _handle_cleanup(client: TelegramBotClient, chat_id: int) -> None:
+    await client.send_message(
+        chat_id,
+        "🧹 **그룹 클리너**\n\n"
+        "오래된 그룹을 정리하려면 웹사이트에서 확인하세요:\n"
+        "https://app.telemon.online\n\n"
+        "💡 30일 이상 활동 없는 그룹을 자동으로 찾아 정리 제안을 드립니다."
+    )
+
+
+# ── #10 Language / i18n ──────────────────────────────────────────────
+
+_LANG_OPTIONS = {
+    "🇰🇷 한국어": "ko",
+    "🇺🇸 English": "en",
+    "🇯🇵 日本語": "ja",
+}
+
+_LANG_DATA: dict[str, dict[str, str]] = {
+    "ko": {
+        "lang_selected": "✅ 언어가 한국어로 변경되었습니다.",
+        "greeting": "🌟 안녕하세요, **TeleMon**입니다!\n\n무엇을 도와드릴까요?\n자유롭게 질문해주시면 AI가 도와드립니다 ✨\n명령어 목록은 `/menu` 를 입력하세요.",
+        "menu": "📋 **메인 메뉴**\n\n원하는 카테고리를 선택하세요.",
+    },
+    "en": {
+        "lang_selected": "✅ Language changed to English.",
+        "greeting": "🌟 Welcome to **TeleMon**!\n\nHow can I help you?\nFeel free to ask any questions and our AI will assist you ✨\nType `/menu` for commands.",
+        "menu": "📋 **Main Menu**\n\nSelect a category.",
+    },
+    "ja": {
+        "lang_selected": "✅ 言語が日本語に変更されました。",
+        "greeting": "🌟 **TeleMon**へようこそ！\n\nどのようなご用件でしょうか？\nAIがお手伝いします ✨\nコマンド一覧は `/menu` を入力してください。",
+        "menu": "📋 **メインメニュー**\n\nカテゴリを選択してください。",
+    },
+}
+
+
+def _get_lang(chat_id: int) -> str:
+    return bot_db._ai_sessions.get(f"lang:{chat_id}", {}).get("lang", "ko")
+
+
+async def _handle_lang_command(client: TelegramBotClient, chat_id: int, text: str) -> None:
+    parts = text.split(maxsplit=1)
+    target_lang = parts[1].strip().lower() if len(parts) > 1 else ""
+
+    if not target_lang:
+        kb = [[{"text": key}] for key in _LANG_OPTIONS]
+        kb.append([{"text": "🔙 메인 메뉴"}])
+        await client.send_message(
+            chat_id,
+            "🌍 **언어 선택 / Language**\n\n사용할 언어를 선택하세요.\nSelect your preferred language.",
+            reply_markup={"keyboard": kb, "resize_keyboard": True},
+        )
+        return
+
+    lang_map = {"ko": "ko", "en": "en", "ja": "ja", "korean": "ko", "english": "en", "japanese": "ja", "한국어": "ko", "영어": "en", "일본어": "ja"}
+    lang_code = lang_map.get(target_lang)
+    if not lang_code or lang_code not in _LANG_DATA:
+        await client.send_message(chat_id, "⚠️ 지원하는 언어: 한국어(`ko`), English(`en`), 日本語(`ja`)")
+        return
+
+    bot_db._ai_sessions[f"lang:{chat_id}"] = {"lang": lang_code}
+    await client.send_message(chat_id, _LANG_DATA[lang_code]["lang_selected"])
+
+
+async def _handle_lang_button(client: TelegramBotClient, chat_id: int, button_text: str) -> None:
+    lang_code = _LANG_OPTIONS.get(button_text)
+    if not lang_code:
+        return
+    bot_db._ai_sessions[f"lang:{chat_id}"] = {"lang": lang_code}
+    msg = _LANG_DATA[lang_code]["lang_selected"]
+    await client.send_message(chat_id, msg)
+
+
+# ── #2 Cleanup (triggered from menu) ─────────────────────────────────│
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Main Update Handler
 # ═══════════════════════════════════════════════════════════════════════
@@ -566,6 +671,21 @@ async def handle_update(update: dict[str, Any]) -> None:
                     await _handle_verify_start(client, chat_id, message)
                 else:
                     await client.send_message(chat_id, _GREETING, reply_markup={"remove_keyboard": True})
+                return
+
+            # /sessions → show session info
+            if text.strip().lower() in ("/sessions", "/session"):
+                await _handle_sessions(client, chat_id)
+                return
+
+            # /cleanup → group cleanup
+            if text.strip().lower() in ("/cleanup", "/clean"):
+                await _handle_cleanup(client, chat_id)
+                return
+
+            # /lang → language selection
+            if text.startswith("/lang"):
+                await _handle_lang_command(client, chat_id, text)
                 return
 
             # /menu → main category menu
@@ -610,6 +730,11 @@ async def handle_update(update: dict[str, Any]) -> None:
             # Category menu button
             if text in _MAIN_MENU[0] or text in _MAIN_MENU[1] or text in sum(_CATEGORY_KEYBOARDS.values(), []):
                 await _handle_category_button(client, chat_id, text)
+                return
+
+            # Language select button
+            if text in _LANG_OPTIONS:
+                await _handle_lang_button(client, chat_id, text)
                 return
 
             # Back to main menu from submenu
