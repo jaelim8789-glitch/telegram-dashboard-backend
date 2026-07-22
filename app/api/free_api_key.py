@@ -127,7 +127,16 @@ async def issue(
     user.api_key_hash = hash_api_key(raw_key)
     await db.flush()
 
-    await _get_or_create_free_tenant(db, identifier)
+    tenant = await _get_or_create_free_tenant(db, identifier)
+
+    # ── Resolve referral code ──
+    if payload.referral_code and tenant:
+        from app.api.auth import _resolve_referral_code
+        referrer_id = await _resolve_referral_code(db, payload.referral_code, identifier)
+        if referrer_id:
+            tenant.referred_by = referrer_id
+            await db.commit()
+            logger.info("referral_code_applied", code=payload.referral_code, new_tenant=tenant.id, referrer=referrer_id)
 
     await db.commit()
     await db.refresh(user)

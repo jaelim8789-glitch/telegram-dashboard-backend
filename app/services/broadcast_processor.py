@@ -209,6 +209,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         reply_to_map=reply_to_map,
         inline_buttons=inline_buttons_local,
         batch_size=batch_size_local,
+        tenant_plan=getattr(broadcast, "plan", None) if broadcast else None,
     )
 
     if delivery_mode == "bulk":

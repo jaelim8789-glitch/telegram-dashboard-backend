@@ -80,20 +80,15 @@ MAX_WAIT_SECONDS = 60.0
 
 WATERMARK_AD = (
     "\n\n━━━━━━━━━━━━━━━━━━\n"
-    "🤖 TeleMon AI\n\n"
-    "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
-    "AI 비서가\n"
-    "✅ 자동 홍보\n"
-    "✅ 자동 답장\n"
-    "✅ 채널 운영\n"
-    "✅ 그룹 관리\n\n"
-    "🌐 https://telemon.online"
+    "🤖 AI가 자동으로 답변했습니다. 무료 AI 직원 받기\n\n"
+    "🌐 https://telemon.online/signup?ref={ref_code}"
 )
 
 FREE_PLANS = {"free"}
 
 _watermark_ad_cache: str | None = None
 _watermark_cache_expiry: float = 0.0
+_watermark_format_cache: dict[str, str | None] = {}
 
 async def _get_watermark_ad() -> str:
     """Load watermark from DB setting, with fallback to default. Cached for 60s."""
@@ -104,14 +99,8 @@ async def _get_watermark_ad() -> str:
 
     default = (
         "\n\n━━━━━━━━━━━━━━━━━━\n"
-        "🤖 TeleMon AI\n\n"
-        "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
-        "AI 비서가\n"
-        "✅ 자동 홍보\n"
-        "✅ 자동 답장\n"
-        "✅ 채널 운영\n"
-        "✅ 그룹 관리\n\n"
-        "🌐 https://telemon.online"
+        "🤖 AI가 자동으로 답변했습니다. 무료 AI 직원 받기\n\n"
+        "🌐 https://telemon.online/signup?ref={ref_code}"
     )
     try:
         async with async_session_maker() as session:
@@ -129,6 +118,27 @@ async def _get_watermark_ad() -> str:
 
     _watermark_cache_expiry = now + 60.0
     return _watermark_ad_cache
+
+
+async def _get_tenant_ref_code(db: AsyncSession, tenant_id: str) -> str | None:
+    """Look up the tenant's active referral code."""
+    from app.models.referral import ReferralCode
+    from sqlalchemy import select as sa_sel
+    result = await db.execute(
+        sa_sel(ReferralCode.code).where(
+            ReferralCode.owner_id == tenant_id,
+            ReferralCode.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _personalize_watermark(base: str, ref_code: str | None) -> str:
+    """Replace {ref_code} placeholder in the watermark template."""
+    if not base:
+        return ""
+    code = ref_code or ""
+    return base.replace("{ref_code}", code)
 
 # Per-recipient send timeout. Without this, a single Telethon call that hangs
 # (dead connection, DC migration stall, etc.) silently consumes the *entire*
@@ -809,7 +819,9 @@ async def deliver_message(
         message_to_send = request.message
         if request.tenant_plan in FREE_PLANS:
             watermark = await _get_watermark_ad()
-            message_to_send = request.message + watermark
+            ref_code = await _get_tenant_ref_code(db, account.tenant_id) if account.tenant_id else None
+            personalized = await _personalize_watermark(watermark, ref_code)
+            message_to_send = request.message + personalized
         result = await _deliver_with_retry(
             client=client,
             target=target,
