@@ -1,10 +1,9 @@
 import os
-from typing import List
+from typing import List, Optional
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
-_ADMIN_DEFAULTS = {"admin_username": "sksk2929", "admin_password": "ysjr0508"}
 _JWT_DEFAULT = "change-me-in-production"
 
 
@@ -61,9 +60,9 @@ class Settings(BaseSettings):
     # changed per-deployment without a code change. The shipped defaults match what was
     # asked for, but "123456" is a very weak password: change it before any deployment
     # that isn't strictly localhost-only.
-    admin_username: str = "sksk2929"
-    admin_password: str = "ysjr0508"
-    admin_jwt_secret: str = "change-me-in-production"
+    admin_username: str = Field(default="", alias="ADMIN_USERNAME")
+    admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
+    admin_jwt_secret: str = Field(default="change-me-in-production", alias="ADMIN_JWT_SECRET")
     admin_jwt_expire_minutes: int = 60 * 24
 
     # SMS provider for phone-verification login (Sprint 6). "console" logs the code
@@ -171,8 +170,8 @@ class Settings(BaseSettings):
 
         findings: list[str] = []
 
-        for field, default in _ADMIN_DEFAULTS.items():
-            if getattr(self, field) == default:
+        for field in ("admin_username", "admin_password"):
+            if not getattr(self, field):
                 findings.append(field)
 
         if self.admin_jwt_secret == _JWT_DEFAULT:

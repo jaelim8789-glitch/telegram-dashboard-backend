@@ -10,6 +10,7 @@ cannot consume another's budget.
 No secrets (passwords, API keys) appear in limiter keys or logs.
 """
 
+import threading
 import time
 
 from fastapi import Request
@@ -20,6 +21,9 @@ logger = get_logger(__name__)
 
 # { (ip, category): [timestamp, ...] }
 _window: dict[tuple[str, str], list[float]] = {}
+_window_lock = threading.Lock()
+_MAX_ENTRIES = 10_000
+_CLEANUP_INTERVAL_SECONDS = 300.0
 
 
 def _prune(category_key: tuple[str, str], window_seconds: float) -> list[float]:
@@ -33,6 +37,26 @@ def _prune(category_key: tuple[str, str], window_seconds: float) -> list[float]:
     else:
         _window.pop(category_key, None)
     return active
+
+
+def _periodic_cleanup() -> None:
+    """Remove all entries whose timestamps are older than window_seconds."""
+    now = time.time()
+    keys_to_expire: list[tuple[str, str]] = []
+    for key, timestamps in _window.items():
+        if not timestamps:
+            keys_to_expire.append(key)
+            continue
+        cutoff = now - max(ts for ts in timestamps) - 1.0
+        if timestamps[-1] < cutoff:
+            keys_to_expire.append(key)
+    for key in keys_to_expire:
+        _window.pop(key, None)
+    logger.debug("rate_limiter_cleanup", removed=len(keys_to_expire), remaining=len(_window))
+    threading.Timer(_CLEANUP_INTERVAL_SECONDS, _periodic_cleanup).start()
+
+
+_periodic_cleanup()
 
 
 def check_rate_limit(
@@ -49,7 +73,11 @@ def check_rate_limit(
         logger.warning("rate_limit_exceeded", category=category, ip=client_ip)
         return False
 
-    _window.setdefault(key, []).append(time.time())
+    with _window_lock:
+        if len(_window) >= _MAX_ENTRIES and key not in _window:
+            logger.warning("rate_limiter_at_capacity", ip=client_ip, category=category)
+            return False
+        _window.setdefault(key, []).append(time.time())
     return True
 
 

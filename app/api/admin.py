@@ -37,7 +37,8 @@ from app.services.account_health import get_health_summary
 from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
-from app.models.referral import ReferralCommission
+from app.models.referral import ReferralCommission, ReferralPayout
+from app.models.tenant import PaymentRecord, StarsPaymentRecord, Tenant
 from app.models.token import TokenBalance, TokenTransaction
 from datetime import timedelta
 
@@ -618,6 +619,11 @@ async def delete_user_by_phone(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 전화번호의 사용자를 찾을 수 없습니다.")
 
+    # Resolve tenant ID before deleting the tenant row
+    tresult = await db.execute(select(Tenant).where(Tenant.phone == phone).limit(1))
+    tenant = tresult.scalar_one_or_none()
+    tenant_id = tenant.id if tenant else None
+
     # 세션 삭제
     await db.execute(
         sa_text("DELETE FROM user_sessions WHERE user_id = :user_id"),
@@ -630,6 +636,25 @@ async def delete_user_by_phone(
         sa_text("DELETE FROM accounts WHERE phone = :phone"),
         {"phone": phone},
     )
+
+    # Financial records (PaymentRecord, StarsPaymentRecord, ReferralCommission, ReferralPayout)
+    if tenant_id:
+        await db.execute(
+            sa_text("DELETE FROM payment_records WHERE tenant_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        )
+        await db.execute(
+            sa_text("DELETE FROM stars_payment_records WHERE tenant_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        )
+        await db.execute(
+            sa_text("DELETE FROM referral_commissions WHERE referrer_id = :tenant_id OR referred_user_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        )
+        await db.execute(
+            sa_text("DELETE FROM referral_payouts WHERE referrer_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        )
 
     # Tenant 삭제
     await db.execute(
@@ -644,7 +669,7 @@ async def delete_user_by_phone(
         target_type="user",
         target_id=user.id,
         target_phone=phone,
-        detail="Admin hard-deleted user, tenant, sessions and linked account rows by phone",
+        detail="Admin hard-deleted user, tenant, sessions, accounts, and related referral/financial records by phone",
     )
     await db.delete(user)
     await db.commit()

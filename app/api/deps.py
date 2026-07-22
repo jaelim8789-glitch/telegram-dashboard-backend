@@ -6,7 +6,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_access_token, decode_user_id_from_token
+from app.core.security import decode_access_token, decode_user_access_token
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
 from app.crud import user as user_crud
@@ -75,10 +75,11 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_
         except jwt.PyJWTError:
             pass
         try:
-            user_id = decode_user_id_from_token(token)
+            user_payload = decode_user_access_token(token)
         except jwt.PyJWTError:
-            user_id = None
-        if user_id:
+            user_payload = None
+        if user_payload:
+            user_id = user_payload.get("sub", "")[len("user:"):]
             user = await user_crud.get_user(db, user_id)
             if user is not None and user.is_active:
                 tenant_id = await _resolve_tenant_by_phone(db, user.phone)

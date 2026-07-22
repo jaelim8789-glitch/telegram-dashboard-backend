@@ -28,7 +28,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             # Placeholder — adjust once real usage data is in from the first deploy.
             "monthly_ai_chat_limit": 20,
             "cooldown_minimum_minutes": 60,
-            "can_broadcast": True,
+            "can_broadcast": False,
             "can_schedule": False,
             "can_attach_images": False,
             "can_export_data": False,
