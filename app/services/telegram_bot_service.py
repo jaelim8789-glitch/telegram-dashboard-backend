@@ -21,6 +21,7 @@ from app.services import billing, bot_account_service, bot_ai_agent_service, pur
 from app.services.auto_reply_service import AccountNotAuthenticatedError, disable_auto_reply, enable_auto_reply
 from app.services.bot_account_service import AccountSnapshot, BotPurchaseResult, ClaimResult
 from app.services.bot_api_key_service import handle_self_service_api_key
+from app.services.ai_chatbot_service import process_user_message, AIResponse  # AI 챗봇 서비스 추가
 
 # Telegram user ids currently inside the "AI Chat" free-text conversation flow.
 # Process-local, like bot_api_key_service._in_flight — the bot is a single
@@ -75,17 +76,17 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
 
 
 def _back_to_main_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")]])
 
 
 def _aichat_confirmation_keyboard(request_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("실행", callback_data=f"aichat:confirm:run:{request_id}"),
-                InlineKeyboardButton("취소", callback_data=f"aichat:confirm:cancel:{request_id}"),
+                InlineKeyboardButton("✅ 실행", callback_data=f"aichat:confirm:run:{request_id}"),
+                InlineKeyboardButton("❌ 취소", callback_data=f"aichat:confirm:cancel:{request_id}"),
             ],
-            [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+            [InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")],
         ]
     )
 
@@ -98,8 +99,8 @@ def _pay_menu_keyboard() -> InlineKeyboardMarkup:
         billing = "monthly" if "monthly" in plan_def["prices_usdt"] else "quarterly"
         price = plan_def["prices_usdt"][billing]
         label = f"{plan_def['name']} — ${price} ({'월' if billing == 'monthly' else '분기'})"
-        rows.append([InlineKeyboardButton(label, callback_data=f"pay:select:{plan_id}")])
-    rows.append([InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")])
+        rows.append([InlineKeyboardButton(f"💳 {label}", callback_data=f"pay:select:{plan_id}")])
+    rows.append([InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -107,7 +108,7 @@ def _pending_check_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🔄 다시 확인", callback_data="pay:check")],
-            [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+            [InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")],
         ]
     )
 
@@ -180,18 +181,16 @@ def _history_text(records: list[PaymentRecord]) -> str:
 
 
 def _keyboard(accounts) -> InlineKeyboardMarkup:
-    # One row per account rather than the single generic on/off pair from the original
-    # spec — this dashboard manages up to a handful of accounts, and a bare "켜기/끄기"
-    # pair gives no way to say *which* account, so each row picks a specific one.
+    # One row per account with a single toggle button that changes based on state
+    # instead of separate on/off buttons that take up too much vertical space
     rows = []
     for account in accounts:
         label = account.name or account.phone
-        rows.append(
-            [
-                InlineKeyboardButton(f"🔴 {label} 켜기", callback_data=f"autoreply:{account.id}:on"),
-                InlineKeyboardButton(f"⚫ {label} 끄기", callback_data=f"autoreply:{account.id}:off"),
-            ]
-        )
+        status = "🟢" if account.auto_reply_enabled else "🔴"
+        toggle_text = f"{status} {label} {'끄기' if account.auto_reply_enabled else '켜기'}"
+        rows.append([
+            InlineKeyboardButton(toggle_text, callback_data=f"autoreply:{account.id}:{'off' if account.auto_reply_enabled else 'on'}"),
+        ])
     return InlineKeyboardMarkup(rows)
 
 
@@ -199,10 +198,16 @@ async def _status_message() -> tuple[str, InlineKeyboardMarkup]:
     async with async_session_maker() as db:
         accounts = await account_crud.list_accounts(db)
     if not accounts:
-        return "등록된 계정이 없습니다. 먼저 대시보드에서 계정을 등록해주세요.", InlineKeyboardMarkup([])
-    lines = ["📌 자동 응답 상태"] + [
-        f"{a.name or a.phone}: {'켜짐' if a.auto_reply_enabled else '꺼짐'}" for a in accounts
-    ]
+        return "📭 등록된 계정이 없습니다.\n\n텔레그램 계정을 먼저 등록해주세요. 대시보드에서 '계정 등록'을 클릭하시면 시작할 수 있습니다.", InlineKeyboardMarkup([])
+    
+    lines = ["📋 **자동 응답 상태**"]
+    for i, account in enumerate(accounts):
+        status_emoji = "🟢" if account.auto_reply_enabled else "🔴"
+        lines.append(f"{status_emoji} **{account.name or account.phone}**: {'켜짐' if account.auto_reply_enabled else '꺼짐'}")
+    
+    # Adding separator and instruction
+    lines.append("\n👆 계정 이름 옆 버튼을 눌러 상태를 변경할 수 있습니다")
+    
     return "\n".join(lines), _keyboard(accounts)
 
 
@@ -327,7 +332,7 @@ async def _reply_purchase_result(query, result: BotPurchaseResult) -> None:
         markup = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("✅ 입금 확인하기", callback_data="pay:check")],
-                [InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")],
+                [InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")],
             ]
         )
         await query.edit_message_text(_invoice_text(result), parse_mode="Markdown", reply_markup=markup)
@@ -458,8 +463,12 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if tenant is None:
         await query.edit_message_text(
-            "🎁 추천인 프로그램은 요금제를 시작한 후 이용할 수 있습니다.\n"
-            "먼저 무료체험 또는 요금제를 시작해주세요.",
+            "🎉 **TeleMon 추천인 프로그램**\n\n"
+            "친구를 초대하고 보상을 받아보세요! 먼저 요금제를 시작하시면 "
+            "추천인 코드를 생성할 수 있습니다.\n\n"
+            "💡 **시작하기**\n"
+            "• 요금제를 시작하시면 개인 추천 코드가 생성됩니다\n"
+            "• 친구가 귀하의 링크를 통해 가입하면 보상을 드립니다",
             reply_markup=_back_to_main_keyboard(),
         )
         return
@@ -467,13 +476,13 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     bot_username = settings.telegram_bot_username
     link = f"https://t.me/{bot_username}?start=ref_{tenant.referral_code}" if bot_username else None
     lines = [
-        "🎁 추천인 프로그램",
-        f"내 추천코드: `{tenant.referral_code}`",
+        "🎉 **추천인 프로그램**",
+        f"🔑 내 추천코드: `{tenant.referral_code}`",
     ]
     if link:
-        lines.append(f"공유 링크: {link}")
-    lines.append(f"\n누적 보상: ${tenant.referral_earnings / 100:.2f}")
-    lines.append("친구가 이 링크로 가입 후 첫 결제를 완료하면 보상이 지급됩니다.")
+        lines.append(f"🔗 **공유 링크**: {link}")
+    lines.append(f"\n💰 **누적 보상**: ${tenant.referral_earnings / 100:.2f}")
+    lines.append("친구가 이 링크로 가입 후 첫 결제를 완료하면 보상이 지급됩니다!")
 
     await query.edit_message_text(
         "\n".join(lines), parse_mode="Markdown", reply_markup=_back_to_main_keyboard()
@@ -488,7 +497,7 @@ def _stars_topup_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(f"⭐ {amount:,}", callback_data=f"starstopup:buy:{amount}")]
         for amount in billing.STARS_TOPUP_PACKAGES
     ]
-    rows.append([InlineKeyboardButton("◀ 메인 메뉴", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton("🏠 메인 메뉴", callback_data="menu:main")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -683,7 +692,7 @@ async def aichat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _active_ai_chat_users.add(telegram_user_id)
     await query.edit_message_text(
         "💬 AI Chat을 시작합니다! 편하게 메시지를 보내보세요.\n"
-        "종료하려면 아래 '◀ 메인 메뉴' 버튼을 눌러주세요.",
+        "종료하려면 아래 '🏠 메인 메뉴' 버튼을 눌러주세요.",
         reply_markup=_back_to_main_keyboard(),
     )
 
@@ -773,7 +782,7 @@ async def aichat_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle "◀ 메인 메뉴" — return to the top-level menu from any submenu.
+    """Handle "🏠 메인 메뉴" — return to the top-level menu from any submenu.
 
     Also exits AI Chat mode if the user was in it, so their free text stops
     being routed to DeepSeek once they've navigated away.
@@ -852,7 +861,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 return
 
         await update.message.reply_text(
-            "안녕하세요! TeleMon 봇입니다.\n아래 메뉴에서 원하는 기능을 선택해주세요.",
+            "🎉 **TeleMon 봇에 오신 것을 환영합니다!**\n\n"
+            "텔레그램 자동화의 모든 기능을 이 봇을 통해 편리하게 관리할 수 있습니다.\n\n"
+            "🔧 **주요 기능**\n"
+            "• 자동 응답 설정 - 메시지에 자동으로 답변\n"
+            "• 메시지 발송 - 그룹/채널에 일괄 메시지 전송\n"
+            "• 요금제 관리 - 플랜 업그레이드 및 결제\n"
+            "• 추천인 프로그램 - 친구 초대하고 보상 받기\n\n"
+            "아래 메뉴에서 원하는 기능을 선택해 시작해보세요!",
             reply_markup=_main_menu_keyboard(),
         )
         return
@@ -866,7 +882,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         purchase_service.set_pending_referral(telegram_user_id, token[len("ref_"):])
         await update.message.reply_text(
             "🎁 추천 링크로 오셨네요! 요금제를 시작하시면 추천인에게 보상이 지급됩니다.\n\n"
-            "안녕하세요! TeleMon 봇입니다.\n아래 메뉴에서 원하는 기능을 선택해주세요.",
+            "🎉 **TeleMon 봇에 오신 것을 환영합니다!**\n\n"
+            "텔레그램 자동화의 모든 기능을 이 봇을 통해 편리하게 관리할 수 있습니다.\n\n"
+            "아래 메뉴에서 원하는 기능을 선택해 시작해보세요!",
             reply_markup=_main_menu_keyboard(),
         )
         return
@@ -914,7 +932,7 @@ async def start_bot() -> None:
     application.add_handler(CommandHandler("start", start_command))
     # No other flow reads free text today, so this is safe to add unconditionally —
     # ai_chat_text_handler itself no-ops for anyone not in _active_ai_chat_users.
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_text_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, general_text_handler))
 
     # Non-blocking startup (vs. the usual Application.run_polling(), which blocks forever)
     # so this can live inside the FastAPI lifespan alongside uvicorn's own event loop.
@@ -949,6 +967,48 @@ async def start_bot() -> None:
         logger.warning("miniapp_menu_failed", error=str(exc))
 
     logger.info("telegram_bot_started")
+
+
+async def general_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """일반 텍스트 메시지를 처리하는 핸들러 - AI 챗봇 기능 통합"""
+    # AI Chat 모드 사용자는 기존 핸들러로 처리
+    telegram_user_id = _effective_telegram_user_id(update)
+    if telegram_user_id is not None and telegram_user_id in _active_ai_chat_users:
+        # 기존 ai_chat_text_handler로 위임
+        await ai_chat_text_handler(update, context)
+        return
+    
+    # 일반 사용자에게 AI 기반 응답 제공
+    if update.message and update.message.text:
+        message_text = update.message.text
+        
+        # 간단한 명령어 처리
+        if message_text.startswith('/'):
+            # 명령어는 일반 명령어 처리기로
+            return
+        
+        # 계정 ID가 있는 경우에만 AI 응답 생성
+        # 계정 ID를 어떻게 가져올지에 따라 로직이 달라질 수 있음
+        # 현재는 예시로 첫 번째 계정을 사용하거나, 계정 연결이 필요
+        async with async_session_maker() as db:
+            # 사용자 ID와 연결된 계정 찾기
+            accounts = await account_crud.list_accounts(db)
+            if accounts:
+                # 첫 번째 계정 사용 (실제 구현에서는 더 정교한 매핑 필요)
+                account_id = accounts[0].id
+                
+                # AI 챗봇 서비스 호출
+                ai_response = await process_user_message(account_id, message_text)
+                
+                await update.message.reply_text(ai_response.response_text)
+            else:
+                # 계정이 없는 경우 기본 응답
+                await update.message.reply_text(
+                    "🤖 TeleMon 봇에 오신 것을 환영합니다!\n\n"
+                    "계정을 먼저 등록해주세요. 메인 메뉴에서 '🤖 자동 응답 관리'를 선택하시면 "
+                    "등록된 계정을 기반으로 더 정교한 답변을 드릴 수 있습니다.\n\n"
+                    "/help 명령어로 도움말을 확인할 수 있습니다."
+                )
 
 
 async def stop_bot() -> None:

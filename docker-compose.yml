@@ -11,10 +11,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: telegram_dashboard
-      POSTGRES_PASSWORD: telegram_dashboard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telegram_dashboard_password}
       POSTGRES_DB: telegram_dashboard
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U telegram_dashboard"]
       interval: 5s
@@ -100,7 +102,7 @@ services:
       - ./scripts/db_backup_container.sh:/usr/local/bin/backup.sh:ro
     environment:
       PGUSER: telegram_dashboard
-      PGPASSWORD: telegram_dashboard
+      PGPASSWORD: ${POSTGRES_PASSWORD:-telegram_dashboard_password}
       PGHOST: db
       PGDATABASE: telegram_dashboard
       BACKUP_DIR: /backups
@@ -113,10 +115,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -128,3 +130,8 @@ volumes:
   media_data:
   bot_data:
   redis_data:
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
