@@ -28,8 +28,12 @@ services:
     build: .
     restart: unless-stopped
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
     deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
       update_config:
         order: start-first
         failure_action: rollback
@@ -49,6 +53,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
     volumes:
       - media_data:/app/media
       - bot_data:/app/data

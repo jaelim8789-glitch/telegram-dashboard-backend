@@ -1,28 +1,15 @@
+# docker-compose.override.yml — local / staging overrides
+# Usage:
+#   docker compose --profile full up -d     # production (from docker-compose.yml)
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d  # with overrides
+#
+# Set UVICORN_WORKERS=1 for single-worker dev, or leave default 2 for staging-like.
 services:
   backend:
     environment:
-      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@backend-db-1:5432/telegram_dashboard
-    networks:
-      - backend_default
-      - default
-
-  frontend:
-    networks:
-      - default
-
-  nginx:
-    image: nginx:alpine
-    environment:
-      NGINX_ENVSUBST_TEMPLATE_SUFFIX: .template
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /tmp/telegram-dashboard-backend/nginx/nginx-ssl.conf:/etc/nginx/conf.d/default.conf
-    ports:
-      - 80:80
-      - 443:443
-    networks:
-      - default
-
-networks:
-  backend_default:
-    external: true
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
