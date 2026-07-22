@@ -854,7 +854,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"👋 다시 오신 것을 환영합니다! TeleMon에 이미 가입된 계정입니다.\n\n"
                     f"📱 요금제: {plan.upper()}\n"
                     f"📊 상태: {status}\n"
-                    f"🌐 대시보드: https://app.telemon.online\n\n"
+                    f"🌐 대시보드: https://app.telemon.online\n"
+                    f"📱 미니앱: https://t.me/{settings.telegram_bot_username}?startapp\n\n"
                     f"아래 메뉴에서 원하는 기능을 선택해주세요.",
                     reply_markup=_main_menu_keyboard(),
                 )
@@ -868,6 +869,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• 메시지 발송 - 그룹/채널에 일괄 메시지 전송\n"
             "• 요금제 관리 - 플랜 업그레이드 및 결제\n"
             "• 추천인 프로그램 - 친구 초대하고 보상 받기\n\n"
+            "📱 **미니앱으로 빠르게 시작하기:** "
+            f"https://t.me/{settings.telegram_bot_username}?startapp\n\n"
             "아래 메뉴에서 원하는 기능을 선택해 시작해보세요!",
             reply_markup=_main_menu_keyboard(),
         )
@@ -884,6 +887,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "🎁 추천 링크로 오셨네요! 요금제를 시작하시면 추천인에게 보상이 지급됩니다.\n\n"
             "🎉 **TeleMon 봇에 오신 것을 환영합니다!**\n\n"
             "텔레그램 자동화의 모든 기능을 이 봇을 통해 편리하게 관리할 수 있습니다.\n\n"
+            f"📱 **미니앱으로 빠르게 시작하기:** https://t.me/{settings.telegram_bot_username}?startapp\n\n"
             "아래 메뉴에서 원하는 기능을 선택해 시작해보세요!",
             reply_markup=_main_menu_keyboard(),
         )
