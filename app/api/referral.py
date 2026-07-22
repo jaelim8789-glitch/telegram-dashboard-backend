@@ -54,7 +54,9 @@ from app.services.referral import (
     generate_stats_csv,
     get_admin_code_stats,
     get_leaderboard,
+    get_min_payout_threshold,
     get_my_commissions,
+    get_my_payouts,
     get_pending_payouts,
     get_referrer_tier,
     get_stats,
@@ -219,6 +221,60 @@ async def set_my_wallet_address(
     tenant = await _get_tenant(db, identity)
     await set_wallet_address(db, tenant.id, payload.wallet_address)
     return {"success": True, "message": "지갑 주소가 저장되었습니다."}
+
+
+@router.get("/payouts")
+async def get_my_payouts_endpoint(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    payouts = await get_my_payouts(db, tenant.id)
+    items = []
+    for p in payouts:
+        items.append(PayoutRecord(
+            id=p.id,
+            referrer_id=p.referrer_id,
+            referrer_phone=tenant.phone,
+            amount=p.amount,
+            status=p.status,
+            paid_at=p.paid_at,
+            created_at=p.created_at,
+        ))
+    return {"items": items, "total_count": len(items)}
+
+
+@router.get("/min-payout")
+async def get_min_payout_endpoint(
+    db: AsyncSession = Depends(get_db),
+):
+    min_amount = await get_min_payout_threshold(db)
+    return {"min_payout": min_amount}
+
+
+@router.post("/request-payout")
+async def request_payout_endpoint(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    if not tenant.is_distributor:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="총판만 지급 요청할 수 있습니다.")
+    payouts_created, total_amount = await process_payouts(db)
+    if payouts_created == 0:
+        min_amount = await get_min_payout_threshold(db)
+        return {
+            "success": False,
+            "message": f"최소 지급 기준액({min_amount}원)에 도달하지 않았거나 처리 가능한 커미션이 없습니다.",
+            "payouts_created": 0,
+            "total_amount": 0,
+        }
+    return {
+        "success": True,
+        "message": f"{payouts_created}건의 지급 요청이 접수되었습니다. 총 {total_amount}원이 검토 중입니다.",
+        "payouts_created": payouts_created,
+        "total_amount": total_amount,
+    }
 
 
 @router.get("/dashboard", response_model=ReferralDashboardResponse)

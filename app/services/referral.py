@@ -311,6 +311,19 @@ async def get_pending_payouts(db: AsyncSession) -> list[ReferralPayout]:
     return list(result.scalars().all())
 
 
+async def get_my_payouts(db: AsyncSession, referrer_id: str) -> list[ReferralPayout]:
+    result = await db.execute(
+        select(ReferralPayout)
+        .where(ReferralPayout.referrer_id == referrer_id)
+        .order_by(ReferralPayout.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_min_payout_threshold(db: AsyncSession) -> int:
+    return await get_min_payout(db)
+
+
 async def get_leaderboard(db: AsyncSession, limit: int = 20) -> list[dict]:
     tiers = await _load_tiers(db)
 
