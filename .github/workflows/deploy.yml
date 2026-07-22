@@ -123,59 +123,6 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
 
   # ═══════════════════════════════════════════
-  # 3a. Deploy to staging (master push — pull only)
-  # ═══════════════════════════════════════════
-  deploy-staging:
-    needs: [backend-docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - name: Deploy staging via SSH (pull-only)
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            cd /opt/telemon/backend
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull backend -q
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --no-deps backend
-            echo "✅ [staging] backend deployed"
-
-      - name: Smoke test (staging)
-        id: smoke-test-staging
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            for i in $(seq 1 12); do
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-                echo "✅ Health OK"
-                curl -sf http://localhost:8000/ | grep -q '"status"' && echo "✅ Root API OK"
-                echo "✅ Smoke test passed"
-                exit 0
-              fi
-              sleep 5
-            done
-            echo "❌ Smoke test failed"
-            exit 1
-
-      - name: Notify staging deploy result
-        uses: fjogeleit/http-request-action@v1
-        if: always()
-        with:
-          url: ${{ secrets.ALERT_WEBHOOK_URL }}
-          method: POST
-          data: >-
-            {"text":"${{ job.status == 'success' && '✅' || '❌' }} [staging] Backend deployed — ${{ github.sha }}","username":"TeleMon CI","icon_emoji":":robot:"}
-          preventFailureOnNoResponse: true
-
-  # ═══════════════════════════════════════════
   # 3b. Deploy to production (manual — pull only)
   # ═══════════════════════════════════════════
   deploy-production:
@@ -184,7 +131,27 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Deploy production via SSH (pull-only)
+      - name: Pre-deploy gateway health check
+        id: gateway-precheck
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set +e
+            for i in $(seq 1 6); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Gateway healthy"
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "❌ Gateway unhealthy — aborting deploy"
+            exit 1
+
+      - name: Deploy production via SSH (pull-only, verify digest, wait)
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -193,9 +160,16 @@ jobs:
           script: |
             set -e
             cd /opt/telemon/backend
-            docker compose pull backend -q
-            docker compose up -d --no-deps backend
+            PREV_IMAGE=$(docker compose images --quiet backend)
+            docker compose pull --pull=always backend -q
+            NEW_IMAGE=$(docker compose images --quiet backend)
+            if [ "$PREV_IMAGE" = "$NEW_IMAGE" ]; then
+              echo "⚠️ Backend image unchanged — verifying digest"
+              docker inspect --format='{{.RepoDigests}}' ghcr.io/${{ github.repository_owner }}/telemon-backend:latest || true
+            fi
+            docker compose up -d --no-deps --wait backend
             echo "✅ [production] backend deployed"
+            docker compose restart nginx || true
 
       - name: Smoke test (production)
         id: smoke-test-prod

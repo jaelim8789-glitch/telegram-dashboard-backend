@@ -30,7 +30,7 @@ if not str(settings.database_url).startswith("sqlite"):
     _engine_kwargs.update({
         "pool_size": 10,
         "max_overflow": 20,
-        "pool_recycle": 3600,
+        "pool_recycle": 1800,
         "pool_timeout": 30,
     })
 
