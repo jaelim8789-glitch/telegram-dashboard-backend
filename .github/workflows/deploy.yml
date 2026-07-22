@@ -42,12 +42,14 @@ jobs:
         name: Import check
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
 
       - run: python -m pytest tests/ -q --tb=short --timeout=30 2>&1 | tail -60
         name: Run tests
         continue-on-error: true # some pre-existing unrelated failures; import check above is the real gate
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
 
   # ═══════════════════════════════════════════
   # 2. Deploy (manual trigger or on master)
