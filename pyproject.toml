@@ -1,6 +1,10 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-n auto"
+markers = [
+    "slow: slow tests that require a real database (alembic downgrade)",
+]
 
 [tool.coverage.run]
 source = ["app"]
@@ -9,3 +13,40 @@ omit = ["app/workers/run_worker.py"]
 # default tracer can't see lines executed after a greenlet context switch (e.g. anything
 # after an `await session.execute(...)`) and under-reports them as missed.
 concurrency = ["greenlet"]
+
+[tool.coverage.report]
+# ═══════════════════════════════════════════════════════════════════════
+# Coverage threshold configuration
+#
+# The CI pipeline will warn when overall coverage drops below
+# fail_under and fail the build when it drops below the hard minimum.
+#
+# Current thresholds:
+#   fail_under  = 70  — CI job will FAIL if coverage < 70%
+#   warn_under  = 75  — CI job will WARN  if coverage < 75%
+#
+# These are intentionally conservative. As coverage improves, increase
+# these thresholds.
+# ═══════════════════════════════════════════════════════════════════════
+fail_under = 70
+show_missing = true
+skip_covered = false
+precision = 1
+sort = "Cover"
+
+# Exclude common non-testable patterns
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if False:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.coverage.html]
+directory = "coverage_html"
+title = "TeleMon Coverage Report"

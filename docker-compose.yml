@@ -1,8 +1,11 @@
+# ─── TeleMon Production Stack ────────────────────────────────────────
+# Profiles:  docker compose --profile frontend-only up -d
+#            docker compose --profile backend-only up -d
+#            docker compose --profile full up -d         (default)
+#
+# Profile-free services (db, db-backup) always start.
 services:
   # --- Database (PostgreSQL) ---
-  # Production: no host port mapping — only the `backend` container can reach db
-  # via the internal Docker network.  To connect from the host for local
-  # development, uncomment the `ports` block below.
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -10,8 +13,6 @@ services:
       POSTGRES_USER: telegram_dashboard
       POSTGRES_PASSWORD: telegram_dashboard
       POSTGRES_DB: telegram_dashboard
-    # ports:
-    #   - "5432:5432"          # uncomment for local host-run dev (uvicorn outside Docker)
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,23 +21,29 @@ services:
       timeout: 3s
       retries: 10
 
-  # No separate worker/Redis/queue: broadcasts are sent in-process via FastAPI
-  # BackgroundTasks (immediate) or the scheduler thread inside this same process
-  # (scheduled) — see app/services/broadcast_processor.py. Deliberately simplified so
-  # this runs on a single free web-service instance (e.g. Render's free tier), which
-  # doesn't offer an always-on background worker for free.
   backend:
+    image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-backend:${TAG:-latest}
     build: .
     restart: unless-stopped
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    deploy:
+      update_config:
+        order: start-first
+        failure_action: rollback
+        delay: 10s
     depends_on:
       db:
         condition: service_healthy
-    # No host port mapping — nginx is the single public entrypoint.
-    # Uncomment below for direct-backend access during local debugging:
-    # ports:
-    #   - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - backend-only
+      - full
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
@@ -45,6 +52,7 @@ services:
       - bot_data:/app/data
 
   frontend:
+    image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-frontend:${TAG:-latest}
     build:
       context: ../telegram-dashboard
       args:
@@ -54,9 +62,17 @@ services:
         NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: "telemon_verify_bot"
     restart: unless-stopped
     depends_on:
-      - backend
-    # No host port mapping on purpose — nginx is the single public entrypoint (port 3000
-    # is also frequently already taken by other local projects on the same machine).
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    profiles:
+      - frontend-only
+      - full
 
   nginx:
     build: ./nginx
@@ -66,8 +82,49 @@ services:
       - backend
     ports:
       - "80:80"
+    profiles:
+      - frontend-only
+      - backend-only
+      - full
+
+  db-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: |
+      sh -c '
+        echo "0 3 * * * /usr/local/bin/backup.sh" > /etc/crontabs/root
+        crond -f -l 2
+      '
+    volumes:
+      - /backups/telemon:/backups
+      - ./scripts/db_backup_container.sh:/usr/local/bin/backup.sh:ro
+    environment:
+      PGUSER: telegram_dashboard
+      PGPASSWORD: telegram_dashboard
+      PGHOST: db
+      PGDATABASE: telegram_dashboard
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: 7
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ─── Redis (caching + task queue) ──────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 volumes:
   pgdata:
   media_data:
   bot_data:
+  redis_data:

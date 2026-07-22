@@ -12,6 +12,8 @@ Reliability semantics (Sprint 22):
 """
 
 import asyncio
+from collections import defaultdict
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -264,3 +266,40 @@ async def _run_daily_content_generation_wrapper() -> None:
             await run_daily_content_generation(db)
     except Exception as exc:
         logger.error("content_calendar_daily_job_failed", error=str(exc))
+
+
+# ─── Job monitoring / metrics ────────────────────────────────────────────
+# Tracks execution duration, success/failure per job for observability.
+_job_stats: dict[str, dict] = defaultdict(lambda: {"runs": 0, "failures": 0, "total_duration_ms": 0, "last_duration_ms": 0, "last_run": None})
+
+
+async def _run_wrapped(job_id: str, fn, *args, **kwargs):
+    """Wrap scheduler job execution with duration/failure tracking."""
+    start = datetime.now(timezone.utc)
+    try:
+        result = await fn(*args, **kwargs)
+        _job_stats[job_id]["runs"] += 1
+        _job_stats[job_id]["last_run"] = start.isoformat()
+        return result
+    except Exception as e:
+        _job_stats[job_id]["failures"] += 1
+        _job_stats[job_id]["last_run"] = start.isoformat()
+        logger.error("scheduler_job_failed", job_id=job_id, error=str(e))
+        raise
+    finally:
+        duration = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+        _job_stats[job_id]["last_duration_ms"] = round(duration, 1)
+        _job_stats[job_id]["total_duration_ms"] += round(duration, 1)
+        _job_stats[job_id]["last_run"] = start.isoformat()
+
+
+def get_job_stats() -> dict:
+    """Return current job execution statistics. Thread-safe (read-only)."""
+    return dict(_job_stats)
+
+
+async def log_job_stats():
+    """Periodic job stats logger — called by the tick exporter."""
+    stats = get_job_stats()
+    if stats:
+        logger.info("scheduler_job_stats", stats=stats)

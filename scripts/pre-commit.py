@@ -3,7 +3,8 @@
 
 Checks:
 1. Python import check (from app.main import app)
-2. Run related tests (detects changed files and runs matching tests)
+2. Alembic single-head check (prevent multi-head commits)
+3. Run related tests (detects changed files and runs matching tests)
 
 Install:  cp scripts/pre-commit.py .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 """
@@ -18,6 +19,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 os.chdir(REPO_ROOT)
 
 errors = 0
+
+ALEMBIC_DIR = REPO_ROOT / "alembic"
+
+def check_alembic_single_head():
+    """Alembic 멀티헤드 방지: heads가 정확히 1줄인지 확인."""
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+    if result.returncode != 0:
+        return  # alembic이 설정되지 않은 환경 (CI 등)에서는 스킵
+
+    heads = [line for line in result.stdout.strip().split("\n") if line.strip()]
+    if len(heads) != 1:
+        print(f"❌ [alembic-heads] 멀티헤드 감지 ({len(heads)}개 head):")
+        for h in heads:
+            print(f"   - {h.strip()}")
+        print("   alembic merge 명령으로 병합 후 커밋하세요.")
+        return False
+    print(f"✅ [alembic-heads] 단일 head 확인 ({heads[0].split()[0]})")
+    return True
 
 def run(cmd, label):
     global errors
@@ -38,6 +60,11 @@ run(
     f"{sys.executable} -c \"import sys; sys.path.insert(0, '.'); from app.main import app; print('app loaded OK')\"",
     "import-check",
 )
+
+# 1b. Alembic 멀티헤드 방지
+print("-" * 60)
+if not check_alembic_single_head():
+    errors += 1
 
 # 2. Get changed .py files
 staged = subprocess.run(

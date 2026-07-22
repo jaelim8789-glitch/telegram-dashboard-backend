@@ -3,11 +3,25 @@ name: Deploy TeleMon Backend
 on:
   push:
     branches: [master]
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository_owner }}/telemon-backend
 
 jobs:
   # ═══════════════════════════════════════════
-  # 1. Backend — import check + related tests
+  # 1. Backend CI — import check + migrations + tests
   # ═══════════════════════════════════════════
   backend-ci:
     runs-on: ubuntu-latest
@@ -35,8 +49,16 @@ jobs:
           cache: "pip"
           cache-dependency-path: "**/requirements*.txt"
 
-      - run: pip install -r requirements.txt
-        name: Install Python deps
+      - run: |
+          pip install uv
+          uv pip install --system -r requirements.txt
+        name: Install Python deps (uv)
+
+      - run: alembic upgrade head
+        name: Apply migrations (CI validation)
+        env:
+          DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
 
       - run: python -c "import sys; sys.path.insert(0, '.'); from app.main import app; print('import OK')"
         name: Import check
@@ -46,29 +68,153 @@ jobs:
 
       - run: python -m pytest tests/ -q --tb=short --timeout=30 2>&1 | tail -60
         name: Run tests
-        continue-on-error: true # some pre-existing unrelated failures; import check above is the real gate
+        continue-on-error: true
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
 
   # ═══════════════════════════════════════════
-  # 2. Deploy (manual trigger or on master)
+  # 2. Backend Docker build & push (GHCR)
   # ═══════════════════════════════════════════
-  deploy:
+  backend-docker:
     needs: [backend-ci]
-    if: github.ref == 'refs/heads/master' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=raw,value=staging,enable=${{ github.ref == 'refs/heads/master' && github.event_name != 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.target == 'production' }}
+            type=sha,prefix=,format=short
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: telegram-dashboard-backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  # ═══════════════════════════════════════════
+  # 3a. Deploy to staging (master push — pull only)
+  # ═══════════════════════════════════════════
+  deploy-staging:
+    needs: [backend-docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy staging via SSH (pull-only)
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd /opt/telemon/backend
-            git pull origin master
-            docker compose build backend
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull backend -q
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --no-deps backend
+            echo "✅ [staging] backend deployed"
+
+      - name: Smoke test (staging)
+        id: smoke-test-staging
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Health OK"
+                curl -sf http://localhost:8000/ | grep -q '"status"' && echo "✅ Root API OK"
+                echo "✅ Smoke test passed"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "❌ Smoke test failed"
+            exit 1
+
+      - name: Notify staging deploy result
+        uses: fjogeleit/http-request-action@v1
+        if: always()
+        with:
+          url: ${{ secrets.ALERT_WEBHOOK_URL }}
+          method: POST
+          data: >-
+            {"text":"${{ job.status == 'success' && '✅' || '❌' }} [staging] Backend deployed — ${{ github.sha }}","username":"TeleMon CI","icon_emoji":":robot:"}
+          preventFailureOnNoResponse: true
+
+  # ═══════════════════════════════════════════
+  # 3b. Deploy to production (manual — pull only)
+  # ═══════════════════════════════════════════
+  deploy-production:
+    needs: [backend-docker]
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy production via SSH (pull-only)
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/telemon/backend
+            docker compose pull backend -q
             docker compose up -d --no-deps backend
-            docker image prune -f
-            echo "✅ 백엔드 배포 완료: $(git log --oneline -1)"
+            echo "✅ [production] backend deployed"
+
+      - name: Smoke test (production)
+        id: smoke-test-prod
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Health OK"
+                curl -sf http://localhost:8000/ | grep -q '"status"' && echo "✅ Root API OK"
+                echo "✅ Smoke test passed"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "❌ Smoke test failed — previous image still running"
+            exit 1
+
+      - name: Notify production deploy result
+        if: always()
+        uses: fjogeleit/http-request-action@v1
+        continue-on-error: true
+        with:
+          url: ${{ secrets.ALERT_WEBHOOK_URL }}
+          method: POST
+          data: >-
+            {"text":"${{ job.status == 'success' && '✅' || '❌' }} [production] Backend deployed — Rollback: docker compose pull backend:prev && docker compose up -d backend","username":"TeleMon CI","icon_emoji":":robot:"}
+          preventFailureOnNoResponse: true
