@@ -1,0 +1,38 @@
+# TeleMon Staging Environment
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+#
+# This overrides the production compose to run a parallel stack with:
+#   - Separate DB volume (pgdata_staging)
+#   - Different ports: 8080 (nginx), 5433 (db, host mapping for backup)
+#   - Staging-specific env vars
+#   - No SSL override (plain HTTP on staging port)
+
+services:
+  db:
+    volumes:
+      - pgdata_staging:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  backend:
+    environment:
+      ENVIRONMENT: staging
+      TAG: staging
+    ports:
+      - "8000:8000"
+
+  frontend:
+    environment:
+      TAG: staging
+    build:
+      args:
+        NEXT_PUBLIC_SITE_URL: "https://staging.telemon.online"
+        NEXT_PUBLIC_APP_URL: "https://staging.telemon.online"
+
+  nginx:
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata_staging:
