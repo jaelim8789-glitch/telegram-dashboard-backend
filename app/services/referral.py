@@ -433,6 +433,18 @@ async def approve_payout(db: AsyncSession, payout_id: str, actor_id: str | None 
     if not payout or payout.status != "pending":
         return False
 
+    # Race condition guard: if any commission for this referrer has already been
+    # marked paid by a concurrent payout approval, refuse to double-pay.
+    # In production this should use SELECT FOR UPDATE to lock the relevant rows.
+    existing_paid = await db.execute(
+        select(ReferralCommission.id).where(
+            ReferralCommission.referrer_id == payout.referrer_id,
+            ReferralCommission.status == "paid",
+        ).limit(1)
+    )
+    if existing_paid.first() is not None:
+        return False
+
     payout.status = "completed"
     payout.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -557,10 +569,12 @@ async def get_leaderboard(db: AsyncSession, limit: int = 20) -> list[dict]:
         tenant = await db.get(Tenant, row.referrer_id)
         count = row.ref_count
         rate, tier_label, dist_level = _get_tier(count, tiers)
+        raw_phone = tenant.phone if tenant else "unknown"
+        masked_phone = f"{raw_phone[:3]}****{raw_phone[-4:]}" if len(raw_phone) >= 7 else raw_phone
         entries.append({
             "rank": rank,
             "referrer_id": row.referrer_id,
-            "phone": tenant.phone if tenant else "unknown",
+            "phone": masked_phone,
             "referral_count": count,
             "total_commission_earned": row.total_earned,
             "tier": tier_label,

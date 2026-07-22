@@ -9,10 +9,15 @@ from app.core.limits import OTP_CODE_LENGTH
 
 JWT_ALGORITHM = "HS256"
 JWT_SUBJECT = "admin"
-# User-session tokens (Sprint 6 phone-verified login) use `sub="user:<id>"` so they're
-# unmistakably distinct from the fixed admin subject above, while still being signed
-# with the same secret — there's only one operator either way, just two login paths.
 USER_JWT_SUBJECT_PREFIX = "user:"
+
+# Separate secret for user tokens. Defaults to admin_jwt_secret for backward
+# compatibility but reads from JWT_USER_SECRET env var when set, so user tokens
+# can be revoked independently by rotating the user secret without invalidating
+# admin sessions.
+def _get_user_jwt_secret() -> str:
+    import os
+    return os.getenv("JWT_USER_SECRET", settings.admin_jwt_secret)
 
 
 def verify_admin_credentials(username: str, password: str) -> bool:
@@ -59,17 +64,17 @@ def hash_api_key(raw_key: str) -> str:
 def create_user_access_token(user_id: str) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.admin_jwt_expire_minutes)
     payload = {"sub": f"{USER_JWT_SUBJECT_PREFIX}{user_id}", "exp": expires_at}
-    return jwt.encode(payload, settings.admin_jwt_secret, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, _get_user_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def decode_user_id_from_token(token: str) -> str | None:
-    """Returns the user id if `token` is a valid, unexpired *user* token, or None if it's
+def decode_user_access_token(token: str) -> dict | None:
+    """Returns the payload dict for a valid, unexpired user token, or None if it's
     a well-formed token for something else (e.g. an admin token). Raises jwt exceptions
-    for a malformed/expired/tampered token, same as decode_access_token."""
-    payload = jwt.decode(token, settings.admin_jwt_secret, algorithms=[JWT_ALGORITHM])
+    for a malformed/expired/tampered token."""
+    payload = jwt.decode(token, _get_user_jwt_secret(), algorithms=[JWT_ALGORITHM])
     sub = payload.get("sub", "")
     if isinstance(sub, str) and sub.startswith(USER_JWT_SUBJECT_PREFIX):
-        return sub[len(USER_JWT_SUBJECT_PREFIX) :]
+        return payload
     return None
 
 

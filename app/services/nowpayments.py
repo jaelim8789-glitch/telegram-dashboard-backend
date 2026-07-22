@@ -26,6 +26,7 @@ from app.core.time import utcnow_naive
 from app.models.nowpayments import NowPaymentsTransaction
 from app.models.tenant import Tenant
 from app.services.cryptomus import activate_tenant_plan
+from app.services.referral import create_commission
 
 logger = get_logger(__name__)
 
@@ -204,7 +205,11 @@ class NOWPaymentsService:
             
             # 플랜 적용
             await activate_tenant_plan(db, tenant_id, plan_id)
-            
+
+            # 추천인 커미션 생성
+            amount_cents = int(paid_amount * 100)
+            await create_commission(db, tenant_id, payment_id, "nowpayments", amount_cents)
+
             logger.info(f"Successfully processed payment {payment_id} for tenant {tenant_id}, plan {plan_id}")
         
         await db.commit()
