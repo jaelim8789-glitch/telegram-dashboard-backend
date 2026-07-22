@@ -22,6 +22,8 @@ from app.schemas.referral import (
     AdminPendingCommissionResponse,
     AdminSettingItem,
     AdminSettingsResponse,
+    BadgeInfo,
+    BadgesResponse,
     ChangeCodeRequest,
     CommissionItem,
     DailyStatsItem,
@@ -29,10 +31,14 @@ from app.schemas.referral import (
     DistributorListResponse,
     DistributorStatusResponse,
     GenerateReferralCodeResponse,
+    GetDistributorMemoResponse,
+    InstantCashoutRequest,
+    InstantCashoutResponse,
     LeaderboardEntry,
     LeaderboardResponse,
     MyCommissionsResponse,
     PayoutRecord,
+    PendingPayoutCountResponse,
     ProcessPayoutResponse,
     ReferralDashboardResponse,
     ReferralReferredUser,
@@ -40,19 +46,25 @@ from app.schemas.referral import (
     RegisterDistributorResponse,
     RejectPayoutRequest,
     SetChatIdRequest,
+    SetDistributorMemoRequest,
     SetDistributorRateRequest,
+    SetPayoutMethodRequest,
     SettlementAuditItem,
     SettlementAuditResponse,
     SetWalletRequest,
     SuspendDistributorRequest,
     UpdateSettingsRequest,
+    WeeklyMission,
+    WeeklyMissionsResponse,
 )
 from app.services.referral import (
     approve_payout,
     cancel_commission,
+    create_instant_payout,
     generate_commissions_csv,
     generate_stats_csv,
     get_admin_code_stats,
+    get_badges,
     get_leaderboard,
     get_min_payout_threshold,
     get_my_commissions,
@@ -60,8 +72,10 @@ from app.services.referral import (
     get_pending_payouts,
     get_referrer_tier,
     get_stats,
+    get_weekly_missions,
     process_payouts,
     set_config,
+    set_payout_method,
     set_wallet_address,
 )
 
@@ -89,18 +103,14 @@ async def _get_tenant(db: AsyncSession, identity: Identity) -> Tenant:
 
 
 async def _get_or_create_referral_code(db: AsyncSession, tenant_id: str) -> ReferralCode:
-    result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant_id)
-    )
+    result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant_id))
     existing = result.scalar_one_or_none()
     if existing:
         return existing
 
     for attempt in range(MAX_GENERATION_RETRIES):
         code = _generate_code()
-        existing_code = await db.execute(
-            select(ReferralCode).where(ReferralCode.code == code)
-        )
+        existing_code = await db.execute(select(ReferralCode).where(ReferralCode.code == code))
         if existing_code.scalar_one_or_none() is None:
             ref_code = ReferralCode(code=code, owner_id=tenant_id)
             db.add(ref_code)
@@ -135,15 +145,10 @@ async def get_my_referral_code(
     db: AsyncSession = Depends(get_db),
 ):
     tenant = await _get_tenant(db, identity)
-    result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-    )
+    result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
     ref_code = result.scalar_one_or_none()
     if not ref_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.")
     return GenerateReferralCodeResponse(code=ref_code.code, referral_code_id=ref_code.id)
 
 
@@ -153,15 +158,10 @@ async def get_my_referral_link(
     db: AsyncSession = Depends(get_db),
 ):
     tenant = await _get_tenant(db, identity)
-    result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-    )
+    result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
     ref_code = result.scalar_one_or_none()
     if not ref_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.")
     link = f"https://t.me/{settings.telegram_bot_username}?start=ref_{ref_code.code}"
     return {"link": link, "code": ref_code.code}
 
@@ -223,6 +223,17 @@ async def set_my_wallet_address(
     return {"success": True, "message": "지갑 주소가 저장되었습니다."}
 
 
+@router.post("/set-payout-method")
+async def set_my_payout_method(
+    payload: SetPayoutMethodRequest,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    await set_payout_method(db, tenant.id, payload.method, payload.wallet_address)
+    return {"success": True, "message": f"지급 방식이 '{payload.method}'로 변경되었습니다."}
+
+
 @router.get("/payouts")
 async def get_my_payouts_endpoint(
     identity: Identity = Depends(get_current_identity),
@@ -237,6 +248,8 @@ async def get_my_payouts_endpoint(
             referrer_id=p.referrer_id,
             referrer_phone=tenant.phone,
             amount=p.amount,
+            fee=p.fee,
+            payout_type=p.payout_type,
             status=p.status,
             paid_at=p.paid_at,
             created_at=p.created_at,
@@ -277,53 +290,67 @@ async def request_payout_endpoint(
     }
 
 
+@router.post("/instant-cashout", response_model=InstantCashoutResponse)
+async def instant_cashout_endpoint(
+    payload: InstantCashoutRequest | None = None,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    result = await create_instant_payout(db, tenant.id, payload.amount if payload else None)
+    if not result["success"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["message"])
+    return InstantCashoutResponse(**result)
+
+
 @router.get("/dashboard", response_model=ReferralDashboardResponse)
 async def get_referral_dashboard(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services.referral import _check_badges, _get_or_create_distributor_level, get_weekly_missions
+
     tenant = await _get_tenant(db, identity)
 
-    ref_code_result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-    )
+    ref_code_result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
     ref_code = ref_code_result.scalar_one_or_none()
 
-    referred_result = await db.execute(
-        select(Tenant).where(Tenant.referred_by == tenant.id)
-    )
+    referred_result = await db.execute(select(Tenant).where(Tenant.referred_by == tenant.id))
     referred_tenants = list(referred_result.scalars().all())
 
     referred_users = []
     for rt in referred_tenants:
         has_paid = rt.subscription_status == "active" and rt.plan != "free"
+        from app.services.referral import get_referral_count
+        ref_count = await get_referral_count(db, rt.id)
         referred_users.append(ReferralReferredUser(
             tenant_id=rt.id,
             phone=rt.phone,
             plan=rt.plan,
             has_paid=has_paid,
             joined_at=rt.created_at,
+            level=ref_count if rt.is_distributor else None,
         ))
 
     pending_sum = await db.execute(
         select(func.coalesce(func.sum(ReferralCommission.commission_amount), 0))
-        .where(
-            ReferralCommission.referrer_id == tenant.id,
-            ReferralCommission.status == "pending",
-        )
+        .where(ReferralCommission.referrer_id == tenant.id, ReferralCommission.status == "pending")
     )
     pending_total = pending_sum.scalar_one_or_none() or 0
 
     paid_sum = await db.execute(
         select(func.coalesce(func.sum(ReferralCommission.commission_amount), 0))
-        .where(
-            ReferralCommission.referrer_id == tenant.id,
-            ReferralCommission.status == "paid",
-        )
+        .where(ReferralCommission.referrer_id == tenant.id, ReferralCommission.status == "paid")
     )
     paid_total = paid_sum.scalar_one_or_none() or 0
 
-    rate, tier_label = await get_referrer_tier(db, tenant.id)
+    rate, tier_label, dist_level = await get_referrer_tier(db, tenant.id)
+    badges = await _check_badges(db, tenant.id)
+    dl = await _get_or_create_distributor_level(db, tenant.id)
+    missions = await get_weekly_missions(db, tenant.id)
+
+    badges_full = await get_badges(db, tenant.id)
+    earned_badges = [b for b in badges_full if b.get("earned_at")]
 
     return ReferralDashboardResponse(
         my_code=ref_code.code if ref_code else None,
@@ -331,7 +358,34 @@ async def get_referral_dashboard(
         referred_users=referred_users,
         pending_commission_total=pending_total,
         paid_commission_total=paid_total,
+        tier_label=tier_label,
+        tier_rate=rate,
+        distributor_level=dl.level,
+        badges=[b["key"] for b in earned_badges],
+        weekly_referrals=dl.weekly_referrals,
     )
+
+
+@router.get("/badges", response_model=BadgesResponse)
+async def get_my_badges(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    badges = await get_badges(db, tenant.id)
+    from app.services.referral import BADGE_DEFINITIONS
+    items = [BadgeInfo(badge_key=b["key"], earned_at=b.get("earned_at")) for b in badges]
+    return BadgesResponse(badges=items, all_badges=BADGE_DEFINITIONS)
+
+
+@router.get("/weekly-missions", response_model=WeeklyMissionsResponse)
+async def get_my_weekly_missions(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_tenant(db, identity)
+    missions = await get_weekly_missions(db, tenant.id)
+    return WeeklyMissionsResponse(missions=[WeeklyMission(**m) for m in missions])
 
 
 @router.get("/admin/pending", response_model=AdminPendingCommissionResponse)
@@ -358,6 +412,7 @@ async def get_admin_pending_commissions(
             amount=c.amount,
             commission_rate=c.commission_rate,
             commission_amount=c.commission_amount,
+            level=c.level,
             created_at=c.created_at,
         ))
 
@@ -373,15 +428,9 @@ async def mark_commission_paid(
 ):
     commission = await db.get(ReferralCommission, commission_id)
     if not commission:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="해당 커미션을 찾을 수 없습니다.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 커미션을 찾을 수 없습니다.")
     if commission.status == "paid":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 지급 완료된 커미션입니다.",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미 지급 완료된 커미션입니다.")
     commission.status = "paid"
     await db.commit()
 
@@ -418,6 +467,8 @@ async def get_admin_pending_payouts(
             referrer_id=p.referrer_id,
             referrer_phone=referrer.phone if referrer else "unknown",
             amount=p.amount,
+            fee=p.fee,
+            payout_type=p.payout_type,
             status=p.status,
             paid_at=p.paid_at,
             created_at=p.created_at,
@@ -434,10 +485,7 @@ async def admin_approve_payout(
 ):
     success = await approve_payout(db, payout_id, actor_id=identity.tenant_id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="해당 지급대상을 찾을 수 없거나 이미 처리되었습니다.",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="해당 지급대상을 찾을 수 없거나 이미 처리되었습니다.")
     return {"success": True, "message": "지급이 승인되었습니다. 관련 커미션이 지급 완료 처리되었습니다."}
 
 
@@ -446,9 +494,7 @@ async def get_admin_payouts(
     db: AsyncSession = Depends(get_db),
     _admin: None = Depends(require_admin),
 ):
-    result = await db.execute(
-        select(ReferralPayout).order_by(ReferralPayout.created_at.desc()).limit(50)
-    )
+    result = await db.execute(select(ReferralPayout).order_by(ReferralPayout.created_at.desc()).limit(50))
     payouts = list(result.scalars().all())
 
     items = []
@@ -459,6 +505,8 @@ async def get_admin_payouts(
             referrer_id=p.referrer_id,
             referrer_phone=referrer.phone if referrer else "unknown",
             amount=p.amount,
+            fee=p.fee,
+            payout_type=p.payout_type,
             status=p.status,
             paid_at=p.paid_at,
             created_at=p.created_at,
@@ -504,10 +552,7 @@ async def admin_cancel_commission(
 ):
     success = await cancel_commission(db, commission_id, actor_id=identity.tenant_id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="해당 커미션을 찾을 수 없거나 이미 취소되었습니다.",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="해당 커미션을 찾을 수 없거나 이미 취소되었습니다.")
     return {"success": True, "message": "커미션이 취소되었습니다."}
 
 
@@ -523,18 +568,13 @@ async def change_referral_code(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
 
     tenant = await _get_tenant(db, identity)
-    result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-    )
+    result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
     ref_code = result.scalar_one_or_none()
     if not ref_code:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다.")
 
     existing = await db.execute(
-        select(ReferralCode).where(
-            ReferralCode.code == payload.new_code,
-            ReferralCode.owner_id != tenant.id,
-        )
+        select(ReferralCode).where(ReferralCode.code == payload.new_code, ReferralCode.owner_id != tenant.id)
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미 사용 중인 코드입니다.")
@@ -557,9 +597,7 @@ async def get_referral_qr(
     import qrcode
 
     tenant = await _get_tenant(db, identity)
-    result = await db.execute(
-        select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-    )
+    result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
     ref_code = result.scalar_one_or_none()
     if not ref_code:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다.")
@@ -617,11 +655,9 @@ async def list_distributors(
     db: AsyncSession = Depends(get_db),
     _admin: None = Depends(require_admin),
 ):
-    from app.services.referral import get_config
+    from app.services.referral import get_config, get_referral_count
 
-    codes_result = await db.execute(
-        select(ReferralCode.owner_id).distinct()
-    )
+    codes_result = await db.execute(select(ReferralCode.owner_id).distinct())
     owner_ids = [row[0] for row in codes_result.all()]
 
     items = []
@@ -630,45 +666,30 @@ async def list_distributors(
         if not tenant:
             continue
 
-        ref_code_result = await db.execute(
-            select(ReferralCode).where(ReferralCode.owner_id == tenant.id)
-        )
+        ref_code_result = await db.execute(select(ReferralCode).where(ReferralCode.owner_id == tenant.id))
         ref_code = ref_code_result.scalar_one_or_none()
 
         count_result = await db.execute(
-            select(func.count())
-            .select_from(ReferralCommission)
-            .where(
-                ReferralCommission.referrer_id == tenant.id,
-                ReferralCommission.status.in_(["pending", "paid"]),
-            )
+            select(func.count()).select_from(ReferralCommission)
+            .where(ReferralCommission.referrer_id == tenant.id, ReferralCommission.status.in_(["pending", "paid"]))
         )
         referral_count = count_result.scalar_one() or 0
 
         amount_result = await db.execute(
             select(func.coalesce(func.sum(ReferralCommission.amount), 0))
-            .where(
-                ReferralCommission.referrer_id == tenant.id,
-                ReferralCommission.status.in_(["pending", "paid"]),
-            )
+            .where(ReferralCommission.referrer_id == tenant.id, ReferralCommission.status.in_(["pending", "paid"]))
         )
         total_revenue = amount_result.scalar_one() or 0
 
         commission_result = await db.execute(
             select(func.coalesce(func.sum(ReferralCommission.commission_amount), 0))
-            .where(
-                ReferralCommission.referrer_id == tenant.id,
-                ReferralCommission.status.in_(["pending", "paid"]),
-            )
+            .where(ReferralCommission.referrer_id == tenant.id, ReferralCommission.status.in_(["pending", "paid"]))
         )
         total_commission = commission_result.scalar_one() or 0
 
         payout_result = await db.execute(
             select(func.coalesce(func.sum(ReferralPayout.amount), 0))
-            .where(
-                ReferralPayout.referrer_id == tenant.id,
-                ReferralPayout.status == "completed",
-            )
+            .where(ReferralPayout.referrer_id == tenant.id, ReferralPayout.status == "completed")
         )
         total_payout = payout_result.scalar_one() or 0
 
@@ -677,6 +698,9 @@ async def list_distributors(
 
         status_raw = await get_config(db, f"distributor_status:{tenant.id}")
         status = "suspended" if status_raw == "suspended" else "active"
+
+        from app.services.referral import get_referrer_tier
+        _, _, level = await get_referrer_tier(db, tenant.id)
 
         items.append(DistributorListItem(
             tenant_id=tenant.id,
@@ -689,6 +713,7 @@ async def list_distributors(
             total_payout=total_payout,
             commission_rate_override=commission_rate_override,
             status=status,
+            level=level,
             created_at=tenant.created_at,
         ))
 
@@ -795,9 +820,7 @@ async def get_settlement_audit_logs(
 ):
     result = await db.execute(
         select(ReferralAuditLog)
-        .where(
-            ReferralAuditLog.action.contains("payout"),
-        )
+        .where(ReferralAuditLog.action.contains("payout"))
         .order_by(ReferralAuditLog.created_at.desc())
         .limit(limit)
     )
@@ -805,10 +828,7 @@ async def get_settlement_audit_logs(
 
     result2 = await db.execute(
         select(ReferralAuditLog)
-        .where(
-            ReferralAuditLog.action.contains("commission"),
-            ~ReferralAuditLog.action.contains("payout"),
-        )
+        .where(ReferralAuditLog.action.contains("commission"), ~ReferralAuditLog.action.contains("payout"))
         .order_by(ReferralAuditLog.created_at.desc())
         .limit(limit)
     )
@@ -816,11 +836,7 @@ async def get_settlement_audit_logs(
 
     result3 = await db.execute(
         select(ReferralAuditLog)
-        .where(
-            ReferralAuditLog.action.contains("rate"),
-            ~ReferralAuditLog.action.contains("payout"),
-            ~ReferralAuditLog.action.contains("commission"),
-        )
+        .where(ReferralAuditLog.action.contains("rate"), ~ReferralAuditLog.action.contains("payout"), ~ReferralAuditLog.action.contains("commission"))
         .order_by(ReferralAuditLog.created_at.desc())
         .limit(limit)
     )
