@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import text
 
@@ -98,6 +99,8 @@ from app.api.chats import router as chats_router
 from app.api.push_notifications import router as push_router
 from app.api.runtime import router as runtime_router
 from app.api.smart_folders import router as smart_folders_router
+from app.routes.ws import ws_router
+from app.routes.dashboard import dashboard_router
 from app.ai.tools.registry import get_tool_registry
 from app.ai.task_queue.worker import get_task_worker
 from app.ai.scheduler.service import get_ai_scheduler_service
@@ -125,6 +128,14 @@ async def lifespan(app: FastAPI):
         logger.info("database_schema_ok")
     except Exception as exc:
         logger.error("database_schema_missing_table", error=str(exc))
+
+    # ── Redis cache (optional) ────────────────────────────────────
+    try:
+        from app.lib.redis_cache import init_redis
+        await init_redis()
+        logger.info("redis_cache_initialized")
+    except Exception as exc:
+        logger.error("redis_cache_init_failed", error=str(exc))
 
     # ── Scheduler ──────────────────────────────────────────────────────
     try:
@@ -241,6 +252,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # Ported from TeleMon/backend/monitoring.py — request-count/latency counters and
 # an optional alert webhook. Deliberately NOT calling setup_structured_logging()
 # here: app.core.logging already configures structured JSON logging for this
@@ -324,6 +337,8 @@ app.include_router(ai_plugins_router, dependencies=_auth_required)
 app.include_router(ai_providers_router, dependencies=_auth_required)
 app.include_router(operator_router, dependencies=_auth_required)
 app.include_router(growth_loop_router, dependencies=_auth_required)
+app.include_router(dashboard_router, dependencies=_auth_required)
+app.include_router(ws_router)
 
 
 @app.get("/metrics")
@@ -335,16 +350,64 @@ async def metrics():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint with database connectivity probe."""
+    """Health check endpoint with dependency probes: DB, Redis, Telegram session pool.
+
+    Returns HTTP 200 only when all critical dependencies are healthy.
+    Returns HTTP 503 with degradation details otherwise.
+    """
+    from fastapi.responses import JSONResponse
+    from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
+
+    checks = {"database": False, "redis": False, "telegram_sessions": False}
+    all_ok = True
+
+    # 1. Database probe
     try:
         async with async_session_maker() as session:
             await session.execute(text("SELECT 1"))
-        return {"status": "ok", "environment": settings.environment}
+        checks["database"] = True
     except Exception as exc:
         logger.warning("health_check_db_failed", error=str(exc))
-        from fastapi.responses import JSONResponse
-        from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
-        return JSONResponse(
-            status_code=HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "degraded", "environment": settings.environment, "detail": "database unreachable"},
-        )
+        all_ok = False
+
+    # 2. Redis probe (optional — degrades gracefully)
+    try:
+        from app.cache import _get_redis as _probe_redis
+        r = await _probe_redis()
+        if r is not None:
+            await r.ping()
+            checks["redis"] = True
+        else:
+            checks["redis"] = None  # not configured
+    except Exception as exc:
+        logger.warning("health_check_redis_failed", error=str(exc))
+        checks["redis"] = False
+        all_ok = False
+
+    # 3. Telegram session pool probe (one active session = pool alive)
+    try:
+        from app.services.telethon_pool import pool as _tg_pool
+        pool_size = len(_tg_pool._clients) if hasattr(_tg_pool, "_clients") else 0
+        checks["telegram_sessions"] = pool_size > 0
+        if pool_size == 0:
+            all_ok = False
+    except Exception as exc:
+        logger.warning("health_check_telegram_sessions_failed", error=str(exc))
+        checks["telegram_sessions"] = False
+        all_ok = False
+
+    if all_ok:
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "checks": {k: v for k, v in checks.items() if v is not None},
+        }
+
+    return JSONResponse(
+        status_code=HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "status": "degraded",
+            "environment": settings.environment,
+            "checks": {k: ("ok" if v is True else ("skipped" if v is None else "failed")) for k, v in checks.items()},
+        },
+    )
