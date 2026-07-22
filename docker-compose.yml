@@ -63,7 +63,7 @@ services:
     build:
       context: ../telegram-dashboard
       args:
-        NEXT_PUBLIC_API_BASE_URL: ""
+        NEXT_PUBLIC_API_BASE_URL: "${NEXT_PUBLIC_API_BASE_URL:-http://backend:8000}"
         NEXT_PUBLIC_SITE_URL: "https://telemon.online"
         NEXT_PUBLIC_APP_URL: "https://app.telemon.online"
         NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: "telemon_verify_bot"
