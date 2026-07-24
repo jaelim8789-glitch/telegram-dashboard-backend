@@ -83,7 +83,6 @@ jobs:
   # 2. Backend Docker build & push (GHCR)
   # ═══════════════════════════════════════════
   backend-docker:
-    needs: [backend-ci]
     runs-on: ubuntu-latest
     permissions:
       contents: read
