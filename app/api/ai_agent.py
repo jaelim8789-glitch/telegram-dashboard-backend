@@ -740,3 +740,67 @@ async def purchase_template(
     await db.commit()
     await db.refresh(agent)
     return {"id": agent.id, "name": agent.name, "role": agent.role, "stars_balance": new_balance}
+
+
+from pydantic import BaseModel
+
+class ChatCompletionRequest(BaseModel):
+    model: str = "deepseek-chat"
+    messages: list[dict]
+    stream: bool = False
+    max_tokens: int = 4096
+    temperature: float = 0.7
+
+
+@router.post("/chat/completions")
+async def chat_completions_proxy(
+    body: ChatCompletionRequest,
+    identity: Identity = Depends(get_current_identity),
+):
+    """프론트엔드 ai-chat.ts의 백엔드 프록시.
+
+    브라우저가 DeepSeek API를 직접 호출하지 않고 이 엔드포인트를
+    통해 요청하므로 API 키가 클라이언트에 노출되지 않는다.
+    """
+    if not settings.deepseek_api_key:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=501,
+            content={"detail": "AI 서비스가 구성되지 않았습니다."},
+        )
+
+    if body.stream:
+        async def sse_stream():
+            async for content, tokens in _call_deepseek_stream(
+                messages=body.messages,
+                max_tokens=body.max_tokens,
+                model=body.model,
+            ):
+                if content is None:
+                    yield f"data: {json.dumps({'error': 'stream failed'})}\n\n"
+                    continue
+                if content == "":
+                    yield "data: [DONE]\n\n"
+                    continue
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': content}}]})}\n\n"
+
+        return StreamingResponse(
+            sse_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    reply, tokens, _ = await call_deepseek(
+        messages=body.messages,
+        max_tokens=body.max_tokens,
+        model=body.model,
+    )
+    if reply is None:
+        raise HTTPException(status_code=502, detail="AI 서비스 호출에 실패했습니다.")
+    return {
+        "choices": [{"message": {"content": reply}}],
+        "usage": {"total_tokens": tokens},
+    }
