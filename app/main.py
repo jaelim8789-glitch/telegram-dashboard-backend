@@ -130,13 +130,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("database_schema_missing_table", error=str(exc))
 
-    # ── Redis cache (optional) ────────────────────────────────────
-    try:
-        from app.lib.redis_cache import init_redis
-        await init_redis()
-        logger.info("redis_cache_initialized")
-    except Exception as exc:
-        logger.error("redis_cache_init_failed", error=str(exc))
+    # ── Redis cache (optional — initialized lazily by app.cache) ──
 
     # ── Scheduler ──────────────────────────────────────────────────────
     try:
