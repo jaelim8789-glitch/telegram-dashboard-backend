@@ -9,6 +9,11 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: telegram_dashboard
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telegram_dashboard_password}
@@ -27,8 +32,13 @@ services:
     image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-backend:${TAG:-latest}
     build: .
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
+      sh -c "alembic upgrade heads && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
     deploy:
       resources:
         limits:
@@ -68,6 +78,11 @@ services:
         NEXT_PUBLIC_APP_URL: "https://app.telemon.online"
         NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: "telemon_verify_bot"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       backend:
         condition: service_started
@@ -84,6 +99,11 @@ services:
   nginx:
     build: ./nginx
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - frontend
       - backend
@@ -97,6 +117,11 @@ services:
   db-backup:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     entrypoint: |
       sh -c '
         echo "0 3 * * * /usr/local/bin/backup.sh" > /etc/crontabs/root
@@ -120,6 +145,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - redis_data:/data
     networks:

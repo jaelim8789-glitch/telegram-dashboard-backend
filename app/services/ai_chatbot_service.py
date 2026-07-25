@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from app.core.logging import get_logger
-from app.services.auto_reply_service import get_matching_rules
+# from app.services.auto_reply_service import get_matching_rules  # removed - function does not exist
 from app.crud import account as account_crud
 from app.database import async_session_maker
 
