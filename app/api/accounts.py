@@ -23,7 +23,7 @@ from app.schemas.account import (
 )
 from app.services.account_health import get_account_health, get_health_summary
 
-router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+router = APIRouter(prefix="/api/accounts", tags=["accounts"], redirect_slashes=False)
 logger = get_logger(__name__)
 
 
