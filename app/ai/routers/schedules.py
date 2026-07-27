@@ -1,4 +1,4 @@
-"""AI Schedules API — manage scheduled job definitions and view execution history."""
+"""AI Schedules API  manage scheduled job definitions and view execution history."""
 
 from __future__ import annotations
 

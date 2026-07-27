@@ -64,7 +64,7 @@ async def analyze_style(
 
     if source_type == "channel":
         if not account_id or not chat_id:
-            raise ValueError("channel 모드는 account_id와 chat_id가 필요합니다.")
+            raise ValueError("AI    .  .")
         source_text = await _fetch_channel_messages(account_id, chat_id, message_limit)
 
     if tenant_id:

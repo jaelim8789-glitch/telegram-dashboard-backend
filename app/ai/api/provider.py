@@ -1,5 +1,5 @@
 """
-AI API Provider — unified interface for external LLM API providers.
+AI API Provider  unified interface for external LLM API providers.
 
 Supports multiple providers (DeepSeek, OpenAI, Anthropic, etc.) with
 rate limiting, retry logic, token tracking, and audit logging.
@@ -233,7 +233,7 @@ class _RateLimiter:
             self._token_usage.append((now, tokens))
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _provider: AiApiProvider | None = None
 

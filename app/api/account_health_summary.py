@@ -1,4 +1,4 @@
-"""Health trend history — aggregated daily snapshots for visualization."""
+"""Health trend history  aggregated daily snapshots for visualization."""
 
 from datetime import datetime, timedelta, timezone
 

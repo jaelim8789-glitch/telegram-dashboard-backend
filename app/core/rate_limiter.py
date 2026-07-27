@@ -1,6 +1,6 @@
 """In-memory per-IP rate limiter for authentication endpoints.
 
-Process-local only — state resets on server restart.
+Process-local only  state resets on server restart.
 Not a distributed rate-limiting platform.
 
 Strategy: sliding-window counter keyed by (client_ip, category).
@@ -120,7 +120,7 @@ def reset_rate_limit_for_ip(client_ip: str) -> None:
 def get_client_ip(request: Request) -> str:
     """Return the real client IP when behind our trusted nginx proxy.
 
-    We trust X-Real-IP set by our own nginx (configured to $remote_addr —
+    We trust X-Real-IP set by our own nginx (configured to $remote_addr 
     the direct TCP peer, not spoofable by the client). We do NOT blindly
     trust X-Forwarded-For headers from arbitrary clients because that
     header can be trivially set to anything.

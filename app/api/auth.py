@@ -110,7 +110,7 @@ async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession
         await send_verification_sms(payload.phone, code)
     except SmsSendError as exc:
         logger.error("sms_send_failed", phone=payload.phone, error=str(exc))
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
 
     logger.info("verification_code_sent", phone=payload.phone)
     return SendCodeResponse(sent=True)

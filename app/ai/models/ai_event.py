@@ -1,5 +1,5 @@
 """
-AI Event Models — event subscriptions and event logs for the AI Event Bus.
+AI Event Models  event subscriptions and event logs for the AI Event Bus.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiEventSubscription(Base):
-    """AI Event Subscription — registered event handlers."""
+    """AI Event Subscription  registered event handlers."""
 
     __tablename__ = "ai_event_subscriptions"
 
@@ -38,7 +38,7 @@ class AiEventSubscription(Base):
 
 
 class AiEventLog(Base):
-    """AI Event Log — record of every event published on the bus."""
+    """AI Event Log  record of every event published on the bus."""
 
     __tablename__ = "ai_event_logs"
 

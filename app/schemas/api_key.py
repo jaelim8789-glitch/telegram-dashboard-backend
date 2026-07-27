@@ -9,7 +9,7 @@ class APIKeyCreateRequest(BaseModel):
 
 
 class APIKeyCreated(BaseModel):
-    """The only response that ever carries the full key — shown once, at creation."""
+    """The only response that ever carries the full key  shown once, at creation."""
 
     id: str
     key: str

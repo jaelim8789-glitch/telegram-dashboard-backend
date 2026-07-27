@@ -1,5 +1,5 @@
 """
-Task Queue — manages background AI task lifecycle with priority scheduling.
+Task Queue  manages background AI task lifecycle with priority scheduling.
 
 Supports database-backed persistence, scheduled/delayed tasks, retry logic,
 and priority-based ordering.
@@ -263,7 +263,7 @@ class TaskQueue:
         }
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _queue: TaskQueue | None = None
 

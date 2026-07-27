@@ -18,7 +18,7 @@ class Account(Base):
     today_sent: Mapped[int] = mapped_column(Integer, default=0)
     group_count: Mapped[int] = mapped_column(Integer, default=0)
     last_activity: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Fernet ciphertext of a Telethon StringSession — never store or return the raw session.
+    # Fernet ciphertext of a Telethon StringSession  never store or return the raw session.
     # Encrypt/decrypt only via app.core.crypto.
     session_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Master switch for the auto-reply listener (app/services/auto_reply_service.py).
@@ -26,9 +26,9 @@ class Account(Base):
     auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Opt-in (default off): when no AutoReplyRule matches, draft an AI reply
     # suggestion for operator review instead of doing nothing. Never sent
-    # automatically — see app.services.ai_reply_service.
+    # automatically  see app.services.ai_reply_service.
     ai_fallback_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Health tracking fields — updated by the delivery pipeline and health scanner
+    # Health tracking fields  updated by the delivery pipeline and health scanner
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

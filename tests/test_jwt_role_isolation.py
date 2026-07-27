@@ -2,7 +2,7 @@
 user-session tokens (app/core/security.py + app/api/deps.py._resolve_identity).
 
 Both token kinds are signed with the same secret (settings.admin_jwt_secret)
-by design — there's only one operator, just two login paths — so the ONLY
+by design  there's only one operator, just two login paths  so the ONLY
 thing standing between a user token and admin-level access is the `sub`
 claim being interpreted correctly. These tests pin that boundary directly,
 independent of any specific issuance flow (free-trial, admin manual-issue,
@@ -29,7 +29,7 @@ def test_admin_token_has_admin_subject():
 
 
 def test_user_token_never_satisfies_admin_subject():
-    """A user-session token must never decode_access_token()==True — that's
+    """A user-session token must never decode_access_token()==True  that's
     the sole gate _resolve_identity uses to grant Identity(kind="admin")."""
     user_token = create_user_access_token("some-user-id")
     assert decode_access_token(user_token) is False
@@ -88,7 +88,7 @@ async def test_resolve_identity_admin_token_yields_admin_kind(db_session):
 
 @pytest.mark.asyncio
 async def test_resolve_identity_inactive_user_token_rejected(db_session):
-    """An inactive user's token must not resolve to any identity — inactive
+    """An inactive user's token must not resolve to any identity  inactive
     status is not itself a privilege change, but confirms the same lookup
     path doesn't silently upgrade a rejected user to some other kind."""
     user = User(phone="+821099995001", is_active=False)

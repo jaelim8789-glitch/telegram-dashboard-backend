@@ -42,7 +42,7 @@ class ManualIssueRequest(BaseModel):
     user_identifier: str = Field(min_length=1, max_length=50, description="Phone number or tg_<telegram_user_id>")
     memo: str | None = Field(None, max_length=500)
     # Admin-issued keys default to the "team" plan (effectively unlimited) rather
-    # than inheriting whatever plan the tenant signed up under — an admin handing
+    # than inheriting whatever plan the tenant signed up under  an admin handing
     # out a key manually is presumed to want it unrestricted unless told otherwise.
     plan: str | None = Field(None, description="Plan to apply to the tenant (free/pro/team). Defaults to team.")
 

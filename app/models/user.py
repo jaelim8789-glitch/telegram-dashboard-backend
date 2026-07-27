@@ -12,7 +12,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     phone: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    # SHA-256 hex digest of the issued API key — the raw key is shown once, at issuance,
+    # SHA-256 hex digest of the issued API key  the raw key is shown once, at issuance,
     # and never stored or logged.
     api_key_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
@@ -25,7 +25,7 @@ class User(Base):
 
 
 class PhoneVerification(Base):
-    """One row per phone with a currently-pending code — a new send-code request
+    """One row per phone with a currently-pending code  a new send-code request
     replaces any existing row outright. Storing this in Postgres rather than Redis
     keeps the app on a single, already-required dependency (see broadcast_processor's
     equivalent decision to drop Redis/RQ)."""

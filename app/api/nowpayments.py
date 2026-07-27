@@ -2,7 +2,7 @@
 NOWPayments API — NOWPayments 결제 시스템 통합.
 
 Endpoints:
-  POST /api/payments/nowpayments/create-invoice — NOWPayments 인보이스 생성
+  POST /api/payments/nowpayments/webhook         NOWPayments IPN 
   POST /api/payments/nowpayments/webhook        — NOWPayments IPN 수신
   GET  /api/payments/nowpayments/status/{payment_id} — 결제 상태 조회
 """

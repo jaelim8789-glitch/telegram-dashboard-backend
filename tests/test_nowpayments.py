@@ -1,5 +1,5 @@
 """
-NOWPayments 서비스 테스트
+NOWPayments  
 """
 
 import json
@@ -24,8 +24,8 @@ def client():
 
 @pytest.mark.asyncio
 async def test_create_invoice():
-    """인보이스 생성 테스트"""
-    # Mock NOWPayments API 응답
+    """  """
+    # Mock NOWPayments API 
     mock_response = {
         "payment_id": "test_payment_123",
         "price_amount": 99.99,
@@ -67,15 +67,15 @@ async def test_create_invoice():
 
 
 def test_verify_webhook_signature():
-    """웹훅 서명 검증 테스트"""
+    """   """
     service = NOWPaymentsService()
     
-    # 실제 시크릿이 없을 경우 테스트
+    #     
     service.ipn_secret = "test_secret_123"
     
     payload = b'{"payment_id": "test_payment_123", "status": "finished"}'
     
-    # 실제 서명 생성
+    #   
     import hmac
     import hashlib
     expected_signature = hmac.new(
@@ -84,16 +84,16 @@ def test_verify_webhook_signature():
         hashlib.sha512
     ).hexdigest()
     
-    # 올바른 서명 테스트
+    #   
     assert service.verify_webhook_signature(payload, expected_signature) == True
     
-    # 잘못된 서명 테스트
+    #   
     assert service.verify_webhook_signature(payload, "invalid_signature") == False
 
 
 @pytest.mark.asyncio
 async def test_process_webhook_success():
-    """웹훅 처리 성공 테스트"""
+    """   """
     webhook_data = {
         "payment_id": "test_payment_123",
         "payment_status": "finished",
@@ -102,16 +102,16 @@ async def test_process_webhook_success():
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
     
-    # Mock 데이터베이스 세션
+    # Mock  
     mock_db = AsyncMock(spec=AsyncSession)
     
-    # 기존 거래 조회를 위한 모킹
+    #     
     mock_transaction = MagicMock()
     mock_transaction.payment_status = "waiting"
     mock_transaction.paid_amount = None
     mock_transaction.pay_currency = "usdt"
     
-    # select 쿼리 결과 모킹
+    # select   
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
     
@@ -127,16 +127,16 @@ async def test_process_webhook_success():
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
 
-        # 데이터베이스 커밋이 호출되었는지 확인
+        #    
         mock_db.commit.assert_called_once()
 
-        # 플랜 적용이 호출되었는지 확인
+        #    
         mock_activate_plan.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_process_webhook_duplicate():
-    """웹훅 중복 처리 테스트"""
+    """   """
     webhook_data = {
         "payment_id": "existing_payment_123",
         "payment_status": "finished",
@@ -145,16 +145,16 @@ async def test_process_webhook_duplicate():
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
     
-    # Mock 데이터베이스 세션
+    # Mock  
     mock_db = AsyncMock(spec=AsyncSession)
     
-    # 이미 완료된 거래
+    #   
     mock_transaction = MagicMock()
     mock_transaction.payment_status = "finished"
     mock_transaction.paid_amount = 99.99
     mock_transaction.pay_currency = "usdt"
     
-    # select 쿼리 결과 모킹
+    # select   
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
     
@@ -162,30 +162,30 @@ async def test_process_webhook_duplicate():
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
         
-        # 이미 완료된 상태이므로 추가 작업이 수행되지 않아야 함
+        #        
 
 
 @pytest.mark.asyncio
 async def test_process_webhook_amount_mismatch():
-    """웹훅 금액 불일치 테스트"""
+    """   """
     webhook_data = {
         "payment_id": "test_payment_123",
         "payment_status": "finished",
-        "paid_amount": 80.00,  # 기대 금액과 다름
+        "paid_amount": 80.00,  #   
         "pay_currency": "usdt",
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
     
-    # Mock 데이터베이스 세션
+    # Mock  
     mock_db = AsyncMock(spec=AsyncSession)
     
-    # 기존 거래 조회를 위한 모킹
+    #     
     mock_transaction = MagicMock()
     mock_transaction.payment_status = "waiting"
     mock_transaction.paid_amount = None
     mock_transaction.pay_currency = "usdt"
     
-    # select 쿼리 결과 모킹
+    # select   
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
 
@@ -198,13 +198,13 @@ async def test_process_webhook_amount_mismatch():
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
 
-        # 노트에 금액 불일치가 기록되었는지 확인
+        #     
         assert mock_transaction.note is not None
         assert "Amount mismatch" in mock_transaction.note
 
 
 def test_nowpayments_service_initialization():
-    """NOWPayments 서비스 초기화 테스트 — settings 객체 직접 패치"""
+    """NOWPayments     settings   """
     with patch.object(settings, 'NOWPAYMENTS_API_KEY', 'test_api_key'), \
          patch.object(settings, 'NOWPAYMENTS_PUBLIC_KEY', 'test_public_key'), \
          patch.object(settings, 'NOWPAYMENTS_IPN_SECRET', 'test_secret'):

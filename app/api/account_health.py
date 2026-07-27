@@ -1,4 +1,4 @@
-"""Account Health API — tenant-isolated health monitoring with operational summary."""
+"""Account Health API  tenant-isolated health monitoring with operational summary."""
 
 from datetime import datetime, timedelta, timezone
 

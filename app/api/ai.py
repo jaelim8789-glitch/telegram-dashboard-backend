@@ -1,13 +1,13 @@
 """
-TeleMon AI Platform API — 통합 AI 기능 엔드포인트.
+TeleMon AI Platform API   AI  .
 
 Features:
-1. AI Chat — Graphiti 장기 메모리 연동, 사용자별 메모리 분리, 대화 저장
-2. AI Reply Assistant — 대화 문맥 기반 자동 답장 추천, Graphiti 메모리 활용
-3. AI Broadcast Assistant — 발송 메시지 AI 생성, 대상별 맞춤 문구, A/B 테스트
-4. AI Operations Report — 운영 요약, 발송/답장/가입/오류 분석, 개선 추천
-5. AI Usage System — 사용량 관리, Credits/질문 제한, 플랜별 제한 설정
-6. Admin AI — AI 로그 저장, 사용자별 AI 기록 조회, 검색/필터, 감사 로그
+1. AI Chat  Graphiti   ,   ,  
+2. AI Reply Assistant       , Graphiti  
+3. AI Broadcast Assistant    AI ,   , A/B 
+4. AI Operations Report   , /// ,  
+5. AI Usage System   , Credits/ ,   
+6. Admin AI  AI  ,  AI  , /,  
 """
 
 from __future__ import annotations
@@ -54,15 +54,15 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # Pydantic Schemas
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 class AiChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000, description="사용자 메시지")
-    session_id: str | None = Field(default=None, description="대화 세션 ID (없으면 새로 생성)")
-    use_memory: bool = Field(default=True, description="Graphiti 장기 메모리 사용 여부")
+    message: str = Field(..., min_length=1, max_length=4000, description=" ")
+    session_id: str | None = Field(default=None, description="  ID (  )")
+    use_memory: bool = Field(default=True, description="Graphiti    ")
 
 
 class AiChatResponse(BaseModel):
@@ -85,11 +85,11 @@ class AiChatHistoryResponse(BaseModel):
 
 
 class AiReplyAssistantRequest(BaseModel):
-    account_id: str = Field(..., description="텔레그램 계정 ID")
-    chat_id: str = Field(..., description="채팅방 ID")
-    chat_title: str | None = Field(default=None, description="채팅방 제목")
-    incoming_message: str = Field(..., min_length=1, max_length=2000, description="들어온 메시지")
-    use_memory: bool = Field(default=True, description="Graphiti 메모리 활용 여부")
+    account_id: str = Field(..., description="  ID")
+    chat_id: str = Field(..., description=" ID")
+    chat_title: str | None = Field(default=None, description=" ")
+    incoming_message: str = Field(..., min_length=1, max_length=2000, description=" ")
+    use_memory: bool = Field(default=True, description="Graphiti   ")
 
 
 class AiReplyAssistantResponse(BaseModel):
@@ -100,11 +100,11 @@ class AiReplyAssistantResponse(BaseModel):
 
 
 class AiBroadcastAssistantRequest(BaseModel):
-    purpose: str = Field(..., min_length=1, max_length=500, description="발송 목적")
-    target_description: str | None = Field(default=None, description="대상 설명 (누구에게 보내는지)")
-    tone: str | None = Field(default="professional", description="톤: professional / friendly / urgent / promotional")
-    language: str = Field(default="ko", description="언어 (ko/en/ja/zh)")
-    generate_ab_test: bool = Field(default=True, description="A/B 테스트용 변형 생성 여부")
+    purpose: str = Field(..., min_length=1, max_length=500, description=" ")
+    target_description: str | None = Field(default=None, description="  ( )")
+    tone: str | None = Field(default="professional", description=": professional / friendly / urgent / promotional")
+    language: str = Field(default="ko", description=" (ko/en/ja/zh)")
+    generate_ab_test: bool = Field(default=True, description="A/B    ")
 
 
 class AiBroadcastAssistantResponse(BaseModel):
@@ -115,9 +115,9 @@ class AiBroadcastAssistantResponse(BaseModel):
 
 
 class AiOperationsReportRequest(BaseModel):
-    report_type: str = Field(default="daily", description="리포트 유형: daily / weekly / custom")
-    days: int = Field(default=1, ge=1, le=90, description="분석 기간(일)")
-    include_recommendations: bool = Field(default=True, description="개선 추천 포함 여부")
+    report_type: str = Field(default="daily", description=" : daily / weekly / custom")
+    days: int = Field(default=1, ge=1, le=90, description=" ()")
+    include_recommendations: bool = Field(default=True, description="   ")
 
 
 class AiOperationsReportResponse(BaseModel):
@@ -159,8 +159,8 @@ class AiPlanLimitUpdateRequest(BaseModel):
 
 
 class AiAdminLogQuery(BaseModel):
-    feature: str | None = Field(default=None, description="AI 기능 필터")
-    tenant_id: str | None = Field(default=None, description="테넌트 ID 필터")
+    feature: str | None = Field(default=None, description="AI  ")
+    tenant_id: str | None = Field(default=None, description=" ID ")
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
     start_date: str | None = None
@@ -174,9 +174,9 @@ class AiAdminLogResponse(BaseModel):
     offset: int = 0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 1. AI Chat
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.post("/chat", response_model=AiChatResponse)
@@ -185,7 +185,7 @@ async def ai_chat(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AiChatResponse:
-    """AI Chat — Graphiti 장기 메모리 연동, 사용자별 대화 저장."""
+    """AI Chat  Graphiti   ,   ."""
     tenant_id = identity.tenant_id
     session_id = payload.session_id or str(uuid.uuid4())
 
@@ -218,7 +218,7 @@ async def ai_chat(
     # Build messages for DeepSeek
     system_prompt = AI_CHAT_SYSTEM_PROMPT
     if memory_context:
-        system_prompt += f"\n\n[장기 메모리 컨텍스트]\n{memory_context}"
+        system_prompt += f"\n\n[  ]\n{memory_context}"
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
@@ -230,7 +230,7 @@ async def ai_chat(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 응답 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            detail="AI   .    .",
         )
 
     # Save to chat logs
@@ -343,9 +343,9 @@ async def list_chat_sessions(
     ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 2. AI Reply Assistant
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.post("/reply-assistant", response_model=AiReplyAssistantResponse)
@@ -354,7 +354,7 @@ async def ai_reply_assistant(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AiReplyAssistantResponse:
-    """AI Reply Assistant — 대화 문맥 기반 자동 답장 추천."""
+    """AI Reply Assistant       ."""
     tenant_id = identity.tenant_id
 
     # Check quota
@@ -377,20 +377,20 @@ async def ai_reply_assistant(
     # Build system prompt
     system_prompt = AI_REPLY_ASSISTANT_PROMPT
     if memory_context:
-        system_prompt += f"\n\n[과거 대화 컨텍스트]\n{memory_context}"
+        system_prompt += f"\n\n[  ]\n{memory_context}"
     if payload.chat_title:
-        system_prompt += f"\n\n[채팅방]\n{payload.chat_title}"
+        system_prompt += f"\n\n[]\n{payload.chat_title}"
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"다음 메시지에 대한 답장을 추천해줘:\n\n{payload.incoming_message}"},
+        {"role": "user", "content": f"    :\n\n{payload.incoming_message}"},
     ]
 
     reply, tokens_used, _ = await call_deepseek(messages, max_tokens=500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 답장 추천에 실패했습니다.",
+            detail="AI   .",
         )
 
     # Parse JSON response
@@ -402,7 +402,7 @@ async def ai_reply_assistant(
     except (json.JSONDecodeError, TypeError, ValueError):
         suggested_reply = reply
         confidence = 0.5
-        reason = "AI 추천 응답"
+        reason = "AI  "
 
     # Save log
     log_entry = AiReplyAssistantLog(
@@ -470,9 +470,9 @@ async def mark_reply_sent(
     return {"status": "ok", "log_id": log_id}
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 3. AI Broadcast Assistant
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.post("/broadcast-assistant", response_model=AiBroadcastAssistantResponse)
@@ -481,7 +481,7 @@ async def ai_broadcast_assistant(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AiBroadcastAssistantResponse:
-    """AI Broadcast Assistant — 발송 메시지 AI 생성, A/B 테스트."""
+    """AI Broadcast Assistant    AI , A/B ."""
     tenant_id = identity.tenant_id
 
     # Check quota
@@ -491,14 +491,14 @@ async def ai_broadcast_assistant(
 
     # Build system prompt
     system_prompt = AI_BROADCAST_ASSISTANT_PROMPT
-    system_prompt += f"\n\n톤: {payload.tone or 'professional'}"
-    system_prompt += f"\n언어: {payload.language or 'ko'}"
+    system_prompt += f"\n\n: {payload.tone or 'professional'}"
+    system_prompt += f"\n: {payload.language or 'ko'}"
     if payload.generate_ab_test:
-        system_prompt += "\n\nA/B 테스트용 variant_a와 variant_b를 각각 다른 스타일로 생성해줘."
+        system_prompt += "\n\nA/B  variant_a variant_b    ."
 
-    user_prompt = f"발송 목적: {payload.purpose}"
+    user_prompt = f" : {payload.purpose}"
     if payload.target_description:
-        user_prompt += f"\n대상: {payload.target_description}"
+        user_prompt += f"\n: {payload.target_description}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -509,7 +509,7 @@ async def ai_broadcast_assistant(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 메시지 생성에 실패했습니다.",
+            detail="AI   .",
         )
 
     # Parse JSON response
@@ -552,9 +552,9 @@ async def ai_broadcast_assistant(
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 4. AI Operations Report
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.post("/operations-report", response_model=AiOperationsReportResponse)
@@ -563,7 +563,7 @@ async def ai_operations_report(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AiOperationsReportResponse:
-    """AI Operations Report — 운영 요약, 분석, 개선 추천."""
+    """AI Operations Report   , ,  ."""
     tenant_id = identity.tenant_id
 
     # Check quota
@@ -580,11 +580,11 @@ async def ai_operations_report(
     # Build system prompt
     system_prompt = AI_OPERATIONS_REPORT_PROMPT
     if payload.include_recommendations:
-        system_prompt += "\n\n개선 추천을 우선순위별로 포함해줘."
+        system_prompt += "\n\n   ."
 
     user_prompt = (
-        f"분석 기간: {period_start.strftime('%Y-%m-%d')} ~ {period_end.strftime('%Y-%m-%d')}\n\n"
-        f"[운영 데이터]\n{json.dumps(metrics, ensure_ascii=False, indent=2)}"
+        f" : {period_start.strftime('%Y-%m-%d')} ~ {period_end.strftime('%Y-%m-%d')}\n\n"
+        f"[ ]\n{json.dumps(metrics, ensure_ascii=False, indent=2)}"
     )
 
     messages = [
@@ -596,7 +596,7 @@ async def ai_operations_report(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 리포트 생성에 실패했습니다.",
+            detail="AI   .",
         )
 
     # Parse JSON response
@@ -650,7 +650,7 @@ async def ai_operations_report(
 @router.get("/operations-reports", response_model=list[dict])
 async def list_operations_reports(
     limit: int = Query(default=10, ge=1, le=50),
-    report_type: str | None = Query(default=None, description="리포트 유형 필터"),
+    report_type: str | None = Query(default=None, description="  "),
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
@@ -709,9 +709,9 @@ async def get_operations_report(
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 5. AI Usage System
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.get("/usage", response_model=AiUsageSummaryResponse)
@@ -753,15 +753,15 @@ async def get_plan_limits(
     ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # 6. Admin AI
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.get("/admin/logs", response_model=AiAdminLogResponse, dependencies=[Depends(require_admin)])
 async def get_ai_admin_logs(
-    feature: str | None = Query(default=None, description="AI 기능 필터"),
-    tenant_id: str | None = Query(default=None, description="테넌트 ID 필터"),
+    feature: str | None = Query(default=None, description="AI  "),
+    tenant_id: str | None = Query(default=None, description=" ID "),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     start_date: str | None = Query(default=None),
@@ -925,9 +925,9 @@ async def get_tenant_ai_summary(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # Admin: AI Plan Limits Management
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 @router.get("/admin/plan-limits", response_model=list[AiPlanLimitResponse], dependencies=[Depends(require_admin)])
@@ -1040,9 +1040,9 @@ async def admin_seed_plan_limits(
     return {"status": "ok", "created": created}
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 # Internal Helpers
-# ═══════════════════════════════════════════════════════════════════════════
+# 
 
 
 async def _gather_operations_metrics(

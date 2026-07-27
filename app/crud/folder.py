@@ -90,7 +90,7 @@ async def set_folder_group_ids(db: AsyncSession, folder: Folder, group_ids: list
 
 
 async def delete_folder(db: AsyncSession, folder: Folder) -> None:
-    # Reparent children to this folder's parent instead of cascading their deletion —
+    # Reparent children to this folder's parent instead of cascading their deletion 
     # deleting a folder should never silently drop the folders nested under it.
     result = await db.execute(select(Folder).where(Folder.parent_id == folder.id))
     for child in result.scalars().all():
@@ -136,7 +136,7 @@ async def batch_move_groups(db: AsyncSession, account_id: str, data: BatchMoveIn
 
 async def upsert_synced_folders(db: AsyncSession, account_id: str, telegram_folders: list[dict]) -> list[Folder]:
     """Sync Telegram-native chat folders (Dialog Filters) into persisted Folder rows,
-    matched by name — re-running sync updates group_ids in place instead of duplicating."""
+    matched by name  re-running sync updates group_ids in place instead of duplicating."""
     existing = {f.name: f for f in await list_folders(db, account_id)}
     result: list[Folder] = []
 
@@ -179,7 +179,7 @@ async def save_workspace_state(
 
 
 def build_folder_tree(folders: list[Folder]) -> list[dict]:
-    """Nest folders under their parent_id for the `?tree=true` response shape."""
+    """Nest folders under their parent_id for the `tree=true` response shape."""
     nodes: dict[str, dict] = {}
     for f in folders:
         nodes[f.id] = {

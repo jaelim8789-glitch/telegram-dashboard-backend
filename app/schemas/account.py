@@ -66,7 +66,7 @@ class AccountWithHealth(BaseModel):
     updated_at: datetime
 
 
-# ── Search / Filter / Sort / Pagination ─────────────────────────────────
+#  Search / Filter / Sort / Pagination 
 
 
 class AccountFilterParams(BaseModel):
@@ -99,7 +99,7 @@ class PaginatedAccounts(BaseModel):
     total_pages: int
 
 
-# ── Bulk Operations ─────────────────────────────────────────────────────
+#  Bulk Operations 
 
 
 class BulkActionRequest(BaseModel):
@@ -119,7 +119,7 @@ class BulkActionResponse(BaseModel):
     total_failed: int
 
 
-# ── Operational Summary ──────────────────────────────────────────────────
+#  Operational Summary 
 
 
 class AccountSummary(BaseModel):

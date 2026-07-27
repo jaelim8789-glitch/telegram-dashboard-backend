@@ -19,16 +19,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 테이블에 is_distributor 컬럼 추가
+    #  is_distributor  
     op.add_column('tenants', sa.Column('is_distributor', sa.Boolean(), nullable=True))
     
-    # 기존 레코드에 대해 기본값 False 설정
+    #     False 
     op.execute("UPDATE tenants SET is_distributor = FALSE WHERE is_distributor IS NULL")
     
-    # 컬럼을 NOT NULL로 변경
+    #  NOT NULL 
     op.alter_column('tenants', 'is_distributor', nullable=False)
 
 
 def downgrade() -> None:
-    # 테이블에서 is_distributor 컬럼 제거
+    #  is_distributor  
     op.drop_column('tenants', 'is_distributor')

@@ -1,4 +1,4 @@
-"""AI Tool schemas — Pydantic models for tool definitions and execution."""
+"""AI Tool schemas  Pydantic models for tool definitions and execution."""
 
 from __future__ import annotations
 

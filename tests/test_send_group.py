@@ -20,14 +20,14 @@ from app.schemas.broadcast import BroadcastCreate
 
 
 async def _create_account(client, phone="+821088880000"):
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "발송 테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
     assert res.status_code == 201
     return res.json()["id"]
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 1. Broadcast creation with group_ids
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_broadcast_creation_with_group_ids(db_session):
 
     payload = BroadcastCreate(
         account_id=account.id,
-        message="테스트 그룹 발송",
+        message="  ",
         recipients=[],
         group_ids=["-100111", "-100222"],
     )
@@ -61,7 +61,7 @@ async def test_broadcast_creation_with_recipients_and_group_ids(db_session):
 
     payload = BroadcastCreate(
         account_id=account.id,
-        message="하이브리드 발송",
+        message=" ",
         recipients=["-100333"],
         group_ids=["-100111"],
     )
@@ -79,14 +79,14 @@ async def test_broadcast_creation_without_recipients_or_group_ids_raises_error()
     with pytest.raises(ValidationError, match="recipients or group_ids is required"):
         BroadcastCreate(
             account_id="test-account",
-            message="테스트",
+            message="",
             recipients=[],
         )
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 2. Send-group API endpoint
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ async def test_send_group_endpoint_creates_broadcast(client):
 
     payload = {
         "account_id": account_id,
-        "message": "그룹 발송 테스트",
+        "message": "  ",
         "group_ids": ["-100111", "-100222"],
     }
     res = await client.post("/api/broadcast/send-group", json=payload)
@@ -116,7 +116,7 @@ async def test_send_group_endpoint_with_schedule(client):
 
     payload = {
         "account_id": account_id,
-        "message": "예약 그룹 발송",
+        "message": "  ",
         "group_ids": ["-100333"],
         "scheduled_at": future,
     }
@@ -131,7 +131,7 @@ async def test_send_group_endpoint_unknown_account(client):
     """Send-group with unknown account returns 404."""
     payload = {
         "account_id": "non-existent",
-        "message": "테스트",
+        "message": "",
         "group_ids": ["-100111"],
     }
     res = await client.post("/api/broadcast/send-group", json=payload)
@@ -145,16 +145,16 @@ async def test_send_group_endpoint_validates_group_ids(client):
 
     payload = {
         "account_id": account_id,
-        "message": "테스트",
+        "message": "",
         "group_ids": [],
     }
     res = await client.post("/api/broadcast/send-group", json=payload)
     assert res.status_code == 422
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 3. Group member resolution
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -221,9 +221,9 @@ async def test_resolve_group_ids_with_failure_returns_partial(monkeypatch):
     assert len(members) == 1
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 4. Broadcast estimate endpoint
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -254,9 +254,9 @@ async def test_broadcast_estimate_unknown_account(client):
     assert res.status_code == 404
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 5. Batch retry endpoint
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -268,7 +268,7 @@ async def test_batch_retry_skips_non_failed(client, db_session):
     account = await account_crud.create_account(db_session, AccountCreate(phone="+821088880010"))
     payload_broadcast = BroadcastCreate(
         account_id=account.id,
-        message="테스트",
+        message="",
         recipients=["-100111"],
     )
     broadcast = await broadcast_crud.create_broadcast(db_session, payload_broadcast, media_path=None, scheduled_at=None)
@@ -290,9 +290,9 @@ async def test_batch_retry_empty_list_returns_422(client):
     assert res.status_code == 422
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 6. Scheduler status endpoint
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio

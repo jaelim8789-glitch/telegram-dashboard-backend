@@ -1,5 +1,5 @@
 """
-AI Feature Models — SQLAlchemy models for all AI-related tables.
+AI Feature Models  SQLAlchemy models for all AI-related tables.
 
 These models support:
 - AI Chat (with Graphiti long-term memory)
@@ -22,7 +22,7 @@ from app.database import Base
 
 
 class AiChatLog(Base):
-    """AI Chat 대화 로그 — 사용자별 모든 AI 대화 저장."""
+    """AI Chat      AI  ."""
 
     __tablename__ = "ai_chat_logs"
 
@@ -38,7 +38,7 @@ class AiChatLog(Base):
 
 
 class AiReplyAssistantLog(Base):
-    """AI Reply Assistant 로그 — 자동 답장 추천 기록."""
+    """AI Reply Assistant      ."""
 
     __tablename__ = "ai_reply_assistant_logs"
 
@@ -57,7 +57,7 @@ class AiReplyAssistantLog(Base):
 
 
 class AiBroadcastAssistantLog(Base):
-    """AI Broadcast Assistant 로그 — AI 발송 메시지 생성 기록."""
+    """AI Broadcast Assistant   AI    ."""
 
     __tablename__ = "ai_broadcast_assistant_logs"
 
@@ -77,7 +77,7 @@ class AiBroadcastAssistantLog(Base):
 
 
 class AiOperationsReport(Base):
-    """AI Operations Report — AI 운영 리포트."""
+    """AI Operations Report  AI  ."""
 
     __tablename__ = "ai_operations_reports"
 
@@ -96,7 +96,7 @@ class AiOperationsReport(Base):
 
 
 class AiUsageRecord(Base):
-    """AI Usage Record — AI 사용량 관리."""
+    """AI Usage Record  AI  ."""
 
     __tablename__ = "ai_usage_records"
 
@@ -110,7 +110,7 @@ class AiUsageRecord(Base):
 
 
 class AiPlanLimit(Base):
-    """AI Plan Limit — 플랜별 AI 제한 설정."""
+    """AI Plan Limit   AI  ."""
 
     __tablename__ = "ai_plan_limits"
 

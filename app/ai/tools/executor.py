@@ -1,5 +1,5 @@
 """
-Tool Executor — executes tool calls with retry, timeout, and logging.
+Tool Executor  executes tool calls with retry, timeout, and logging.
 
 Supports:
 - Python function handlers (builtin/plugin)
@@ -174,7 +174,7 @@ class ToolExecutor:
             return {"data": result if isinstance(result, dict) else {"result": result}}
 
         elif tool_type == "mcp":
-            # MCP tool call — delegate to MCP client
+            # MCP tool call  delegate to MCP client
             from app.ai.tools.mcp_client import get_mcp_client
             client = get_mcp_client()
             result = await client.call_tool(handler_ref or definition.name, arguments)
@@ -213,7 +213,7 @@ class ToolExecutor:
         return getattr(module, func_name, None)
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _executor: ToolExecutor | None = None
 

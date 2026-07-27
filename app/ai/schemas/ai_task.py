@@ -1,4 +1,4 @@
-"""AI Task schemas — Pydantic models for task queue."""
+"""AI Task schemas  Pydantic models for task queue."""
 
 from __future__ import annotations
 

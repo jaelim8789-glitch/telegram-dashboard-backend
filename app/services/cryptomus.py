@@ -1,5 +1,5 @@
 """
-Cryptomus crypto payment integration — invoice creation, webhook processing,
+Cryptomus crypto payment integration  invoice creation, webhook processing,
 and payment tracking.
 
 Isolated from the existing USDT/TronGrid monitoring path.

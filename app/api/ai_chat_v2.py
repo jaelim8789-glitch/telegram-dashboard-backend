@@ -53,7 +53,7 @@ router = APIRouter(prefix="/api/ai-chat-v2", tags=["ai-chat-v2"])
 logger = get_logger(__name__)
 
 
-# ── Session Endpoints ───────────────────────────────────────────────────
+#  Session Endpoints 
 
 
 @router.post("/sessions", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -119,7 +119,7 @@ async def delete_session_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
 
-# ── Chat Endpoint (SSE Streaming) ───────────────────────────────────────
+#  Chat Endpoint (SSE Streaming) 
 
 
 @router.post("/chat")
@@ -146,7 +146,7 @@ async def chat_endpoint(
     )
 
 
-# ── Message History ─────────────────────────────────────────────────────
+#  Message History 
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageRead])
@@ -165,7 +165,7 @@ async def get_messages(
     return await get_session_messages(db, session_id, identity.tenant_id, limit, offset)
 
 
-# ── Message Feedback ────────────────────────────────────────────────────
+#  Message Feedback 
 
 
 @router.post("/messages/{message_id}/feedback", response_model=MessageRead)
@@ -182,7 +182,7 @@ async def feedback_endpoint(
     return msg
 
 
-# ── Conversation Search ─────────────────────────────────────────────────
+#  Conversation Search 
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -195,7 +195,7 @@ async def search_endpoint(
     return await search_conversations(db, identity.tenant_id, payload)
 
 
-# ── Prompt Template Endpoints ───────────────────────────────────────────
+#  Prompt Template Endpoints 
 
 
 @router.post("/templates", response_model=PromptTemplateRead, status_code=status.HTTP_201_CREATED)
@@ -237,7 +237,7 @@ async def get_default_template_endpoint(
     return await get_default_template(db, identity.tenant_id, role)
 
 
-# ── Usage Stats ─────────────────────────────────────────────────────────
+#  Usage Stats 
 
 
 @router.get("/stats", response_model=UsageStats)

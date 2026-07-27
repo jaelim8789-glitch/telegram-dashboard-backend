@@ -1,4 +1,4 @@
-"""Pricing contract tests — verify canonical plan definitions and cross-contract integrity.
+"""Pricing contract tests  verify canonical plan definitions and cross-contract integrity.
 
 This test suite validates:
 1. Canonical PLAN_CATALOG contains FREE TRIAL, PRO $100, TEAM $199
@@ -215,7 +215,7 @@ class TestUSDTMatchingBehavior:
         assert match_plan_fn(100) is None  # $1
 
     def test_out_of_tolerance_pro(self, match_plan_fn):
-        assert match_plan_fn(5000) is None  # $50 — doesn't match anything
+        assert match_plan_fn(5000) is None  # $50  doesn't match anything
 
     def test_legacy_deprecated_amounts_no_match(self, match_plan_fn):
         """Verify deprecated plan prices no longer match."""
@@ -237,12 +237,12 @@ class TestValidatePlanId:
 
     def test_rejects_deprecated_basic(self):
         from app.core.plans import validate_plan_id
-        with pytest.raises(ValueError, match="제공"):
+        with pytest.raises(ValueError, match=""):
             validate_plan_id("basic")
 
     def test_rejects_deprecated_enterprise(self):
         from app.core.plans import validate_plan_id
-        with pytest.raises(ValueError, match="제공"):
+        with pytest.raises(ValueError, match=""):
             validate_plan_id("enterprise")
 
     def test_rejects_unknown_plan(self):

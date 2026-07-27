@@ -1,5 +1,5 @@
 """
-AI Scheduler Service — manages scheduled AI job definitions and triggers execution.
+AI Scheduler Service  manages scheduled AI job definitions and triggers execution.
 
 This is separate from the existing APScheduler-based scheduler in
 app/scheduler/scheduler.py. It uses the AI platform's own schedule definitions
@@ -36,7 +36,7 @@ class AiSchedulerService:
         self._running = False
         self._tick_task: asyncio.Task[None] | None = None
 
-    # ── Schedule Definition Management ───────────────────────────────
+    #  Schedule Definition Management 
 
     async def create_schedule(
         self, db: AsyncSession, tenant_id: str, data: dict[str, Any]
@@ -97,7 +97,7 @@ class AiSchedulerService:
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    # ── Execution ────────────────────────────────────────────────────
+    #  Execution 
 
     async def execute_schedule(
         self, db: AsyncSession, schedule: AiScheduleDefinition
@@ -192,7 +192,7 @@ class AiSchedulerService:
             logger.error("schedule_execution_failed", name=schedule.name, error=str(exc))
             return execution
 
-    # ── Tick Loop ────────────────────────────────────────────────────
+    #  Tick Loop 
 
     async def tick(self) -> int:
         """Check all active schedules and execute due ones.
@@ -283,7 +283,7 @@ class AiSchedulerService:
             await asyncio.sleep(self._config.scheduler_tick_seconds)
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _service: AiSchedulerService | None = None
 

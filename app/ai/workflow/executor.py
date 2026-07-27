@@ -1,5 +1,5 @@
 """
-Workflow Executor — executes workflow steps in DAG order with parallel support.
+Workflow Executor  executes workflow steps in DAG order with parallel support.
 
 Handles step dependency resolution, conditional branching, retry logic,
 and coordinates with the Tool Executor for tool_call steps.
@@ -224,7 +224,7 @@ class WorkflowExecutor:
         return template
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _executor: WorkflowExecutor | None = None
 

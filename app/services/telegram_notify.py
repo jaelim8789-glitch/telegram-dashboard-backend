@@ -1,4 +1,4 @@
-"""Best-effort push messages to a single Telegram chat — e.g. "your USDT
+"""Best-effort push messages to a single Telegram chat  e.g. "your USDT
 payment cleared" pushed from the scheduled watcher job.
 
 Uses a standalone ``Bot`` instance rather than the polling ``Application`` in
@@ -6,7 +6,7 @@ telegram_bot_service (same reasoning as app.services.guide_hub_service):
 sending an unsolicited message has nothing to do with receiving updates, so it
 must not touch the bot's command/callback handlers or its polling lifecycle.
 
-Never raises — a failed push must never break the payment-processing
+Never raises  a failed push must never break the payment-processing
 transaction that triggered it.
 """
 

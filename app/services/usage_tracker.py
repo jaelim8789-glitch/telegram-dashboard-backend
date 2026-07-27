@@ -122,7 +122,7 @@ async def add_stars_credit(tenant_id: str, stars_amount: int) -> dict:
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if not tenant:
-            return {"success": False, "error": "Tenant not found"}
+            return {"success": False, "error": "Stars  ."}
 
         tenant.stars_balance = (tenant.stars_balance or 0) + stars_amount
         await db.commit()

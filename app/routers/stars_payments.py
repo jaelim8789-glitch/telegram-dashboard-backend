@@ -1,14 +1,14 @@
 """
-Telegram Stars Payment Router — 텔레그램 네이티브 결제 시스템.
+Telegram Stars Payment Router     .
 
-Bot API의 sendInvoice + pre_checkout_query + successful_payment 를 사용하여
-Telegram Stars (currency XTR) 로 프리미엄 기능을 결제받습니다.
+Bot API sendInvoice + pre_checkout_query + successful_payment  
+Telegram Stars (currency XTR)    .
 
-사용 플로우:
-1. 프론트: 사용자가 요금제 선택 → POST /api/stars/create-invoice
-2. 백엔드: sendInvoice(currency="XTR") 호출 → Telegram이 결제 UI 표시
-3. 텔레그램: pre_checkout_query → 백엔드 검증 → answerPreCheckoutQuery
-4. 텔레그램: successful_payment → 백엔드에서 사용자 플랜 업그레이드
+ :
+1. :     POST /api/stars/create-invoice
+2. : sendInvoice(currency="XTR")   Telegram  UI 
+3. : pre_checkout_query     answerPreCheckoutQuery
+4. : successful_payment     
 """
 
 from __future__ import annotations
@@ -29,47 +29,47 @@ from app.production_config import get_config
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stars", tags=["stars-payments"])
 
-# ── Stars 가격표 ───────────────────────────────────────────────────
-# 1 Star ≈ ₩100~₩150 (텔레그램 Stars 구매 가격 기준)
+#  Stars  
+# 1 Star  100~150 ( Stars   )
 
 STAR_PRODUCTS: dict[str, dict[str, Any]] = {
     "pro_monthly": {
-        "title": "Pro 월간 구독",
-        "description": "• 10개 계정\n• 일 5,000회 발송\n• AI 분석\n• 우선 지원",
-        "star_amount": 1500,        # ≈ ₩15,000
+        "title": "Pro  ",
+        "description": " 10 \n  5,000 \n AI \n  ",
+        "star_amount": 1500,        #  15,000
         "plan": Plan.PRO,
         "period_days": 30,
         "label": "Pro",
     },
     "pro_yearly": {
-        "title": "Pro 연간 구독 (20% 할인)",
-        "description": "• 10개 계정\n• 일 5,000회 발송\n• AI 분석\n• 우선 지원\n• 월 ₩12,000 상당 (20% 할인)",
-        "star_amount": 12000,       # ≈ ₩120,000 (월 ₩10,000)
+        "title": "Pro   (20% )",
+        "description": " 10 \n  5,000 \n AI \n  \n  12,000  (20% )",
+        "star_amount": 12000,       #  120,000 ( 10,000)
         "plan": Plan.PRO,
         "period_days": 365,
-        "label": "Pro 연간",
+        "label": "Pro ",
     },
     "team_monthly": {
-        "title": "Team 월간 구독",
-        "description": "• 50개 계정\n• 일 50,000회 발송\n• 모든 AI 기능\n• 팀 협업\n• 우선 지원",
-        "star_amount": 4500,        # ≈ ₩45,000
+        "title": "Team  ",
+        "description": " 50 \n  50,000 \n  AI \n  \n  ",
+        "star_amount": 4500,        #  45,000
         "plan": Plan.TEAM,
         "period_days": 30,
         "label": "Team",
     },
     "ai_boost_1000": {
-        "title": "AI Boost — 1,000회 추가",
-        "description": "AI 추가 호출 1,000회 (기간 제한 없음)",
-        "star_amount": 300,         # ≈ ₩3,000
-        "plan": None,               # 플랜 변경 없음
+        "title": "AI Boost  1,000 ",
+        "description": "AI   1,000 (  )",
+        "star_amount": 300,         #  3,000
+        "plan": None,               #   
         "period_days": None,
         "ai_calls": 1000,
         "label": "AI Boost",
     },
     "ai_boost_5000": {
-        "title": "AI Boost — 5,000회 추가 (20% 할인)",
-        "description": "AI 추가 호출 5,000회 (기간 제한 없음, 20% 할인)",
-        "star_amount": 1200,        # ≈ ₩12,000
+        "title": "AI Boost  5,000  (20% )",
+        "description": "AI   5,000 (  , 20% )",
+        "star_amount": 1200,        #  12,000
         "plan": None,
         "period_days": None,
         "ai_calls": 5000,
@@ -88,7 +88,7 @@ def _get_bot_client() -> TelegramBotClient | None:
 
 @router.get("/products")
 async def list_products():
-    """Stars 결제 가능한 상품 목록 반환 (인증 불필요)."""
+    """Stars      ( )."""
     products = []
     for pid, p in STAR_PRODUCTS.items():
         products.append({
@@ -109,10 +109,10 @@ async def create_invoice(
     body: dict,
     identity=Depends(get_current_identity),
 ):
-    """사용자의 Telegram 계정으로 Stars Invoice 전송.
+    """ Telegram  Stars Invoice .
 
-    body.product_id — 상품 ID
-    body.telegram_chat_id — (선택) 사용자의 Telegram Chat ID. 없으면 bot_sessions에서 조회.
+    body.product_id   ID
+    body.telegram_chat_id  ()  Telegram Chat ID.  bot_sessions .
     """
     product_id = body.get("product_id", "")
     telegram_chat_id_input = body.get("telegram_chat_id")
@@ -125,7 +125,7 @@ async def create_invoice(
     if not client:
         raise HTTPException(status_code=503, detail="Telegram bot not configured")
 
-    # Telegram Chat ID: 1) 프론트에서 직접 전달 2) bot_sessions에서 조회
+    # Telegram Chat ID: 1)    2) bot_sessions 
     if telegram_chat_id_input:
         try:
             telegram_chat_id = int(telegram_chat_id_input)
@@ -143,7 +143,7 @@ async def create_invoice(
             detail="Telegram chat ID not found. Set telegram_chat_id in request body or connect your Telegram account first.",
         )
 
-    # 고유 invoice payload 생성 (결제 완료 시 이 payload로 상품 식별)
+    #  invoice payload  (    payload  )
     payload_id = str(uuid.uuid4())
     invoice_payload = json.dumps({
         "pid": product_id,
@@ -186,7 +186,7 @@ async def create_invoice(
 # at the single POST /bot/webhook endpoint alongside regular bot updates.
 
 
-# ── Helpers ─────────────────────────────────────────────────────────
+#  Helpers 
 
 
 async def _resolve_telegram_chat(identity) -> int | None:

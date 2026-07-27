@@ -1,4 +1,4 @@
-"""Campaign model — groups multiple broadcasts under a single goal."""
+"""Campaign model  groups multiple broadcasts under a single goal."""
 
 import uuid
 from datetime import datetime

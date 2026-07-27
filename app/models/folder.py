@@ -17,7 +17,7 @@ class Folder(Base):
     color: Mapped[str] = mapped_column(String(20), default="#6366f1")
     icon: Mapped[str] = mapped_column(String(50), default="folder")
 
-    # JSON-encoded list[str] of Telegram chat ids — matches the Text+json.dumps
+    # JSON-encoded list[str] of Telegram chat ids  matches the Text+json.dumps
     # convention used for ReplyMacro.target_chats rather than a native JSON column.
     group_ids: Mapped[str] = mapped_column(Text, default="[]")
 
@@ -36,6 +36,6 @@ class Folder(Base):
 
     @property
     def order(self) -> int:
-        """Alias so FolderRead (from_attributes) can expose `order` — the field name
-        the frontend contract uses — without a DB column named `order` (a SQL keyword)."""
+        """Alias so FolderRead (from_attributes) can expose `order`  the field name
+        the frontend contract uses  without a DB column named `order` (a SQL keyword)."""
         return self.sort_order

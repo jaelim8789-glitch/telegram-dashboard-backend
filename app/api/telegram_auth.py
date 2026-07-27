@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 async def _get_account_or_404(account_id: str, db: AsyncSession) -> Account:
     account = await account_crud.get_account(db, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2    .")
     return account
 
 
@@ -153,7 +153,7 @@ async def verify_code(
         # complete 2FA — persist it so a restart before verify-2fa can resume here
         # instead of stranding the account with a blank client.
         await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
-        return AuthStepResult(status=account.status, requires_2fa=True, detail="2단계 인증 비밀번호가 필요합니다.")
+        return AuthStepResult(status=account.status, detail=" .")
     except PhoneCodeInvalidError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않습니다.")
     except PhoneCodeExpiredError:

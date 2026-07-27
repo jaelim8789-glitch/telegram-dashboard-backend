@@ -1,4 +1,4 @@
-"""Canonical PLAN_CATALOG — single source of truth for pricing and limits.
+"""Canonical PLAN_CATALOG  single source of truth for pricing and limits.
 
 Every module that needs plan prices, feature limits, or billing intervals
 imports from here.  No duplicated PLAN_PRICES_USDT / PLAN_LIMITS dicts.
@@ -25,7 +25,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "max_reply_macros": 1,
             "monthly_message_limit": 100,
             "monthly_auto_reply_limit": 100,
-            # Placeholder — adjust once real usage data is in from the first deploy.
+            # Placeholder  adjust once real usage data is in from the first deploy.
             "monthly_ai_chat_limit": 20,
             "cooldown_minimum_minutes": 60,
             "can_broadcast": False,
@@ -34,7 +34,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "can_export_data": False,
         },
         "features": [
-            "3 accounts",  # 변경된 계정 수 반영
+            "3 accounts",  #    
             "3 auto-reply rules",
             "100 replies/month",
             "60 min cooldown",
@@ -42,7 +42,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
     },
     "pro": {
         "name": "Pro",
-        "description": "$100/month — 10 accounts",
+        "description": "$100/month  10 accounts",
         "trial_days": 0,
         "prices_usdt": {
             "monthly": 100,
@@ -73,7 +73,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
     },
     "team": {
         "name": "Team",
-        "description": "$199/quarter — 20 accounts",
+        "description": "$199/quarter  20 accounts",
         "trial_days": 0,
         "prices_usdt": {
             "quarterly": 199,
@@ -133,7 +133,7 @@ def validate_plan_id(plan_id: str) -> str:
     Returns the validated plan_id. Raises ValueError with a user-facing message.
     """
     if is_deprecated_plan(plan_id):
-        raise ValueError("해당 요금제는 더 이상 제공되지 않습니다. Pro ($100/월) 또는 Team ($199/분기)을 선택해주세요.")
+        raise ValueError("     . Pro ($100/)  Team ($199/) .")
     if plan_id not in PLAN_CATALOG:
-        raise ValueError("유효하지 않은 요금제입니다.")
+        raise ValueError("  .")
     return plan_id

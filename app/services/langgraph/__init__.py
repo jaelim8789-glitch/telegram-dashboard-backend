@@ -1,4 +1,4 @@
-"""TeleMon LangGraph — lightweight graph runtime (Phase 1 foundation).
+"""TeleMon LangGraph  lightweight graph runtime (Phase 1 foundation).
 
 This is a self-contained, dependency-free implementation of the core LangGraph
 mental model (StateGraph with typed state, nodes, conditional edges, and
@@ -43,7 +43,7 @@ START = "__start__"
 END = "__end__"
 
 
-# ─── State ─────────────────────────────────────────────────────────────────
+#  State 
 
 
 @dataclass
@@ -72,7 +72,7 @@ class GraphState:
         self.metadata["failed"] = True
 
 
-# ─── Node / Graph primitives ────────────────────────────────────────────────
+#  Node / Graph primitives 
 
 NodeFn = Callable[[GraphState], Any]
 ConditionFn = Callable[[GraphState], str]
@@ -211,7 +211,7 @@ class CompiledGraph:
                     result = await result
                 if isinstance(result, dict):
                     state.data.update(result)
-            except Exception as exc:  # noqa: BLE001 — isolate node failures
+            except Exception as exc:  # noqa: BLE001  isolate node failures
                 state.fail(f"node '{current}' raised: {exc}")
                 _log.error("langgraph_node_error", node=current, error=str(exc))
                 break

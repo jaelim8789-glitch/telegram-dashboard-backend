@@ -1,4 +1,4 @@
-"""Native Telegram Stars top-up — credit_stars_from_telegram_payment.
+"""Native Telegram Stars top-up  credit_stars_from_telegram_payment.
 
 Covers the one thing that actually matters for a payment credit path:
 idempotency on telegram_payment_charge_id (Telegram can redeliver the
@@ -29,7 +29,7 @@ async def _make_tenant(db, *, plan="free", **overrides):
 
 class db_session_cm:
     """Wrap an already-open test db_session as an async-context-manager, matching
-    async_session_maker()'s call signature — see test_billing_entitlements.py."""
+    async_session_maker()'s call signature  see test_billing_entitlements.py."""
 
     def __init__(self, session):
         self._session = session
@@ -59,7 +59,7 @@ async def test_credit_stars_from_telegram_payment_adds_to_balance(db_session, mo
 
 @pytest.mark.asyncio
 async def test_credit_stars_from_telegram_payment_is_idempotent_on_charge_id(db_session, monkeypatch):
-    """Telegram can redeliver the successful_payment update on retry — a repeat
+    """Telegram can redeliver the successful_payment update on retry  a repeat
     charge id must not double-credit the tenant."""
     import app.services.billing as billing_module
 

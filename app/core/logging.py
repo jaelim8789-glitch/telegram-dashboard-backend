@@ -12,7 +12,7 @@ _configured = False
 
 
 def configure_logging() -> None:
-    """Idempotent — safe to call multiple times (e.g. once at import, once explicitly)."""
+    """Idempotent  safe to call multiple times (e.g. once at import, once explicitly)."""
     global _configured
     if _configured:
         return

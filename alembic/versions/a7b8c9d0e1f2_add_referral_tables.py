@@ -1,4 +1,4 @@
-﻿"""add referral_codes, referral_commissions tables and referred_by FK
+"""add referral_codes, referral_commissions tables and referred_by FK
 
 Revision ID: a7b8c9d0e1f2
 Revises: b1d2e3f4a5b6

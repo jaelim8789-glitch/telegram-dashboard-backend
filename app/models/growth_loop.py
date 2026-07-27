@@ -1,7 +1,7 @@
-"""Autonomous Growth Loop — DB Model
+"""Autonomous Growth Loop  DB Model
 
-연속적인 자율 성장 사이클:
-Analyze → Generate → Send → Measure → Adjust → Repeat
+   :
+Analyze  Generate  Send  Measure  Adjust  Repeat
 """
 
 import uuid
@@ -24,7 +24,7 @@ class AutonomousGrowthLoop(Base):
     # Strategy (JSON)
     strategy: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    # Metrics (JSON) — aggregated across all cycles
+    # Metrics (JSON)  aggregated across all cycles
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Cycle log (JSON array)

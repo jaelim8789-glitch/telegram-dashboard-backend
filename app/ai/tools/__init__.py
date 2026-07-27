@@ -1,4 +1,4 @@
-"""AI Tool Calling — tool registry, MCP client, and execution engine."""
+"""AI Tool Calling  tool registry, MCP client, and execution engine."""
 
 from app.ai.tools.registry import ToolRegistry, get_tool_registry
 from app.ai.tools.executor import ToolExecutor, get_tool_executor

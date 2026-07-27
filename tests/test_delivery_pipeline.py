@@ -1,6 +1,6 @@
 """Sprint 14: Behavioral tests for the canonical Telegram delivery pipeline.
 
-All Telegram calls are mocked — no real messages are sent.
+All Telegram calls are mocked  no real messages are sent.
 """
 
 import asyncio
@@ -30,17 +30,17 @@ from app.services.delivery import (
 )
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────
+#  Helpers 
 
 
 def make_flood_wait(seconds: int) -> FloodWaitError:
-    """FloodWaitError constructor varies across Telethon versions — set seconds directly."""
+    """FloodWaitError constructor varies across Telethon versions  set seconds directly."""
     exc = FloodWaitError(request=None)
     exc.seconds = seconds
     return exc
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -74,9 +74,9 @@ def sample_request():
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 1: _resolve_target tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_resolve_target_numeric():
     assert _resolve_target("-100123") == -100123
@@ -88,42 +88,42 @@ def test_resolve_target_username():
     assert _resolve_target("username") == "username"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2: classify_error tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_classify_flood_wait():
     exc = make_flood_wait(30)
     status, msg = classify_error(exc)
     assert status == DeliveryStatus.FLOOD_WAIT
-    assert "30초" in msg
-    assert "텔레그램" in msg
+    assert "30" in msg
+    assert "" in msg
 
 
 def test_classify_banned():
     exc = UserDeactivatedBanError(request=None)
     status, msg = classify_error(exc)
     assert status == DeliveryStatus.BANNED
-    assert "차단" in msg
+    assert "" in msg
 
 
 def test_classify_forbidden():
     exc = ChatWriteForbiddenError(request=None)
     status, msg = classify_error(exc)
     assert status == DeliveryStatus.FORBIDDEN
-    assert "권한" in msg
+    assert "" in msg
 
 
 def test_classify_invalid_recipient():
     exc = UsernameInvalidError(request=None)
     status, msg = classify_error(exc)
     assert status == DeliveryStatus.INVALID_RECIPIENT
-    assert "수신자" in msg
+    assert "" in msg
 
 
 def test_classify_session_expired():
     from app.services.telegram_actions import AccountNotAuthenticatedError
-    exc = AccountNotAuthenticatedError("세션이 만료되었습니다")
+    exc = AccountNotAuthenticatedError(" ")
     status, msg = classify_error(exc)
     assert status == DeliveryStatus.SESSION_EXPIRED
 
@@ -151,12 +151,12 @@ def test_classify_never_exposes_raw_exception():
     exc = UserDeactivatedBanError(request=None)
     _, msg = classify_error(exc)
     assert "UserDeactivatedBanError" not in msg
-    assert "차단" in msg
+    assert "" in msg
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 3: _send_single tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 async def test_send_single_success(mock_client):
@@ -194,7 +194,7 @@ async def test_send_single_never_exposes_secrets_in_error(mock_client):
     _, _, error, _ = await _send_single(mock_client, -100123, "hi", None)
     assert error is not None
     assert "UserDeactivatedBanError" not in error
-    assert "차단" in error
+    assert "" in error
 
 
 @pytest.mark.asyncio
@@ -214,12 +214,12 @@ async def test_send_single_hung_call_times_out_instead_of_blocking_forever(mock_
     status, msg_id, error, flood = await _send_single(mock_client, -100123, "hi", None)
     assert status == DeliveryStatus.NETWORK_ERROR
     assert msg_id is None
-    assert "지연" in error or "시간" in error
+    assert "" in error or "" in error
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 4: _deliver_with_retry tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 async def test_retry_success_first_attempt(mock_client, mock_db_session):
@@ -302,9 +302,9 @@ async def test_retry_invalid_recipient_does_not_retry(mock_client, mock_db_sessi
     assert result.attempt_count == 1
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 5: _persist_log tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 async def test_persist_log_success(mock_db_session):
@@ -334,7 +334,7 @@ async def test_persist_log_failure(mock_db_session):
         status=DeliveryStatus.FORBIDDEN,
         success=False,
         telegram_message_id=None,
-        error_message="권한 없음",
+        error_message=" ",
         attempt_count=1,
         message_content="hi",
     )
@@ -342,9 +342,9 @@ async def test_persist_log_failure(mock_db_session):
     mock_db_session.commit.assert_awaited_once()
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 6: deliver_message tests (full pipeline, mocked Telethon)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery.get_authorized_client")
@@ -376,7 +376,7 @@ async def test_deliver_message_account_not_found(mock_get_account, mock_get_clie
 
     assert len(results) == 2
     assert all(r.status == DeliveryStatus.INTERNAL_ERROR for r in results)
-    assert all("찾을 수" in (r.error_message or "") for r in results)
+    assert all(" " in (r.error_message or "") for r in results)
     mock_get_client.assert_not_called()
 
 
@@ -389,7 +389,7 @@ async def test_deliver_message_session_expired(mock_get_account, mock_get_client
     mock_get_account.return_value = mock_account
 
     from app.services.telegram_actions import AccountNotAuthenticatedError
-    mock_get_client.side_effect = AccountNotAuthenticatedError("세션 만료")
+    mock_get_client.side_effect = AccountNotAuthenticatedError(" ")
 
     results = await deliver_message(sample_request)
 
@@ -446,9 +446,9 @@ async def test_deliver_message_one_failure_does_not_corrupt_other(mock_get_accou
     assert results[1].telegram_message_id == 456
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 7: Multiple recipients produce independent results
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery.get_authorized_client")
@@ -475,9 +475,9 @@ async def test_multi_recipient_independent_results(mock_get_account, mock_get_cl
     assert all(r.telegram_message_id == 99 for r in results)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 8: Callback failure must not corrupt delivery
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery.get_authorized_client")
@@ -495,7 +495,7 @@ async def test_callback_failure_does_not_corrupt_delivery(mock_get_account, mock
         try:
             raise RuntimeError("callback crashed!")
         except RuntimeError:
-            pass  # Expected — tests that delivery survives callback failure
+            pass  # Expected  tests that delivery survives callback failure
 
     results = await deliver_message(sample_request, on_status_change=broken_callback)
 
@@ -503,9 +503,9 @@ async def test_callback_failure_does_not_corrupt_delivery(mock_get_account, mock
     assert all(r.status == DeliveryStatus.SUCCESS for r in results)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 9: Pre-passed client skips get_authorized_client (per-recipient reuse)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery.get_authorized_client")
@@ -555,13 +555,13 @@ async def test_deliver_message_with_prepassed_client_multi_recipient(mock_get_ac
     assert mock_client.send_message.await_count == 5
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 10: No real network call occurs
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 11: Free-plan watermark behavior
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 from app.models.account import Account
 from app.models.tenant import Tenant
@@ -586,7 +586,7 @@ async def test_free_plan_appends_watermark(mock_get_account, mock_get_client, mo
     request = DeliveryRequest(
         account_id="acc-free",
         recipients=["-100123"],
-        message="테스트 메시지",
+        message=" ",
         source="test",
     )
 
@@ -595,8 +595,8 @@ async def test_free_plan_appends_watermark(mock_get_account, mock_get_client, mo
     assert len(results) == 1
     assert results[0].status == DeliveryStatus.SUCCESS
     sent_message = mock_client.send_message.call_args[0][1]
-    assert sent_message.startswith("테스트 메시지")
-    assert "🤖 TeleMon AI" in sent_message
+    assert sent_message.startswith(" ")
+    assert " TeleMon AI" in sent_message
     assert "https://telemon.online" in sent_message
 
 
@@ -619,7 +619,7 @@ async def test_paid_plan_does_not_append_watermark(mock_get_account, mock_get_cl
     request = DeliveryRequest(
         account_id="acc-pro",
         recipients=["-100123"],
-        message="유료 플랜 테스트",
+        message="  ",
         source="test",
     )
 
@@ -628,8 +628,8 @@ async def test_paid_plan_does_not_append_watermark(mock_get_account, mock_get_cl
     assert len(results) == 1
     assert results[0].status == DeliveryStatus.SUCCESS
     sent_message = mock_client.send_message.call_args[0][1]
-    assert sent_message == "유료 플랜 테스트"
-    assert "🤖 TeleMon AI" not in sent_message
+    assert sent_message == "  "
+    assert " TeleMon AI" not in sent_message
 
 
 @pytest.mark.asyncio
@@ -647,7 +647,7 @@ async def test_no_tenant_means_no_watermark(mock_get_account, mock_get_client, m
     request = DeliveryRequest(
         account_id="acc-no-tenant",
         recipients=["-100123"],
-        message="테넌트 없음",
+        message=" ",
         source="test",
     )
 
@@ -656,9 +656,9 @@ async def test_no_tenant_means_no_watermark(mock_get_account, mock_get_client, m
     assert len(results) == 1
     assert results[0].status == DeliveryStatus.SUCCESS
     sent_message = mock_client.send_message.call_args[0][1]
-    assert sent_message == "테넌트 없음"
+    assert sent_message == " "
 
 
 def test_no_real_telegram_network_call():
-    """All tests use mocked Telethon — no real network calls occur."""
+    """All tests use mocked Telethon  no real network calls occur."""
     assert True

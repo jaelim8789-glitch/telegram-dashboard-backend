@@ -1,4 +1,4 @@
-"""Delivery Analytics API — tenant-safe operational metrics from MessageLog.
+"""Delivery Analytics API  tenant-safe operational metrics from MessageLog.
 
 Sprint 16 extensions:
 - Optional filtering (source, account_id, status, start_time, end_time)
@@ -130,7 +130,7 @@ async def api_recent(
     end_time: str | None = None,
     identity: Identity = Depends(get_current_identity),
 ):
-    """Get most recent delivery activity. Safe fields only — no secrets.
+    """Get most recent delivery activity. Safe fields only  no secrets.
 
     Optional filters: source, status, start_time, end_time (ISO datetime).
     """
@@ -297,7 +297,7 @@ async def api_performance_card(
     identity: Identity = Depends(get_current_identity),
 ):
     """Render a shareable PNG card summarizing this tenant's delivery stats
-    over the last `days` (total sent, success rate) — for sharing outside
+    over the last `days` (total sent, success rate)  for sharing outside
     the dashboard (e.g. Telegram, social media) as a lightweight growth hook.
     """
     png_bytes = await generate_performance_card(identity, days=days)

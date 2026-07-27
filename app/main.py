@@ -4,7 +4,7 @@ Improvements in this hardening batch:
 - ``/health`` now includes a database connectivity probe (critical for Render
   free-tier cold-start monitoring and load-balancer health checks).
 - Lifespan startup failures (scheduler, auto-reply listeners, Telegram bot) are
-  *isolated* — one component failing does not prevent the app from starting.
+  *isolated*  one component failing does not prevent the app from starting.
   Errors are logged and the app continues without the failed component.
 - ``ProxyHeadersMiddleware`` ensures ``request.client.host`` / ``X-Forwarded-For``
   resolve correctly when the app runs behind nginx or Cloudflare.
@@ -81,7 +81,7 @@ from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
 from app.services.telethon_pool import pool
 
-# ── AI Platform Imports ───────────────────────────────────────────────
+#  AI Platform Imports 
 from app.ai.routers import (
     tools_router as ai_tools_router,
     workflows_router as ai_workflows_router,
@@ -119,10 +119,10 @@ async def lifespan(app: FastAPI):
 
     Each startup step is wrapped in try/except so a failure in one
     (e.g. scheduler DB error, unauthenticated account, missing bot token)
-    does not prevent the HTTP server from starting — the app is degraded
+    does not prevent the HTTP server from starting  the app is degraded
     but still serving health checks and API calls.
     """
-    # ── Database sanity check ─────────────────────────────────────────
+    #  Database sanity check 
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1 FROM users LIMIT 1"))
@@ -130,29 +130,29 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("database_schema_missing_table", error=str(exc))
 
-    # ── Redis cache (optional — initialized lazily by app.cache) ──
+    #  Redis cache (optional  initialized lazily by app.cache) 
 
-    # ── Scheduler ──────────────────────────────────────────────────────
+    #  Scheduler 
     try:
         start_scheduler()
         logger.info("scheduler_started")
     except Exception as exc:
         logger.error("scheduler_startup_failed", error=str(exc))
 
-    # ── Auto-reply listeners ───────────────────────────────────────────
+    #  Auto-reply listeners 
     try:
         await attach_all_active_listeners()
         logger.info("auto_reply_listeners_attached")
     except Exception as exc:
         logger.error("auto_reply_listeners_startup_failed", error=str(exc))
 
-    # ── Telegram bot (optional) ────────────────────────────────────────
+    #  Telegram bot (optional) 
     try:
         await start_bot()
     except Exception as exc:
         logger.error("telegram_bot_startup_failed", error=str(exc))
 
-    # ── AI Platform Startup ────────────────────────────────────────────
+    #  AI Platform Startup 
     try:
         register_builtin_tools()
         logger.info("ai_builtin_tools_registered")
@@ -183,7 +183,7 @@ async def lifespan(app: FastAPI):
     logger.info("app_started")
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────────
+    #  Shutdown 
     try:
         await stop_bot()
     except Exception as exc:
@@ -199,7 +199,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("pool_disconnect_failed", error=str(exc))
 
-    # ── AI Platform Shutdown ───────────────────────────────────────────
+    #  AI Platform Shutdown 
     try:
         ai_scheduler = get_ai_scheduler_service()
         await ai_scheduler.stop()
@@ -225,7 +225,7 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
-# ── Middleware stack ───────────────────────────────────────────────────
+#  Middleware stack 
 
 if settings.environment.strip().lower() in ("production", "prod"):
     app.add_middleware(
@@ -250,7 +250,7 @@ app.add_middleware(
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Ported from TeleMon/backend/monitoring.py — request-count/latency counters and
+# Ported from TeleMon/backend/monitoring.py  request-count/latency counters and
 # an optional alert webhook. Deliberately NOT calling setup_structured_logging()
 # here: app.core.logging already configures structured JSON logging for this
 # app, and calling both would fight over the root logger's handlers.
@@ -258,7 +258,7 @@ from app.monitoring import MetricsMiddleware, get_metrics_text
 
 app.add_middleware(MetricsMiddleware)
 
-# ── Routers ────────────────────────────────────────────────────────────
+#  Routers 
 
 app.include_router(admin_router)
 app.include_router(auth_router)
@@ -320,7 +320,7 @@ app.include_router(push_router, dependencies=_auth_required)
 app.include_router(runtime_router, dependencies=_auth_required)
 app.include_router(smart_folders_router, dependencies=_auth_required)
 
-# ── AI Platform Routers ───────────────────────────────────────────────
+#  AI Platform Routers 
 app.include_router(ai_tools_router, dependencies=_auth_required)
 app.include_router(ai_workflows_router, dependencies=_auth_required)
 app.include_router(ai_group_intel_router, dependencies=_auth_required)
@@ -368,7 +368,7 @@ async def health():
         logger.warning("health_check_db_failed", error=str(exc))
         all_ok = False
 
-    # 2. Redis probe (optional — degrades gracefully)
+    # 2. Redis probe (optional  degrades gracefully)
     try:
         from app.cache import _get_redis as _probe_redis
         r = await _probe_redis()

@@ -1,5 +1,5 @@
 """Server-side verification that a Telegram user is currently a member of the
-official TeleMon channel — the only trusted signal for the free-trial signup gate.
+official TeleMon channel  the only trusted signal for the free-trial signup gate.
 
 Never trust a frontend claim of membership. This module is the sole place that
 decides "verified" vs "not verified", and it fails closed: any error talking to the
@@ -16,13 +16,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Allow-list, not a deny-list — anything not explicitly here (left, banned/kicked,
+# Allow-list, not a deny-list  anything not explicitly here (left, banned/kicked,
 # restricted, or any future status Telegram adds) is rejected by default.
 _ACTIVE_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER}
 
 
 class MembershipCheckUnavailable(Exception):
-    """Raised when the Telegram API couldn't be reached or isn't configured —
+    """Raised when the Telegram API couldn't be reached or isn't configured 
     callers must treat this the same as "not a member" (fail closed)."""
 
 

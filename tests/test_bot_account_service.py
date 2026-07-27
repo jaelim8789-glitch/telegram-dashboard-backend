@@ -1,5 +1,5 @@
 """Tests for the Telegram bot's account/billing self-service layer
-(app/services/bot_account_service.py) — plan/account snapshot, USDT purchase
+(app/services/bot_account_service.py)  plan/account snapshot, USDT purchase
 start, renew, payment check/claim, and purchase history. Mirrors the pattern
 in tests/test_bot_self_service_api_key.py: call the service functions
 directly with a test DB session, no Update/CallbackQuery mocking.
@@ -23,7 +23,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ─── get_account_snapshot ───────────────────────────────────────────────
+#  get_account_snapshot 
 
 
 async def test_snapshot_unlinked_user(db_session):
@@ -66,7 +66,7 @@ async def test_snapshot_reports_api_key_issued(db_session):
     assert snapshot.plan_name == "Pro"
 
 
-# ─── start_purchase ──────────────────────────────────────────────────────
+#  start_purchase 
 
 
 async def test_start_purchase_invalid_plan(db_session):
@@ -109,7 +109,7 @@ async def test_start_purchase_conflicts_on_already_active(db_session):
     assert result.status == "already_active"
 
 
-# ─── start_renew ─────────────────────────────────────────────────────────
+#  start_renew 
 
 
 async def test_renew_without_prior_plan(db_session):
@@ -144,7 +144,7 @@ async def test_renew_reuses_current_paid_plan(db_session):
     assert result.billing == "quarterly"
 
 
-# ─── check_and_claim ─────────────────────────────────────────────────────
+#  check_and_claim 
 
 
 async def test_claim_no_tenant(db_session):
@@ -191,12 +191,12 @@ async def test_claim_delivers_key_once(db_session):
     assert result.status == "claimed"
     assert result.api_key == raw_key
 
-    # Claimed exactly once — a second call finds no unclaimed record left.
+    # Claimed exactly once  a second call finds no unclaimed record left.
     result2 = await bot_account_service.check_and_claim(db_session, telegram_user_id=700032)
     assert result2.status == "no_payment"
 
 
-# ─── list_purchase_history ───────────────────────────────────────────────
+#  list_purchase_history 
 
 
 async def test_history_empty_for_unknown_user(db_session):

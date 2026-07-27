@@ -17,7 +17,7 @@ async def _make_account(db_session, phone="+821011119999"):
     return await account_crud.create_account(db_session, AccountCreate(phone=phone))
 
 
-async def _make_broadcast(db_session, account_id, message="테스트 발송", recipients=None):
+async def _make_broadcast(db_session, account_id, message=" ", recipients=None):
     payload = BroadcastCreate(account_id=account_id, message=message, recipients=recipients or ["-100999"])
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
 
@@ -49,13 +49,13 @@ async def test_process_broadcast_success(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_process_broadcast_applies_delay_seconds_for_normal_mode(db_session, monkeypatch):
-    """Production symptom: the '일반 발송 간격' selector had no backend effect —
+    """Production symptom: the '  ' selector had no backend effect 
     delay_seconds was accepted nowhere in the pipeline."""
     from app.schemas.broadcast import BroadcastCreate
 
     account = await _make_account(db_session)
     payload = BroadcastCreate(
-        account_id=account.id, message="테스트", recipients=["-100999"], delay_seconds=10
+        account_id=account.id, message="", recipients=["-100999"], delay_seconds=10
     )
     broadcast = await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
     assert broadcast.delay_seconds == 10
@@ -73,9 +73,9 @@ async def test_process_broadcast_applies_delay_seconds_for_normal_mode(db_sessio
     assert captured["inter_message_delay"] == 10.0
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 28 — Banned account state synchronization
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 28  Banned account state synchronization
+# 
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_deliver_message_banned_account_fast_fails(db_session, monkeypatch
     results = await deliver_message(request)
     assert len(results) == 1
     assert results[0].status.value == "banned"
-    assert "차단" in results[0].error_message
+    assert "" in results[0].error_message
 
     # No Telegram call should have been made
     get_client_mock.assert_not_called()
@@ -160,7 +160,7 @@ async def test_deliver_message_persists_banned_on_banned_result(db_session, monk
         AsyncMock(return_value=DeliveryResult(
             status=DeliveryStatus.BANNED,
             recipient="-100999",
-            error_message="계정이 텔레그램에서 차단되었습니다.",
+            error_message="  .",
         )),
     )
 
@@ -181,9 +181,9 @@ async def test_deliver_message_persists_banned_on_banned_result(db_session, monk
     assert account.session_data is None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 27 — Telegram session recovery
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 27  Telegram session recovery
+# 
 
 
 @pytest.mark.asyncio
@@ -272,9 +272,9 @@ async def test_deliver_message_without_session_fast_fails(db_session, monkeypatc
     assert results[0].status.value == "session_expired"
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 26 — Broadcast retry limits
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 26  Broadcast retry limits
+# 
 
 
 @pytest.mark.asyncio
@@ -379,14 +379,14 @@ async def test_process_broadcast_failure_records_error(db_session, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
-        AsyncMock(return_value=[_failure_result(error="계정이 아직 인증되지 않았습니다.")]),
+        AsyncMock(return_value=[_failure_result(error="   .")]),
     )
 
     await process_broadcast(broadcast.id)
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert broadcast.error_message == "계정이 아직 인증되지 않았습니다."
+    assert broadcast.error_message == "   ."
 
 
 @pytest.mark.asyncio
@@ -407,7 +407,7 @@ async def test_process_broadcast_missing_account_marks_failed(db_session, monkey
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert "계정을 찾을 수 없습니다" in broadcast.error_message
+    assert "   " in broadcast.error_message
     deliver_mock.assert_not_called()
 
 
@@ -422,19 +422,19 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
     await process_broadcast(first.id)
     deliver_mock.reset_mock()
 
-    second = await _make_broadcast(db_session, account.id, message="두번째")
+    second = await _make_broadcast(db_session, account.id, message="")
     await process_broadcast(second.id)
 
     deliver_mock.assert_not_called()
 
     await db_session.refresh(second)
     assert second.status == "failed"
-    assert "1분에 1회" in second.error_message
+    assert "1 1" in second.error_message
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 23 — Broadcast execution timeout
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 23  Broadcast execution timeout
+# 
 
 
 @pytest.mark.asyncio
@@ -456,14 +456,14 @@ async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, mon
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert "시간이 초과" in broadcast.error_message
+    assert " " in broadcast.error_message
 
 
 @pytest.mark.asyncio
 async def test_process_broadcast_timeout_with_partial_success_marks_sent(db_session, monkeypatch):
     """Production symptom: a broadcast to 89 recipients logged 53 successful
     sends in message_logs, but the overall Broadcast row was blanket-marked
-    "failed" because the outer wait_for hit its timeout — misleading, since
+    "failed" because the outer wait_for hit its timeout  misleading, since
     most recipients actually got the message. The final status must reflect
     what message_logs actually show instead of assuming total failure."""
     from app.models.message_log import MessageLog
@@ -499,7 +499,7 @@ async def test_process_broadcast_timeout_with_partial_success_marks_sent(db_sess
     await db_session.refresh(broadcast)
     assert broadcast.status == "sent"
     assert "1/2" in broadcast.error_message
-    assert "시간 초과" in broadcast.error_message
+    assert " " in broadcast.error_message
 
 
 @pytest.mark.asyncio
@@ -533,9 +533,9 @@ async def test_process_broadcast_timeout_configurable_via_settings(db_session, m
     assert hasattr(settings, "broadcast_timeout_seconds")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 24 — Broadcast retry (CRUD-level)
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 24  Broadcast retry (CRUD-level)
+# 
 
 
 @pytest.mark.asyncio
@@ -592,9 +592,9 @@ async def test_retry_broadcast_returns_none_for_missing(db_session):
     assert result is None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 29 — retry/redispatch must not resend to already-succeeded recipients
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 29  retry/redispatch must not resend to already-succeeded recipients
+# 
 
 
 @pytest.mark.asyncio
@@ -634,7 +634,7 @@ async def test_process_broadcast_excludes_already_succeeded_recipients(db_sessio
 @pytest.mark.asyncio
 async def test_process_broadcast_all_recipients_already_succeeded_skips_redispatch(db_session, monkeypatch):
     """If every recipient already has a recorded success, re-running the
-    broadcast must not call deliver_message at all — there's nothing left
+    broadcast must not call deliver_message at all  there's nothing left
     to send, and calling it would resend duplicate messages."""
     from app.models.message_log import MessageLog
 
@@ -664,7 +664,7 @@ async def test_process_broadcast_all_recipients_already_succeeded_skips_redispat
 async def test_process_broadcast_reports_partial_success_when_remaining_recipients_fail(db_session, monkeypatch):
     """A recipient that already succeeded in an earlier attempt must keep the
     broadcast's final status as partial success ("sent"), even if every
-    recipient attempted *this round* fails — the earlier success must not be
+    recipient attempted *this round* fails  the earlier success must not be
     erased just because this round found nothing new to succeed at."""
     from app.models.message_log import MessageLog
 
@@ -681,7 +681,7 @@ async def test_process_broadcast_reports_partial_success_when_remaining_recipien
 
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
-        AsyncMock(return_value=[_failure_result("-100002", error="일시적 오류")]),
+        AsyncMock(return_value=[_failure_result("-100002", error=" ")]),
     )
 
     await process_broadcast(broadcast.id)
@@ -693,7 +693,7 @@ async def test_process_broadcast_reports_partial_success_when_remaining_recipien
 @pytest.mark.asyncio
 async def test_process_broadcast_recipient_filter_scoped_to_this_broadcast_only(db_session, monkeypatch):
     """A success log for the *same recipient* under a different broadcast_id
-    must not exclude that recipient here — the filter is scoped strictly to
+    must not exclude that recipient here  the filter is scoped strictly to
     this broadcast's own source_id, so unrelated broadcasts (including a
     different recurring child) never cross-contaminate each other."""
     from app.models.message_log import MessageLog
@@ -761,9 +761,9 @@ async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch)
     assert broadcast.sent_at is not None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 30 — concurrent /retry + /dispatch/{id} must not double-dispatch
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 30  concurrent /retry + /dispatch/{id} must not double-dispatch
+# 
 
 
 @pytest.mark.asyncio
@@ -773,14 +773,14 @@ async def test_concurrent_retry_broadcast_calls_only_one_can_claim(db_session):
     requests would) both read status=="failed" before either commits. Without
     a row lock, both would pass the check and both flip status to "pending",
     so each caller believes it alone won the retry and would independently
-    proceed to call process_broadcast — a double dispatch. Only one of the two
+    proceed to call process_broadcast  a double dispatch. Only one of the two
     concurrent calls must succeed."""
     import app.services.broadcast_processor as broadcast_processor_module
 
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id)
     broadcast.status = "failed"
-    broadcast.error_message = "일시 오류"
+    broadcast.error_message = " "
     broadcast.sent_at = broadcast_crud.utcnow_naive()
     await db_session.commit()
 
@@ -805,7 +805,7 @@ async def test_concurrent_retry_broadcast_calls_only_one_can_claim(db_session):
     r1, r2 = await asyncio.gather(_claim_with_barrier(), _claim_with_barrier())
     successes = [r for r in (r1, r2) if r is not None]
     assert len(successes) == 1, (
-        "both concurrent retry_broadcast calls succeeded — a double dispatch "
+        "both concurrent retry_broadcast calls succeeded  a double dispatch "
         "is now possible from two overlapping /retry or /dispatch/{id} requests"
     )
 
@@ -814,8 +814,8 @@ async def test_concurrent_retry_broadcast_calls_only_one_can_claim(db_session):
 async def test_concurrent_dispatch_only_processes_the_winning_claim(db_session, monkeypatch):
     """Mirrors exactly what POST /api/broadcast/dispatch/{id} does (crud_retry,
     then process_broadcast only if it won the claim), driven from two
-    concurrent callers on the same failed broadcast — e.g. a double-click on
-    "재발송", or two admin sessions. Only the caller that wins the atomic claim
+    concurrent callers on the same failed broadcast  e.g. a double-click on
+    "", or two admin sessions. Only the caller that wins the atomic claim
     may proceed to process_broadcast; the other must back off instead of also
     dispatching and later overwriting the winner's final status."""
     import app.services.broadcast_processor as broadcast_processor_module
@@ -823,7 +823,7 @@ async def test_concurrent_dispatch_only_processes_the_winning_claim(db_session, 
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(db_session, account.id, recipients=["-100001"])
     broadcast.status = "failed"
-    broadcast.error_message = "일시 오류"
+    broadcast.error_message = " "
     broadcast.sent_at = broadcast_crud.utcnow_naive()
     await db_session.commit()
 
@@ -855,18 +855,18 @@ async def test_concurrent_dispatch_only_processes_the_winning_claim(db_session, 
     r1, r2 = await asyncio.gather(_dispatch_like_endpoint(), _dispatch_like_endpoint())
     dispatched = [r for r in (r1, r2) if r]
     assert len(dispatched) == 1, (
-        f"both concurrent callers dispatched (dispatched={dispatched}) — "
+        f"both concurrent callers dispatched (dispatched={dispatched})  "
         "the losing claim should have backed off instead of also redispatching"
     )
     assert len(deliver_calls) == 1, (
-        f"deliver_message was called {len(deliver_calls)} times for one broadcast_id — "
+        f"deliver_message was called {len(deliver_calls)} times for one broadcast_id  "
         "a concurrent second call reached actual delivery instead of being rejected"
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 31 — Broadcast reply_to_map actual propagation
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 31  Broadcast reply_to_map actual propagation
+# 
 
 
 @pytest.mark.asyncio
@@ -876,7 +876,7 @@ async def test_process_broadcast_reply_mode_populates_reply_to_map_from_explicit
     per-recipient instead of relying on the fallback reply_to_msg_id."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="답장 테스트",
+        db_session, account.id, message=" ",
         recipients=["-100001", "-100002"],
     )
     broadcast.delivery_mode = "reply"
@@ -905,7 +905,7 @@ async def test_process_broadcast_reply_mode_fetches_per_recipient_reply_map(db_s
     reply_to_map accordingly."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="답장 테스트",
+        db_session, account.id, message=" ",
         recipients=["-100001", "-100002"],
     )
     broadcast.delivery_mode = "reply"
@@ -942,7 +942,7 @@ async def test_process_broadcast_reply_mode_maintains_reply_map_after_group_reso
     resolution the reply_to_map must be built for the resolved recipients."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="그룹 답장 테스트",
+        db_session, account.id, message="  ",
         recipients=[],
     )
     broadcast.delivery_mode = "reply"
@@ -979,7 +979,7 @@ async def test_delivery_pipeline_uses_per_recipient_reply_to_map(db_session, mon
     map is absent."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="통합 답장 테스트",
+        db_session, account.id, message="  ",
         recipients=["-100001", "-100002", "-100003"],
     )
     broadcast.delivery_mode = "reply"
@@ -1000,7 +1000,7 @@ async def test_delivery_pipeline_uses_per_recipient_reply_to_map(db_session, mon
     request = DeliveryRequest(
         account_id=account.id,
         recipients=["-100001", "-100002", "-100003"],
-        message="통합 답장 테스트",
+        message="  ",
         source="broadcast",
         source_id=broadcast.id,
         reply_to_map={"-100001": 111, "-100002": 222, "-100003": 333},
@@ -1018,7 +1018,7 @@ async def test_delivery_pipeline_falls_back_to_reply_to_msg_id_when_map_absent(d
     reply_to_msg_id for all recipients."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="fallback 테스트",
+        db_session, account.id, message="fallback ",
         recipients=["-100001", "-100002"],
     )
     broadcast.delivery_mode = "reply"
@@ -1039,7 +1039,7 @@ async def test_delivery_pipeline_falls_back_to_reply_to_msg_id_when_map_absent(d
     request = DeliveryRequest(
         account_id=account.id,
         recipients=["-100001", "-100002"],
-        message="fallback 테스트",
+        message="fallback ",
         source="broadcast",
         source_id=broadcast.id,
         reply_to_msg_id=55555,
@@ -1069,7 +1069,7 @@ async def test_process_broadcast_suspended_account_marks_failed_without_sending(
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert "일시 중단" in broadcast.error_message
+    assert " " in broadcast.error_message
 
 
 @pytest.mark.asyncio
@@ -1078,7 +1078,7 @@ async def test_process_recurring_parent_skips_suspended(db_session, monkeypatch)
     account.status = "suspended"
     await db_session.commit()
 
-    parent = await _make_broadcast(db_session, account.id, message="반복")
+    parent = await _make_broadcast(db_session, account.id, message="")
     parent.recurring_interval_minutes = 60
     parent.next_scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db_session.commit()

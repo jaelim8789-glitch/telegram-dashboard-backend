@@ -19,7 +19,7 @@ async def _create_account(client, phone="+821099990000"):
     return res.json()["id"]
 
 
-def _fake_channel(id_=100, title="테스트 채널", username="testchan", megagroup=False, participants_count=42):
+def _fake_channel(id_=100, title=" ", username="testchan", megagroup=False, participants_count=42):
     return Channel(
         id=id_,
         title=title,
@@ -32,7 +32,7 @@ def _fake_channel(id_=100, title="테스트 채널", username="testchan", megagr
     )
 
 
-def _fake_chat(id_=200, title="테스트 그룹", participants_count=10):
+def _fake_chat(id_=200, title=" ", participants_count=10):
     return Chat(
         id=id_,
         title=title,
@@ -43,7 +43,7 @@ def _fake_chat(id_=200, title="테스트 그룹", participants_count=10):
     )
 
 
-# ─── parse_telegram_link ───────────────────────────────────────────────
+#  parse_telegram_link 
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -63,7 +63,7 @@ def test_parse_telegram_link(raw, expected):
     assert parse_telegram_link(raw) == expected
 
 
-# ─── inspect_links (service layer, mocked Telethon client) ────────────
+#  inspect_links (service layer, mocked Telethon client) 
 
 
 @pytest.mark.asyncio
@@ -153,14 +153,14 @@ async def test_inspect_invite_already_joined(monkeypatch):
     items, _ = await inspect_links(account=object(), links=["https://t.me/+AbCdEf12345"])
     assert items[0]["status"] == "active"
     assert items[0]["chat_type"] == "group"
-    assert items[0]["title"] == "테스트 그룹"
+    assert items[0]["title"] == " "
 
 
 @pytest.mark.asyncio
 async def test_inspect_invite_requires_approval(monkeypatch):
     fake_client = AsyncMock()
     fake_client.return_value = ChatInvite(
-        title="승인 필요 그룹",
+        title="  ",
         photo=None,
         participants_count=5,
         color=0,
@@ -186,14 +186,14 @@ async def test_inspect_dedupes_before_calling_telethon(monkeypatch):
         AsyncMock(return_value=fake_client),
     )
 
-    links = ["https://t.me/testchan", "@testchan", "t.me/testchan?x=1", "TESTCHAN"]
+    links = ["https://t.me/testchan", "@testchan", "t.me/testchanx=1", "TESTCHAN"]
     items, dupes = await inspect_links(account=object(), links=links)
     assert dupes == 3
     assert len(items) == 1
     assert fake_client.get_entity.call_count == 1
 
 
-# ─── join_selected_links ───────────────────────────────────────────────
+#  join_selected_links 
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_join_selected_links_success(monkeypatch):
     )
     account = Account(id="acc-1", tenant_id="t-1", phone="+821000000000")
 
-    results = await join_selected_links(account, [LinkJoinTarget(raw_link="@testchan", title="테스트 채널")])
+    results = await join_selected_links(account, [LinkJoinTarget(raw_link="@testchan", title=" ")])
     assert results[0]["success"] is True
     assert results[0]["chat_id"] == str(_fake_channel().id)
 
@@ -266,7 +266,7 @@ async def test_join_selected_links_via_invite_hash(monkeypatch):
     )
     account = Account(id="acc-1", tenant_id="t-1", phone="+821000000000")
 
-    results = await join_selected_links(account, [LinkJoinTarget(raw_link="https://t.me/+AbCdEf12345", title="초대 그룹")])
+    results = await join_selected_links(account, [LinkJoinTarget(raw_link="https://t.me/+AbCdEf12345", title=" ")])
     assert results[0]["success"] is True
     assert results[0]["chat_id"] == str(_fake_chat().id)
 
@@ -293,7 +293,7 @@ async def test_join_selected_links_invalid_link_reported_as_failure(monkeypatch)
     assert results[0]["success"] is False
 
 
-# ─── API routes ─────────────────────────────────────────────────────────
+#  API routes 
 
 
 @pytest.mark.asyncio
@@ -337,7 +337,7 @@ async def test_inspect_route_session_expired_returns_400(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr(
         "app.api.link_inspector.inspect_links",
-        AsyncMock(side_effect=AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.")),
+        AsyncMock(side_effect=AccountNotAuthenticatedError("  .  .")),
     )
     res = await client.post("/api/link-inspector/inspect", json={"account_id": account_id, "links": ["@foo"]})
     assert res.status_code == 400
@@ -348,7 +348,7 @@ async def test_join_route_daily_limit_returns_429(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr(
         "app.api.link_inspector.join_selected_links",
-        AsyncMock(side_effect=DailyJoinLimitExceededError("일일 가입 한도 초과 (최대 5회)")),
+        AsyncMock(side_effect=DailyJoinLimitExceededError("    ( 5)")),
     )
     res = await client.post(
         "/api/link-inspector/join",

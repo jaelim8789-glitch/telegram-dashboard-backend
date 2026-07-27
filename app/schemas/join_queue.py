@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
-# ── Queue Item Schemas ───────────────────────────────────────────────────────
+#  Queue Item Schemas 
 
 
 class QueueItemRead(BaseModel):
@@ -81,7 +81,7 @@ class ClearQueueResponse(BaseModel):
     cleared_count: int
 
 
-# ── Queue Config Schemas ─────────────────────────────────────────────────────
+#  Queue Config Schemas 
 
 
 class QueueConfigRead(BaseModel):
@@ -101,7 +101,7 @@ class QueueConfigUpdate(BaseModel):
     max_daily_joins: Optional[int] = Field(default=None, ge=1, le=100)
 
 
-# ── Queue Status / Stats ─────────────────────────────────────────────────────
+#  Queue Status / Stats 
 
 
 class QueueStats(BaseModel):

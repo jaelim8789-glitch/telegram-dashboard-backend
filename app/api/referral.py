@@ -101,7 +101,7 @@ async def generate_referral_code(
 ):
     client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "referral_generate", max_attempts=10, window_seconds=60):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="  .")
 
     ref_code = await _get_or_create_referral_code(db, identity.tenant_id)
     return GenerateReferralCodeResponse(code=ref_code.code, referral_code_id=ref_code.id)
@@ -138,7 +138,7 @@ async def get_my_referral_link(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.",
         )
-    link = f"https://t.me/{settings.telegram_bot_username}?start=ref_{ref_code.code}"
+    link = f"https://t.me/{settings.telegram_bot_username}start=ref_{ref_code.code}"
     return {"link": link, "code": ref_code.code}
 
 
@@ -160,7 +160,7 @@ async def set_my_wallet_address(
     db: AsyncSession = Depends(get_db),
 ):
     await set_wallet_address(db, identity.tenant_id, payload.wallet_address)
-    return {"success": True, "message": "지갑 주소가 저장되었습니다."}
+    return {"success": True, "message": " ."}
 
 
 @router.get("/dashboard", response_model=ReferralDashboardResponse)
@@ -271,7 +271,7 @@ async def mark_commission_paid(
 
     from app.services.referral import log_audit
     await log_audit(db, "commission.mark_paid", actor_id=identity.tenant_id, target_id=commission_id, details=f"Commission {commission_id} marked paid manually")
-    return {"success": True, "message": "커미션이 지급 완료 처리되었습니다."}
+    return {"success": True, "code": payload.new_code, "message": " ."}
 
 
 @router.post("/admin/process-payouts", response_model=ProcessPayoutResponse)
@@ -498,7 +498,7 @@ async def get_referral_qr(
     if not ref_code:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다.")
 
-    link = f"https://t.me/{settings.telegram_bot_username}?start=ref_{ref_code.code}"
+    link = f"https://t.me/{settings.telegram_bot_username}start=ref_{ref_code.code}"
     img = qrcode.make(link)
     buf = io.BytesIO()
     img.save(buf, format="PNG")

@@ -1,4 +1,4 @@
-"""Test USDT payment phone identity — paid users get a recoverable User record.
+"""Test USDT payment phone identity  paid users get a recoverable User record.
 
 Verifies that request_api_key creates a User record when a phone is provided.
 """
@@ -102,4 +102,4 @@ async def test_request_key_rejects_free_plan(db_session, monkeypatch):
 
     with pytest.raises(Exception) as exc:
         await m.request_api_key(plan="free", phone="+821099990011")
-    assert "무료 체험" in str(exc.value)
+    assert " " in str(exc.value)

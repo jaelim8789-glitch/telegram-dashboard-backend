@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.telegram_verification import TelegramChannelVerification
 
-# A pending/linked/verified row older than this is treated as expired — the token
+# A pending/linked/verified row older than this is treated as expired  the token
 # is single-purpose for one signup attempt, not a long-lived credential.
 TOKEN_TTL_MINUTES = 30
 
@@ -33,7 +33,7 @@ async def get_verification(db: AsyncSession, token: str) -> TelegramChannelVerif
 
 async def link_telegram_user(db: AsyncSession, token: str, telegram_user_id: int) -> bool:
     """Called only from the bot's /start handler, where telegram_user_id comes from a
-    real Telegram Update — never from an HTTP request the frontend could forge.
+    real Telegram Update  never from an HTTP request the frontend could forge.
     Returns False if the token doesn't exist or has expired."""
     row = await get_verification(db, token)
     if row is None:
@@ -67,7 +67,7 @@ async def mark_verified(db: AsyncSession, token: str) -> bool:
 
 async def consume_verified_token(db: AsyncSession, token: str) -> bool:
     """Atomically spend a verified, not-yet-consumed, unexpired token. Uses a single
-    conditional UPDATE so two concurrent callers cannot both succeed — the database
+    conditional UPDATE so two concurrent callers cannot both succeed  the database
     serialises the two UPDATEs and only the first sees ``consumed_at IS NULL``.
     Returns True iff exactly one row was updated."""
     cutoff = utcnow_naive() - timedelta(minutes=TOKEN_TTL_MINUTES)

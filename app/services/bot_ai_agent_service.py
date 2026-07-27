@@ -201,7 +201,7 @@ def _build_confirmation_text(tool_name: str, arguments: dict, label: str) -> str
 
 async def send_message(db: AsyncSession, telegram_user_id: int, text: str) -> BotAiAgentResult:
     if _is_in_flight(telegram_user_id):
-        return BotAiAgentResult(status="rate_limited", detail="이전 요청을 처리 중입니다. 잠시 후 다시 시도해주세요.")
+        return BotAiAgentResult(status="server_error", detail=f"   : {str(exc)}")
 
     message_text = (text or "").strip()
     if len(message_text) > _MAX_INPUT_CHARS:

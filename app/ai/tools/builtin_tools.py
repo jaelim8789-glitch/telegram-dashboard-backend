@@ -1,5 +1,5 @@
 """
-Built-in Tools — default tools registered at startup for the AI platform.
+Built-in Tools  default tools registered at startup for the AI platform.
 
 These provide core TeleMon operations that the AI can invoke.
 """
@@ -16,7 +16,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# ── Built-in Tool Handlers ────────────────────────────────────────────
+#  Built-in Tool Handlers 
 
 
 async def tool_get_current_time(**kwargs: Any) -> dict[str, Any]:
@@ -38,7 +38,7 @@ async def tool_calculate(**kwargs: Any) -> dict[str, Any]:
     """Perform a basic calculation."""
     expression = kwargs.get("expression", "")
     try:
-        # Safe evaluation — only allow basic math
+        # Safe evaluation  only allow basic math
         allowed_names = {
             "abs": abs, "round": round, "min": min, "max": max,
             "sum": sum, "int": int, "float": float, "str": str,
@@ -68,7 +68,7 @@ async def tool_format_text(**kwargs: Any) -> dict[str, Any]:
     return {"result": text}
 
 
-# ── Tool Definitions ──────────────────────────────────────────────────
+#  Tool Definitions 
 
 BUILTIN_TOOLS: list[dict[str, Any]] = [
     {

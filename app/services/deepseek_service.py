@@ -56,7 +56,7 @@ async def chat_with_deepseek(messages: list[dict], api_key: str = "") -> str:
 
 def parse_action(text: str) -> Optional[dict]:
     import re
-    m = re.search(r'<ACTION>(.*?)</ACTION>', text, re.DOTALL)
+    m = re.search(r'<ACTION>(.*)</ACTION>', text, re.DOTALL)
     if m:
         try: return json.loads(m.group(1))
         except: return None

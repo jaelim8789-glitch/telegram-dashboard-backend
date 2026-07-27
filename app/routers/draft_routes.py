@@ -99,12 +99,12 @@ async def list_drafts(
     _ensure_db()
     conn = _get_conn()
     try:
-        query = "SELECT * FROM drafts WHERE user_id = ?"
+        query = "SELECT * FROM drafts WHERE user_id = "
         params: list[Any] = [identity.user_id]
         if status:
-            query += " AND status = ?"
+            query += " AND status = "
             params.append(status)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY created_at DESC LIMIT "
         params.append(limit)
 
         rows = conn.execute(query, params).fetchall()
@@ -132,7 +132,7 @@ async def create_draft(
             """INSERT INTO drafts
                (id, user_id, account_id, title, content, content_type,
                 source, ai_model, tokens_used, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (, , , , , , , , , , )""",
             (
                 draft_id,
                 identity.user_id,
@@ -162,7 +162,7 @@ async def get_draft(
     conn = _get_conn()
     try:
         row = conn.execute(
-            "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
+            "SELECT * FROM drafts WHERE id =  AND user_id = ",
             (draft_id, identity.user_id),
         ).fetchone()
         if not row:
@@ -186,10 +186,10 @@ async def update_draft(
     for field in body:
         if field not in ALLOWED_DRAFT_FIELDS:
             continue
-        updates.append(f"{field} = ?")
+        updates.append(f"{field} = ")
         params.append(body[field])
 
-    updates.append("updated_at = ?")
+    updates.append("updated_at = ")
     params.append(now)
     params.append(draft_id)
     params.append(identity.user_id)
@@ -197,7 +197,7 @@ async def update_draft(
     conn = _get_conn()
     try:
         conn.execute(
-            f"UPDATE drafts SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
+            f"UPDATE drafts SET {', '.join(updates)} WHERE id =  AND user_id = ",
             params,
         )
         conn.commit()
@@ -231,7 +231,7 @@ async def approve_draft(
     try:
         # 소유권 확인
         row = conn.execute(
-            "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
+            "SELECT * FROM drafts WHERE id =  AND user_id = ",
             (draft_id, identity.user_id),
         ).fetchone()
         if not row:
@@ -241,21 +241,21 @@ async def approve_draft(
         if draft["status"] not in ("draft",):
             raise HTTPException(status_code=400, detail=f"Cannot approve draft with status '{draft['status']}'")
 
-        updates = ["status = ?", "updated_at = ?"]
+        updates = ["status = ", "updated_at = "]
         params: list[Any] = [new_status, now]
 
         if scheduled_at:
-            updates.append("scheduled_at = ?")
+            updates.append("scheduled_at = ")
             params.append(scheduled_at)
         if feedback:
-            updates.append("feedback = ?")
+            updates.append("feedback = ")
             params.append(feedback)
 
         params.append(draft_id)
         params.append(identity.user_id)
 
         conn.execute(
-            f"UPDATE drafts SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
+            f"UPDATE drafts SET {', '.join(updates)} WHERE id =  AND user_id = ",
             params,
         )
         conn.commit()
@@ -312,14 +312,14 @@ async def reject_draft(
     conn = _get_conn()
     try:
         row = conn.execute(
-            "SELECT * FROM drafts WHERE id = ? AND user_id = ?",
+            "SELECT * FROM drafts WHERE id =  AND user_id = ",
             (draft_id, identity.user_id),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Draft not found")
 
         conn.execute(
-            "UPDATE drafts SET status = 'rejected', feedback = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            "UPDATE drafts SET status = 'rejected', feedback = , updated_at =  WHERE id =  AND user_id = ",
             (feedback, now, draft_id, identity.user_id),
         )
         conn.commit()
@@ -339,7 +339,7 @@ async def delete_draft(
     conn = _get_conn()
     try:
         conn.execute(
-            "DELETE FROM drafts WHERE id = ? AND user_id = ?",
+            "DELETE FROM drafts WHERE id =  AND user_id = ",
             (draft_id, identity.user_id),
         )
         conn.commit()
@@ -366,10 +366,10 @@ async def batch_approve_drafts(
     now = datetime.now(timezone.utc).isoformat()
     conn = _get_conn()
     try:
-        placeholders = ",".join(["?"] * len(draft_ids))
+        placeholders = ",".join([""] * len(draft_ids))
         # Only approve drafts that belong to user AND are in 'draft' status
         rows = conn.execute(
-            f"SELECT id, status, content, account_id FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
+            f"SELECT id, status, content, account_id FROM drafts WHERE id IN ({placeholders}) AND user_id = ",
             [*draft_ids, identity.user_id],
         ).fetchall()
 
@@ -378,7 +378,7 @@ async def batch_approve_drafts(
         for r in rows:
             if r["status"] == "draft":
                 conn.execute(
-                    "UPDATE drafts SET status='approved', updated_at=? WHERE id=?",
+                    "UPDATE drafts SET status='approved', updated_at= WHERE id=",
                     (now, r["id"]),
                 )
                 approved += 1
@@ -424,9 +424,9 @@ async def batch_reject_drafts(
     now = datetime.now(timezone.utc).isoformat()
     conn = _get_conn()
     try:
-        placeholders = ",".join(["?"] * len(draft_ids))
+        placeholders = ",".join([""] * len(draft_ids))
         rows = conn.execute(
-            f"SELECT id, status FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
+            f"SELECT id, status FROM drafts WHERE id IN ({placeholders}) AND user_id = ",
             [*draft_ids, identity.user_id],
         ).fetchall()
 
@@ -434,7 +434,7 @@ async def batch_reject_drafts(
         for r in rows:
             if r["status"] == "draft":
                 conn.execute(
-                    "UPDATE drafts SET status='rejected', updated_at=? WHERE id=?",
+                    "UPDATE drafts SET status='rejected', updated_at= WHERE id=",
                     (now, r["id"]),
                 )
                 rejected += 1
@@ -460,9 +460,9 @@ async def batch_delete_drafts(
 
     conn = _get_conn()
     try:
-        placeholders = ",".join(["?"] * len(draft_ids))
+        placeholders = ",".join([""] * len(draft_ids))
         conn.execute(
-            f"DELETE FROM drafts WHERE id IN ({placeholders}) AND user_id = ?",
+            f"DELETE FROM drafts WHERE id IN ({placeholders}) AND user_id = ",
             [*draft_ids, identity.user_id],
         )
         conn.commit()
@@ -480,7 +480,7 @@ async def draft_summary(identity=Depends(get_current_identity)):
     try:
         rows = conn.execute(
             """SELECT status, COUNT(*) as cnt
-               FROM drafts WHERE user_id = ?
+               FROM drafts WHERE user_id = 
                GROUP BY status""",
             (user_id,),
         ).fetchall()

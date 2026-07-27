@@ -1,4 +1,4 @@
-"""AI Event schemas — Pydantic models for event bus."""
+"""AI Event schemas  Pydantic models for event bus."""
 
 from __future__ import annotations
 

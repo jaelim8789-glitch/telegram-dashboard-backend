@@ -20,7 +20,7 @@ class VerifyCodeRequest(BaseModel):
 
 
 class VerifyCodeResponse(BaseModel):
-    """The only response that ever carries the full API key — shown once, at issuance."""
+    """The only response that ever carries the full API key  shown once, at issuance."""
 
     api_key: str
 
@@ -30,7 +30,7 @@ class LoginWithApiKeyRequest(BaseModel):
 
 
 class LinkTelegramRequest(BaseModel):
-    telegram_id: int = Field(..., description="Telegram 사용자 ID")
+    telegram_id: int = Field(..., description="Telegram  ID")
     telegram_username: str | None = Field(default=None, max_length=255)
     telegram_photo_url: str | None = Field(default=None, max_length=512)
 

@@ -1,4 +1,4 @@
-"""AI API schemas — Pydantic models for external API integration."""
+"""AI API schemas  Pydantic models for external API integration."""
 
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ Core service for:
 - Conversation context tracking
 - Graphiti long-term memory integration
 - Multi-suggestion generation with confidence scoring
-- Auto-reply workflow (suggest → auto-send if confidence high)
+- Auto-reply workflow (suggest  auto-send if confidence high)
 """
 
 from __future__ import annotations
@@ -37,14 +37,14 @@ from app.services.ai_core_service import call_deepseek, search_memory, store_mem
 
 logger = get_logger(__name__)
 
-# ── Constants ────────────────────────────────────────────────────────────
+#  Constants 
 
 _MAX_CONVERSATION_MESSAGES = 20
 _MAX_SUGGESTION_INPUT = 4000
 _DEFAULT_MAX_TOKENS = 800
 _AUTO_REPLY_CONFIDENCE_THRESHOLD = 0.85
 
-# ── System Prompt Templates ──────────────────────────────────────────────
+#  System Prompt Templates 
 
 _SYSTEM_PROMPT_BASE = (
     "You are TeleMon AI Reply Assistant v2.0. Your role is to generate "
@@ -86,7 +86,7 @@ _TONE_DESCRIPTIONS = {
 }
 
 
-# ── Persona Management ───────────────────────────────────────────────────
+#  Persona Management 
 
 
 async def create_persona(
@@ -215,7 +215,7 @@ async def delete_persona(
     return True
 
 
-# ── Conversation Context ─────────────────────────────────────────────────
+#  Conversation Context 
 
 
 async def get_or_create_conversation(
@@ -338,7 +338,7 @@ async def _generate_conversation_summary(
     return reply
 
 
-# ── Memory Integration ───────────────────────────────────────────────────
+#  Memory Integration 
 
 
 async def enrich_with_memory(
@@ -393,7 +393,7 @@ async def store_reply_memory(
         logger.warning("memory_store_failed", error=str(exc))
 
 
-# ── Suggestion Generation ────────────────────────────────────────────────
+#  Suggestion Generation 
 
 
 async def generate_suggestions(
@@ -624,7 +624,7 @@ def _parse_suggestions(raw_text: str) -> dict[str, Any] | None:
     }
 
 
-# ── Suggestion Review Workflow ───────────────────────────────────────────
+#  Suggestion Review Workflow 
 
 
 async def review_suggestion(

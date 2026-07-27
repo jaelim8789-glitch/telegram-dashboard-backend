@@ -1,4 +1,4 @@
-"""AI Plugins API — manage plugin registrations."""
+"""AI Plugins API  manage plugin registrations."""
 
 from __future__ import annotations
 

@@ -25,7 +25,7 @@ class TelegramAPIError(Exception):
 
 
 class TelegramBotClient:
-    """Stateless-ish client — one instance per bot token."""
+    """Stateless-ish client  one instance per bot token."""
 
     def __init__(self, bot_token: str, timeout: float = 10.0) -> None:
         self._token = bot_token
@@ -55,7 +55,7 @@ class TelegramBotClient:
         """Send a message, optionally ephemeral (visible only to receiver_user_id).
 
         When *receiver_user_id* is set, the message is an Ephemeral Message
-        (Bot API 10.2+, July 2026) — only the target user and the bot see it.
+        (Bot API 10.2+, July 2026)  only the target user and the bot see it.
         """
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
@@ -77,7 +77,7 @@ class TelegramBotClient:
     async def get_chat_member(self, chat_id: int | str, user_id: int) -> dict[str, Any]:
         return await self._call("getChatMember", {"chat_id": chat_id, "user_id": user_id})
 
-    # ── Guest Mode (Bot API 10.0+, May 2026) ─────────────────────────
+    #  Guest Mode (Bot API 10.0+, May 2026) 
 
     async def answer_guest_query(
         self,
@@ -88,7 +88,7 @@ class TelegramBotClient:
     ) -> dict[str, Any]:
         """Respond to a guest query (@mention in a group where the bot is not a member).
 
-        The response is ephemeral — only the user who @mentioned the bot sees it.
+        The response is ephemeral  only the user who @mentioned the bot sees it.
         """
         payload: dict[str, Any] = {
             "guest_query_id": guest_query_id,
@@ -100,7 +100,7 @@ class TelegramBotClient:
             payload["reply_markup"] = reply_markup
         return await self._call("answerGuestQuery", payload)
 
-    # ── Telegram Stars Payments ───────────────────────────────────────
+    #  Telegram Stars Payments 
 
     async def send_invoice(
         self,
@@ -146,7 +146,7 @@ class TelegramBotClient:
             api_payload["error_message"] = error_message
         return await self._call("answerPreCheckoutQuery", api_payload)
 
-    # ── Ephemeral Message Management (Bot API 10.2+, July 2026) ───────
+    #  Ephemeral Message Management (Bot API 10.2+, July 2026) 
 
     async def edit_ephemeral_message_text(
         self,
@@ -177,7 +177,7 @@ class TelegramBotClient:
         }
         return await self._call("deleteEphemeralMessage", payload)
 
-    # ── Webhook Management ────────────────────────────────────────────
+    #  Webhook Management 
 
     async def set_webhook(
         self,

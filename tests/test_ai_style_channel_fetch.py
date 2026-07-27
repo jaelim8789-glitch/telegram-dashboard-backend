@@ -51,23 +51,23 @@ async def test_keeps_only_out_true_messages():
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.get_messages = AsyncMock(return_value=[
-        _fake_message("내가 쓴 글1", out=True),
-        _fake_message("남이 쓴 글", out=False),
-        _fake_message("내가 쓴 글2", out=True),
-        _fake_message(None, out=True),          # no text → skip
-        _fake_message("", out=True),             # empty after strip → skip
-        _fake_message("남의 글2", out=False),
-        _fake_message("내가 쓴 글3", out=True),
+        _fake_message("  1", out=True),
+        _fake_message("  ", out=False),
+        _fake_message("  2", out=True),
+        _fake_message(None, out=True),          # no text  skip
+        _fake_message("", out=True),             # empty after strip  skip
+        _fake_message(" 2", out=False),
+        _fake_message("  3", out=True),
     ])
     svc.get_authorized_client = AsyncMock(return_value=fake_client)
 
     result = await _fetch_channel_messages("acc-1", "-1001234567890", limit=50)
 
-    assert "내가 쓴 글1" in result
-    assert "내가 쓴 글2" in result
-    assert "내가 쓴 글3" in result
-    assert "남이 쓴 글" not in result
-    assert "남의 글2" not in result
+    assert "  1" in result
+    assert "  2" in result
+    assert "  3" in result
+    assert "  " not in result
+    assert " 2" not in result
 
 
 @pytest.mark.asyncio
@@ -76,8 +76,8 @@ async def test_respects_8000_char_cap():
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
 
-    long_body = "가" * 7000
-    mid_body = "나" * 3000
+    long_body = "" * 7000
+    mid_body = "" * 3000
     fake_client.get_messages = AsyncMock(return_value=[
         _fake_message(long_body, out=True),
         _fake_message(mid_body, out=True),
@@ -88,7 +88,7 @@ async def test_respects_8000_char_cap():
 
     # First message fits entirely (7000 < 8000); second is truncated to ~1000
     assert long_body in result
-    assert "나" * 1000 in result
+    assert "" * 1000 in result
     assert len(result) <= 8000 + len("\n\n---\n\n")  # separator overhead
 
 
@@ -98,10 +98,10 @@ async def test_raises_value_error_on_empty_result():
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.get_messages = AsyncMock(return_value=[
-        _fake_message("남의 글", out=False),
+        _fake_message(" ", out=False),
         _fake_message(None, out=True),
     ])
     svc.get_authorized_client = AsyncMock(return_value=fake_client)
 
-    with pytest.raises(ValueError, match="분석할 텍스트 메시지를 찾을 수 없습니다"):
+    with pytest.raises(ValueError, match="     "):
         await _fetch_channel_messages("acc-1", "-1001234567890", limit=50)

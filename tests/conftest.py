@@ -50,7 +50,7 @@ async def db_session(monkeypatch):
 
     # app.services.broadcast_processor and app.scheduler.scheduler each imported
     # `async_session_maker` by name at module-load time, so they hold their own binding
-    # independent of app.database's — patch those bindings too, so code exercised via
+    # independent of app.database's  patch those bindings too, so code exercised via
     # those modules (e.g. process_broadcast) uses *this* test's engine instead of the
     # real module-level singleton (which points at this loop-reuse problem again).
     monkeypatch.setattr(broadcast_processor_module, "async_session_maker", session_maker)
@@ -71,13 +71,13 @@ async def db_session(monkeypatch):
 
 @pytest_asyncio.fixture
 async def client(db_session):
-    """Auth bypassed — for tests about accounts/broadcast/groups/logs business logic,
+    """Auth bypassed  for tests about accounts/broadcast/groups/logs business logic,
     which isn't what they're testing. See `unauthenticated_client` for the auth checks
     themselves (login, API key issuance/validation, 401 rejection).
 
     Route handlers call get_current_identity directly (not just the router-level
     require_api_key_or_admin dependency) to resolve tenant scoping, so that also needs
-    overriding here — otherwise every handler that touches identity.tenant_id/kind still
+    overriding here  otherwise every handler that touches identity.tenant_id/kind still
     401s even with require_api_key_or_admin bypassed. Defaults to an admin identity
     (cross-tenant, matches "auth bypassed"); a test that needs a specific tenant_id can
     re-override app.dependency_overrides[get_current_identity] after pulling in `client`.
@@ -96,7 +96,7 @@ async def client(db_session):
 
 @pytest_asyncio.fixture
 async def unauthenticated_client(db_session):
-    """The real require_api_key_or_admin dependency is left in place — use this for
+    """The real require_api_key_or_admin dependency is left in place  use this for
     testing the auth mechanism itself. Also overrides get_db to use the test session
     so data committed in the test is visible to the endpoint."""
     async def _override_get_db():

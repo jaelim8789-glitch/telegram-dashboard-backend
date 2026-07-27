@@ -56,7 +56,7 @@ def _rule_score(message: str) -> tuple[int, list[str]]:
         risk += min(55, len(keyword_hits) * 9)
         reasons.append(f"광고/투자 키워드 {len(keyword_hits)}개")
 
-    urls = re.findall(r"https?://[^\s]+", text, flags=re.IGNORECASE)
+    urls = re.findall(r"https://[^\s]+", text, flags=re.IGNORECASE)
     if len(urls) >= 2:
         risk += min(20, len(urls) * 8)
         reasons.append(f"다중 URL {len(urls)}개")
@@ -81,7 +81,7 @@ def _rule_score(message: str) -> tuple[int, list[str]]:
         risk += 8
         reasons.append("반복 문자 패턴")
 
-    if re.search(r"[\d,]+(?:원|\$|€|£)", text):
+    if re.search(r"[\d,]+(:|\$||)", text):
         risk += 10
         reasons.append("금액 직접 표기")
 

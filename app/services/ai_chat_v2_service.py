@@ -41,7 +41,7 @@ from app.services.ai_core_service import call_deepseek, search_memory, store_mem
 
 logger = get_logger(__name__)
 
-# ── Constants ────────────────────────────────────────────────────────────
+#  Constants 
 
 _MAX_HISTORY_MESSAGES = 50
 _MAX_INPUT_CHARS = 10000
@@ -67,7 +67,7 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-# ── Session Management ──────────────────────────────────────────────────
+#  Session Management 
 
 
 async def create_session(
@@ -216,7 +216,7 @@ async def _update_session_summary(
         await db.commit()
 
 
-# ── Message History ─────────────────────────────────────────────────────
+#  Message History 
 
 
 async def get_session_messages(
@@ -254,7 +254,7 @@ async def _build_history_messages(
     ]
 
 
-# ── Prompt Templates ────────────────────────────────────────────────────
+#  Prompt Templates 
 
 
 async def create_template(
@@ -317,7 +317,7 @@ def _apply_template(content: str, variables: dict[str, str]) -> str:
     return re.sub(r"\{\{(\w+)\}\}", _replace, content)
 
 
-# ── Memory Integration ──────────────────────────────────────────────────
+#  Memory Integration 
 
 
 async def _enrich_with_memory(
@@ -367,7 +367,7 @@ async def _store_chat_memory(
         logger.warning("ai_chat_v2_memory_store_failed", error=str(exc))
 
 
-# ── Streaming DeepSeek Call ─────────────────────────────────────────────
+#  Streaming DeepSeek Call 
 
 
 async def _stream_deepseek(
@@ -458,7 +458,7 @@ async def _call_deepseek_nonstream(
                 return None, 0, 0
 
 
-# ── Main Chat Entry Point ───────────────────────────────────────────────
+#  Main Chat Entry Point 
 
 
 async def chat(
@@ -661,7 +661,7 @@ async def chat(
         })}\n\n"
 
 
-# ── Conversation Search ─────────────────────────────────────────────────
+#  Conversation Search 
 
 
 async def search_conversations(
@@ -713,7 +713,7 @@ async def search_conversations(
     return SearchResponse(results=results, total=total, query=request.query)
 
 
-# ── Usage Stats ─────────────────────────────────────────────────────────
+#  Usage Stats 
 
 
 async def get_usage_stats(
@@ -776,7 +776,7 @@ async def get_usage_stats(
     )
 
 
-# ── Message Feedback ────────────────────────────────────────────────────
+#  Message Feedback 
 
 
 async def submit_message_feedback(

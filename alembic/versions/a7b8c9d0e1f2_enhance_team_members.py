@@ -1,6 +1,6 @@
 """enhance team_members with team management fields
 
-Revision ID: a7b8c9d0e1f2
+Revision ID: a7b8c9d0e1f3
 Revises: merge_add_webhook_urls
 Create Date: 2026-07-17 02:00:00.000000
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "a7b8c9d0e1f2"
+revision: str = "a7b8c9d0e1f3"
 down_revision: Union[str, None] = "merge_add_webhook_urls"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

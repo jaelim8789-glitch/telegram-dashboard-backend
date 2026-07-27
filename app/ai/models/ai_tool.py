@@ -1,5 +1,5 @@
 """
-AI Tool Models — tool definitions and execution logs for AI Tool Calling.
+AI Tool Models  tool definitions and execution logs for AI Tool Calling.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiToolDefinition(Base):
-    """AI Tool Definition — registered tools that AI can call."""
+    """AI Tool Definition  registered tools that AI can call."""
 
     __tablename__ = "ai_tool_definitions"
 
@@ -40,7 +40,7 @@ class AiToolDefinition(Base):
 
 
 class AiToolExecutionLog(Base):
-    """AI Tool Execution Log — records every tool call made by AI."""
+    """AI Tool Execution Log  records every tool call made by AI."""
 
     __tablename__ = "ai_tool_execution_logs"
 

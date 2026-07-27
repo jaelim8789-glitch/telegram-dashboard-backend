@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-# ── Persona ──────────────────────────────────────────────────────────────
+#  Persona 
 
 class PersonaStyle(BaseModel):
     formality: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -57,7 +57,7 @@ class PersonaRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Conversation ─────────────────────────────────────────────────────────
+#  Conversation 
 
 class ConversationMessage(BaseModel):
     role: str  # "user" | "assistant"
@@ -82,7 +82,7 @@ class ConversationRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Suggestion ───────────────────────────────────────────────────────────
+#  Suggestion 
 
 class SuggestionOption(BaseModel):
     text: str
@@ -158,7 +158,7 @@ class SuggestionFeedbackRequest(BaseModel):
     was_helpful: bool = True
 
 
-# ── Auto-Reply Workflow ──────────────────────────────────────────────────
+#  Auto-Reply Workflow 
 
 class AutoReplyV2Settings(BaseModel):
     account_id: str

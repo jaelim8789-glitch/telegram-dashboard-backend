@@ -24,7 +24,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ── ai_reply_personas ─────────────────────────────────────────────
+    #  ai_reply_personas 
     op.create_table(
         'ai_reply_personas',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -44,7 +44,7 @@ def upgrade() -> None:
     op.create_index('ix_ai_reply_personas_tenant_id', 'ai_reply_personas', ['tenant_id'])
     op.create_index('ix_ai_reply_personas_account_id', 'ai_reply_personas', ['account_id'])
 
-    # ── ai_reply_conversations ────────────────────────────────────────
+    #  ai_reply_conversations 
     op.create_table(
         'ai_reply_conversations',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -67,7 +67,7 @@ def upgrade() -> None:
     op.create_index('ix_ai_reply_conversations_account_id', 'ai_reply_conversations', ['account_id'])
     op.create_index('ix_ai_reply_conversations_chat_id', 'ai_reply_conversations', ['chat_id'])
 
-    # ── ai_reply_suggestions_v2 ───────────────────────────────────────
+    #  ai_reply_suggestions_v2 
     op.create_table(
         'ai_reply_suggestions_v2',
         sa.Column('id', sa.String(length=36), nullable=False),

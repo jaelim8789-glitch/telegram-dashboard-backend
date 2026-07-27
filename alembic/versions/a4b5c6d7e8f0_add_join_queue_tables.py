@@ -18,7 +18,7 @@ depends_on: Union[str, None] = None
 
 
 def upgrade() -> None:
-    # ── join_queue_items ────────────────────────────────────────────────
+    #  join_queue_items 
     op.create_table(
         "join_queue_items",
         sa.Column("id", sa.String(length=36), primary_key=True),
@@ -38,7 +38,7 @@ def upgrade() -> None:
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
     )
 
-    # ── join_queue_configs ──────────────────────────────────────────────
+    #  join_queue_configs 
     op.create_table(
         "join_queue_configs",
         sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),

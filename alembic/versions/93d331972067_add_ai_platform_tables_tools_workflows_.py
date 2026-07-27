@@ -291,7 +291,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_ai_workflow_steps_execution_id'), 'ai_workflow_steps', ['execution_id'], unique=False)
     # ### end Alembic commands ###
     # NOTE: autogenerate also picked up spurious drops/alters for ai_chat_v2,
-    # ai_reply_v2, admin_audit_logs, broadcasts, message_logs and payment_records —
+    # ai_reply_v2, admin_audit_logs, broadcasts, message_logs and payment_records 
     # artifacts of those model modules not being imported into alembic/env.py's
     # Base.metadata registration (a pre-existing gap, unrelated to this change).
     # Those were stripped from this migration; it only creates the new AI Platform

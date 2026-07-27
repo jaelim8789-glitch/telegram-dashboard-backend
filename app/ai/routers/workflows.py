@@ -1,4 +1,4 @@
-"""AI Workflows API — manage workflow definitions and executions."""
+"""AI Workflows API  manage workflow definitions and executions."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""AI Plugin schemas — Pydantic models for plugin registration."""
+"""AI Plugin schemas  Pydantic models for plugin registration."""
 
 from __future__ import annotations
 

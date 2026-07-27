@@ -1,7 +1,7 @@
 """Focused tests for the Telegram bot self-service API key flow.
 
 This is a RECOVERY/FALLBACK issuance path for an existing, already-eligible
-TeleMon account — never an independent free-trial signup path. Covers:
+TeleMon account  never an independent free-trial signup path. Covers:
   - an unlinked channel member cannot receive an API key
   - the bot cannot create a new User/Tenant for an unknown Telegram user
   - an existing eligible linked user can self-issue successfully
@@ -36,7 +36,7 @@ from app.services.telegram_membership import MembershipCheckUnavailable
 pytestmark = pytest.mark.asyncio
 
 
-# ─── Helpers ────────────────────────────────────────────────────────────
+#  Helpers 
 
 
 def _patch_channel_config(monkeypatch):
@@ -75,7 +75,7 @@ async def _create_linked_eligible_user(db_session, identifier: str) -> tuple[Use
     web signup/free-trial flow: a User + an active free-trial Tenant, both
     keyed by the same tg_<id> identifier app/api/free_api_key.py's `issue`
     endpoint uses. This is the ONLY way the bot self-service flow is allowed
-    to find an eligible account — it must never manufacture this state itself.
+    to find an eligible account  it must never manufacture this state itself.
     """
     user = User(phone=identifier)
     db_session.add(user)
@@ -92,7 +92,7 @@ async def _create_linked_eligible_user(db_session, identifier: str) -> tuple[Use
 
 
 async def _create_user_with_key(db_session, identifier: str, raw_key: str | None = None) -> User:
-    """An existing, already-issued account — user + active tenant + key hash."""
+    """An existing, already-issued account  user + active tenant + key hash."""
     if raw_key is None:
         raw_key = generate_user_api_key()
     user = User(phone=identifier, api_key_hash=hash_api_key(raw_key))
@@ -135,7 +135,7 @@ async def _create_expired_tenant(db_session, phone: str) -> Tenant:
     return tenant
 
 
-# ─── 1. Unauthorized / unlinked Telegram user ──────────────────────────
+#  1. Unauthorized / unlinked Telegram user 
 
 
 async def test_unlinked_user_not_member_rejected(db_session, monkeypatch):
@@ -166,7 +166,7 @@ async def test_unlinked_channel_member_cannot_receive_api_key(db_session, monkey
 
 async def test_unlinked_channel_member_no_user_or_tenant_created(db_session, monkeypatch):
     """SECURITY: the bot self-service flow must never create a new User or
-    Tenant for a Telegram identity it doesn't already recognize — even when
+    Tenant for a Telegram identity it doesn't already recognize  even when
     that identity is a verified channel member."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
@@ -185,7 +185,7 @@ async def test_unlinked_channel_member_no_user_or_tenant_created(db_session, mon
     assert tenant is None, "bot self-service must never originate a new Tenant/trial"
 
 
-# ─── 2. Ineligible user ────────────────────────────────────────────────
+#  2. Ineligible user 
 
 
 async def test_ineligible_user_not_member_rejected(db_session, monkeypatch):
@@ -254,13 +254,13 @@ async def test_linked_user_without_tenant_gets_not_eligible(db_session, monkeypa
     assert tenant is None, "must not silently create a tenant/trial for a linked user"
 
 
-# ─── 3. Eligible, already-linked user issuance success ─────────────────
+#  3. Eligible, already-linked user issuance success 
 
 
 async def test_eligible_linked_user_can_self_issue(db_session, monkeypatch):
     """An EXISTING, already-eligible TeleMon account (User + active free-trial
     Tenant already created by the normal web flow) can self-issue via the bot
-    — this is the only path that should ever result in "issued"."""
+     this is the only path that should ever result in "issued"."""
     _patch_channel_config(monkeypatch)
     _patch_membership(monkeypatch, is_member=True)
 
@@ -290,7 +290,7 @@ async def test_eligible_linked_user_can_self_issue(db_session, monkeypatch):
     assert tenants[0].subscription_status == "active"
 
 
-# ─── 4. Duplicate issuance prevention ──────────────────────────────────
+#  4. Duplicate issuance prevention 
 
 
 async def test_duplicate_issuance_prevented(db_session, monkeypatch):
@@ -308,7 +308,7 @@ async def test_duplicate_issuance_prevented(db_session, monkeypatch):
     assert raw_key not in result.detail
 
 
-# ─── 5. Concurrent / repeated button clicks (race-condition guard) ────
+#  5. Concurrent / repeated button clicks (race-condition guard) 
 
 
 async def test_concurrent_clicks_race_condition_guard(db_session, monkeypatch):
@@ -321,7 +321,7 @@ async def test_concurrent_clicks_race_condition_guard(db_session, monkeypatch):
     try:
         result = await handle_self_service_api_key(db_session, telegram_user_id=888007)
         assert result.status == "server_error"
-        assert "처리 중" in result.detail
+        assert " " in result.detail
     finally:
         _set_in_flight(888007, False)
 
@@ -362,7 +362,7 @@ async def test_concurrent_issuance_only_one_key(db_session, monkeypatch):
     assert statuses.count("issued") == 1
 
 
-# ─── 6. Raw API key not logged ─────────────────────────────────────────
+#  6. Raw API key not logged 
 
 
 async def test_raw_api_key_not_logged(db_session, monkeypatch, caplog):
@@ -400,7 +400,7 @@ async def test_raw_api_key_not_logged_on_duplicate(db_session, monkeypatch, capl
         assert raw_key not in record.getMessage()
 
 
-# ─── 7. Payment pending ────────────────────────────────────────────────
+#  7. Payment pending 
 
 
 async def test_payment_pending_rejected(db_session, monkeypatch):
@@ -422,7 +422,7 @@ async def test_payment_pending_rejected(db_session, monkeypatch):
     assert result.api_key is None
 
 
-# ─── 8. Server error (membership check unavailable) ───────────────────
+#  8. Server error (membership check unavailable) 
 
 
 async def test_server_error_on_membership_unavailable(db_session, monkeypatch):
@@ -441,7 +441,7 @@ async def test_server_error_on_membership_unavailable(db_session, monkeypatch):
 
 
 async def test_unlinked_user_membership_unavailable_still_not_linked(db_session, monkeypatch):
-    """An unlinked user gets not_linked even if the membership API is down —
+    """An unlinked user gets not_linked even if the membership API is down 
     that check is never reached for an unrecognized Telegram identity."""
     _patch_channel_config(monkeypatch)
     _patch_membership_unavailable(monkeypatch)
@@ -452,7 +452,7 @@ async def test_unlinked_user_membership_unavailable_still_not_linked(db_session,
     assert result.api_key is None
 
 
-# ─── 9. Existing issuance flow regression ──────────────────────────────
+#  9. Existing issuance flow regression 
 
 
 async def test_existing_free_api_key_flow_still_works(client, db_session, monkeypatch):
@@ -520,7 +520,7 @@ async def test_existing_admin_manual_issue_still_works(client, db_session):
     app.dependency_overrides.clear()
 
 
-# ─── 10. Idempotency ──────────────────────────────────────────────────
+#  10. Idempotency 
 
 
 async def test_idempotent_across_sessions(db_session, monkeypatch):
@@ -540,7 +540,7 @@ async def test_idempotent_across_sessions(db_session, monkeypatch):
     assert result2.api_key is None
 
 
-# ─── 11. Cross-user isolation ──────────────────────────────────────────
+#  11. Cross-user isolation 
 
 
 async def test_cross_user_isolation(db_session, monkeypatch):

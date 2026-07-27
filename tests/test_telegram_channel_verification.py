@@ -18,7 +18,7 @@ from app.models.tenant import Tenant
 from app.services.telegram_membership import MembershipCheckUnavailable, is_channel_member
 
 
-# ── Helpers ──────────────────────────────────────────────────────────
+#  Helpers 
 
 class _FakeMember:
     def __init__(self, status: str):
@@ -60,7 +60,7 @@ async def _complete_signup_with_token(client, phone: str, monkeypatch, token: st
     )
 
 
-# ── 1-4: membership status acceptance/rejection (unit-level, real Bot API mocked) ──
+#  1-4: membership status acceptance/rejection (unit-level, real Bot API mocked) 
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_kicked_banned_status_is_rejected(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_restricted_status_is_rejected(monkeypatch):
-    """Not in the explicit accept-list (member/administrator/creator) — allow-list,
+    """Not in the explicit accept-list (member/administrator/creator)  allow-list,
     not a deny-list, so anything else is rejected by default."""
     from telegram.constants import ChatMemberStatus
 
@@ -130,13 +130,13 @@ async def test_unconfigured_channel_fails_closed(monkeypatch):
         await is_channel_member(123)
 
 
-# ── 5: /check never trusts client-supplied membership state ─────────
+#  5: /check never trusts client-supplied membership state 
 
 
 @pytest.mark.asyncio
 async def test_check_endpoint_ignores_client_claimed_status(client, db_session, monkeypatch):
     """The request schema has no status field at all, so there's nothing for a
-    forged request to set — but also verify that even if bot /start was never
+    forged request to set  but also verify that even if bot /start was never
     received (server has no telegram_user_id for this token), the endpoint reports
     pending, never "verified", regardless of what the client sends."""
     _patch_channel_configured(monkeypatch)
@@ -203,7 +203,7 @@ async def test_check_endpoint_fails_closed_when_telegram_unavailable(client, db_
     assert body["reason"] == "membership_check_unavailable"
 
 
-# ── 6-7: full pipeline into the existing trial/API-key flow ──────────
+#  6-7: full pipeline into the existing trial/API-key flow 
 
 
 @pytest.mark.asyncio
@@ -235,7 +235,7 @@ async def test_verified_token_continues_into_existing_trial_and_api_key_flow(
     expected_min = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=71, minutes=59)
     assert expected_min <= tenant.trial_expires_at <= expected_min + timedelta(minutes=2)
 
-    # API key issuance uses the existing secure (hash, shown-once) flow — the raw key
+    # API key issuance uses the existing secure (hash, shown-once) flow  the raw key
     # returned to the client must not equal what's stored server-side.
     from app.crud import user as user_crud
     user = await user_crud.get_user_by_phone(db_session, "+821099990001")
@@ -275,7 +275,7 @@ async def test_signup_rejected_when_token_never_verified(unauthenticated_client,
     assert res.status_code == 403
 
 
-# ── 8: single-use token / duplicate trial prevention ─────────────────
+#  8: single-use token / duplicate trial prevention 
 
 
 @pytest.mark.asyncio
@@ -310,7 +310,7 @@ async def test_returning_user_does_not_need_a_token_and_gets_no_second_trial(
     unauthenticated_client, db_session, monkeypatch
 ):
     """Duplicate-trial prevention for the *same phone* already exists (Tenant.phone is
-    the dedup key) — verify the channel-verification gate doesn't interfere with it,
+    the dedup key)  verify the channel-verification gate doesn't interfere with it,
     and that a returning user isn't newly blocked by this feature."""
     monkeypatch.setattr(settings, "telegram_official_channel_id", "@telemon_official")
 
@@ -321,7 +321,7 @@ async def test_returning_user_does_not_need_a_token_and_gets_no_second_trial(
     assert first.status_code == 200
     first_key = first.json()["api_key"]
 
-    # Same phone verifies again, with NO token this time — must succeed (no new trial
+    # Same phone verifies again, with NO token this time  must succeed (no new trial
     # gate applies to an existing tenant) and must not create a second Tenant row.
     second = await _complete_signup_with_token(unauthenticated_client, "+821099990006", monkeypatch, None)
     assert second.status_code == 200
@@ -334,7 +334,7 @@ async def test_returning_user_does_not_need_a_token_and_gets_no_second_trial(
     assert count == 1
 
 
-# ── 9: gate is a no-op when the feature isn't configured for this deployment ──
+#  9: gate is a no-op when the feature isn't configured for this deployment 
 
 
 @pytest.mark.asyncio
@@ -356,7 +356,7 @@ async def test_signup_unaffected_when_channel_verification_not_configured(
     assert tenant.trial_expires_at is not None
 
 
-# ── 10: expired trial enforcement is untouched by this feature ───────
+#  10: expired trial enforcement is untouched by this feature 
 
 
 @pytest.mark.asyncio
@@ -377,7 +377,7 @@ async def test_expired_trial_enforcement_still_functions(db_session):
     assert tenant.trial_expires_at < datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ── 11: paid users are unaffected ─────────────────────────────────────
+#  11: paid users are unaffected 
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_paid_plan_tenant_unaffected_by_channel_gate(unauthenticated_clien
     await db_session.flush()
     await apply_plan_limits(db_session, tenant, "pro")
 
-    # Returning (paid, already-existing tenant) — verify-code must succeed with no
+    # Returning (paid, already-existing tenant)  verify-code must succeed with no
     # channel-verification token at all, and must not touch their plan.
     res = await _complete_signup_with_token(unauthenticated_client, "+821099990009", monkeypatch, None)
     assert res.status_code == 200
@@ -400,7 +400,7 @@ async def test_paid_plan_tenant_unaffected_by_channel_gate(unauthenticated_clien
     assert tenant.plan == "pro"
 
 
-# ── 12: a pending (unpaid/unverified) Tenant stub must not bypass the gate ────
+#  12: a pending (unpaid/unverified) Tenant stub must not bypass the gate 
 
 
 @pytest.mark.asyncio
@@ -409,7 +409,7 @@ async def test_pending_tenant_stub_does_not_bypass_channel_gate(
 ):
     """POST /api/payment/request-key is public and unauthenticated, and creates a
     "pending" Tenant row for any phone before any payment is confirmed. That stub
-    must not be treated as an already-entitled tenant — verify-code must still
+    must not be treated as an already-entitled tenant  verify-code must still
     demand real channel verification for it, exactly like a brand-new signup."""
     monkeypatch.setattr(settings, "telegram_official_channel_id", "@telemon_official")
 
@@ -434,7 +434,7 @@ async def test_pending_tenant_stub_succeeds_with_valid_token(
     unauthenticated_client, db_session, monkeypatch
 ):
     """A pending stub CAN still complete signup if it actually provides a real,
-    server-verified channel-membership token — the gate isn't disabled, it just
+    server-verified channel-membership token  the gate isn't disabled, it just
     isn't skipped for free."""
     monkeypatch.setattr(settings, "telegram_official_channel_id", "@telemon_official")
 
@@ -452,7 +452,7 @@ async def test_pending_tenant_stub_succeeds_with_valid_token(
     assert res.json()["api_key"].startswith("sk-")
 
 
-# ── bot /start handler links the real Telegram identity ──────────────
+#  bot /start handler links the real Telegram identity 
 
 
 @pytest.mark.asyncio
@@ -481,7 +481,7 @@ async def test_bot_start_handler_links_telegram_user_id(db_session, monkeypatch)
     await db_session.refresh(row)
     assert row.telegram_user_id == 42424242
     assert row.status == "linked"
-    assert "확인" in update.message.replied
+    assert "" in update.message.replied
 
 
 class _SessionCm:

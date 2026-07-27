@@ -36,7 +36,7 @@ async def execute_random_reply(macro_id: str) -> dict:
 
 
 async def _execute_random_reply_impl(macro_id: str) -> dict:
-    """Internal implementation — callers must hold the per-macro lock."""
+    """Internal implementation  callers must hold the per-macro lock."""
     async with async_session_maker() as db:
         macro = await macro_crud.get_macro(db, macro_id)
         if macro is None or not macro.is_active:
@@ -62,7 +62,7 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
         logger.warning("random_reply_client_disconnected", macro_id=macro_id, account_id=account.id)
         return {"status": "failed", "reason": "client_disconnected"}
 
-    # No manually-picked targets (the simplified on/off toggle never sets any) —
+    # No manually-picked targets (the simplified on/off toggle never sets any) 
     # resolve to every group/channel this account is currently a member of.
     if not target_chats:
         try:

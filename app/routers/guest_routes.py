@@ -1,14 +1,14 @@
 """
-Guest Mode Routes — TeleMon Bot의 Guest Mode 설정 및 통계 API.
+Guest Mode Routes  TeleMon Bot Guest Mode    API.
 
-Bot API 10.0+ (May 2026) Guest Mode 를 관리합니다:
-  - @TeleMonBot Guest Mode 사용 통계 조회
-  - 일일 무료 사용 한도 설정
-  - Webhook allowed_updates 갱신 (guest_message 활성화)
+Bot API 10.0+ (May 2026) Guest Mode  :
+  - @TeleMonBot Guest Mode   
+  -     
+  - Webhook allowed_updates  (guest_message )
 
-의존성:
-  - backend/bot/guest_engine.py — GuestEngine
-  - backend/bot/telegram_api.py — TelegramBotClient (answerGuestQuery)
+:
+  - backend/bot/guest_engine.py  GuestEngine
+  - backend/bot/telegram_api.py  TelegramBotClient (answerGuestQuery)
 """
 
 from __future__ import annotations
@@ -40,14 +40,14 @@ def _require_engine():
 
 @router.get("/stats")
 async def guest_stats(_user: dict = Depends(require_admin)):
-    """Guest Mode 사용 통계 조회 (관리자 전용).
+    """Guest Mode    ( ).
 
     Returns:
-        enabled: bool — Guest Mode 활성화 여부
-        daily_limit: int — 사용자별 일일 무료 사용 한도
-        unique_users_today: int — 오늘 방문한 고유 사용자 수
-        total_requests_today: int — 오늘 총 요청 수
-        daily_usage: dict — 사용자별 사용량 (user_id -> count)
+        enabled: bool  Guest Mode  
+        daily_limit: int      
+        unique_users_today: int      
+        total_requests_today: int     
+        daily_usage: dict    (user_id -> count)
     """
     engine = _require_engine()
     return {
@@ -64,10 +64,10 @@ async def set_daily_limit(
     limit: int,
     _user: dict = Depends(require_admin),
 ):
-    """일일 무료 사용 한도 설정 (관리자 전용).
+    """     ( ).
 
     Args:
-        limit: 새 한도 값 (1 이상)
+        limit:    (1 )
     """
     if limit < 1:
         raise HTTPException(status_code=400, detail="Limit must be >= 1")
@@ -84,10 +84,10 @@ async def set_user_limit(
     body: dict,
     _user: dict = Depends(require_admin),
 ):
-    """사용자별 일일 한도 설정. body.user_id: str, body.limit: int (1 이상)
+    """   . body.user_id: str, body.limit: int (1 )
 
-    특정 사용자의 한도를 글로벌 daily_limit과 다르게 설정합니다.
-    limit을 0으로 설정하면 사용자별 한도를 제거하고 글로벌 설정을 따릅니다.
+        daily_limit  .
+    limit 0       .
     """
     user_id = body.get("user_id", "")
     limit = body.get("limit", 0)

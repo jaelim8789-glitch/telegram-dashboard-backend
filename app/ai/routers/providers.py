@@ -1,4 +1,4 @@
-"""AI Providers API — manage external AI API provider configurations."""
+"""AI Providers API  manage external AI API provider configurations."""
 
 from __future__ import annotations
 

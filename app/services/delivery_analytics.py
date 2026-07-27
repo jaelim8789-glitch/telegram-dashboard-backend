@@ -4,7 +4,7 @@ Delivery Analytics service.
 Provides tenant-safe, account-safe operational analytics derived from
 persisted MessageLog records (Sprint 14 canonical delivery pipeline).
 
-Ownership path: MessageLog.account_id → Account.tenant_id → Identity.tenant_id
+Ownership path: MessageLog.account_id  Account.tenant_id  Identity.tenant_id
 
 All functions require an Identity for tenant authorization.
 
@@ -17,7 +17,7 @@ Two parallel analytics models are provided:
    A recipient that failed twice and succeeded once contributes 3 attempts.
 
 2. Logical delivery-level (Sprint 17):
-   Rows are grouped by (account_id, source, source_id, recipient) — these four
+   Rows are grouped by (account_id, source, source_id, recipient)  these four
    fields together uniquely identify one logical delivery to one recipient.
    Within each group:
    - total_recipients: count of distinct recipient groups
@@ -52,7 +52,7 @@ from app.api.deps import Identity
 from app.services.failure_intel import classify_failure
 
 
-# ─── DB compatibility ─────────────────────────────────────────────────
+#  DB compatibility 
 # PostgreSQL uses date_trunc for date grouping; SQLite uses strftime.
 # This custom FunctionElement + @compiles handler makes date_trunc work
 # on both databases transparently.
@@ -60,7 +60,7 @@ from app.services.failure_intel import classify_failure
 
 class date_trunc(FunctionElement):
     name = "date_trunc"
-    # date_trunc always returns a timestamp — leaving this unset as None makes
+    # date_trunc always returns a timestamp  leaving this unset as None makes
     # SQLAlchemy raise `AttributeError: 'NoneType' object has no attribute
     # 'dialect_impl'` as soon as this expression's result type is needed
     # (e.g. GROUP BY + row materialization on PostgreSQL).
@@ -92,7 +92,7 @@ def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ─── Attempt-level response types ────────────────────────────────────
+#  Attempt-level response types 
 
 
 @dataclass
@@ -173,7 +173,7 @@ class FailureIntelligenceItem:
     summary: str = ""
 
 
-# ─── Logical delivery response types (Sprint 17) ─────────────────────
+#  Logical delivery response types (Sprint 17) 
 
 
 @dataclass
@@ -197,7 +197,7 @@ class LogicalBroadcastItem:
     latest_activity: str | None = None
 
 
-# ─── Latency response types (Sprint 18) ──────────────────────────────
+#  Latency response types (Sprint 18) 
 
 
 @dataclass
@@ -231,7 +231,7 @@ class LatencyByAccountItem:
     total_measured: int = 0
 
 
-# ─── Overview response type ──────────────────────────────────────────
+#  Overview response type 
 
 
 @dataclass
@@ -247,7 +247,7 @@ class OverviewResult:
     latency_by_account: list[LatencyByAccountItem] | None = None  # Sprint 19 addition
 
 
-# ─── Filter helpers ──────────────────────────────────────────────────
+#  Filter helpers 
 
 
 def _apply_filters(
@@ -312,7 +312,7 @@ def _parse_datetime_safe(value: str | None) -> datetime | None:
         return None
 
 
-# ─── Authorization helpers ───────────────────────────────────────────
+#  Authorization helpers 
 
 
 async def _resolve_authorized_account_ids(
@@ -343,11 +343,11 @@ async def _resolve_authorized_account_ids(
         return [r[0] for r in result.all()]
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # ATTEMPT-LEVEL ANALYTICS (Sprint 15 + 16, backward compatible)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
-# ─── Analytics queries ────────────────────────────────────────────────
+#  Analytics queries 
 
 
 async def get_summary(
@@ -383,7 +383,7 @@ async def get_summary(
         row = result.one()
 
     # PostgreSQL's SUM() over a CASE expression returns numeric (Decimal), not
-    # int — Decimal * float raises TypeError in the rate calculation below.
+    # int  Decimal * float raises TypeError in the rate calculation below.
     total = int(row.total or 0)
     successful = int(row.successful or 0)
     failed = total - successful
@@ -575,7 +575,7 @@ async def get_recent_activity(
         ]
 
 
-# ─── Source Analytics ────────────────────────────────────────────────
+#  Source Analytics 
 
 
 async def get_source_analytics(
@@ -626,7 +626,7 @@ async def get_source_analytics(
         return items
 
 
-# ─── Broadcast Analytics ─────────────────────────────────────────────
+#  Broadcast Analytics 
 
 
 async def get_broadcast_analytics(
@@ -684,7 +684,7 @@ async def get_broadcast_analytics(
         return items
 
 
-# ─── Failure Intelligence ────────────────────────────────────────────
+#  Failure Intelligence 
 
 
 async def get_failure_intelligence(
@@ -745,9 +745,9 @@ async def get_failure_intelligence(
         return items
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # LOGICAL DELIVERY ANALYTICS (Sprint 17)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 #
 # Groups MessageLog rows by (account_id, source, source_id, recipient).
 # Within each group: successful = any row has success=True.
@@ -771,7 +771,7 @@ async def get_logical_summary(
     """Get logical-delivery-level summary.
 
     Groups by (account_id, source, source_id, recipient).
-    One outcome per recipient — retries are collapsed.
+    One outcome per recipient  retries are collapsed.
     """
     account_ids = await _resolve_authorized_account_ids(identity, account_id)
     if not account_ids:
@@ -780,7 +780,7 @@ async def get_logical_summary(
     start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
-        # Subquery: per group, does any row have success=True?
+        # Subquery: per group, does any row have success=True
         subq = select(
             MessageLog.account_id,
             MessageLog.source,
@@ -812,7 +812,7 @@ async def get_logical_summary(
         row = result.one()
 
     # PostgreSQL's SUM() over a CASE expression returns numeric (Decimal), not
-    # int — Decimal * float raises TypeError in the rate calculation below.
+    # int  Decimal * float raises TypeError in the rate calculation below.
     total = int(row.total or 0)
     successful = int(row.successful or 0)
     failed = total - successful
@@ -845,7 +845,7 @@ async def get_logical_broadcast_analytics(
     start_dt, end_dt = _resolve_time_range(days, start_time, end_time)
 
     async with async_session_maker() as db:
-        # Subquery: per (source_id, recipient), does any row have success=True?
+        # Subquery: per (source_id, recipient), does any row have success=True
         subq = select(
             MessageLog.source_id,
             MessageLog.recipient,
@@ -898,9 +898,9 @@ async def get_logical_broadcast_analytics(
         return items
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # LATENCY ANALYTICS (Sprint 18 + 19)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 #
 # Computes average and p95 latency from started_at / completed_at.
 # Only rows where BOTH timestamps are non-null are included.
@@ -1000,7 +1000,7 @@ async def get_latency_analytics(
         # Execute avg query
         avg_row = (await db.execute(stats_q)).one()
         # PostgreSQL's AVG() can return numeric (Decimal) depending on the
-        # extract()/grouping shape — Decimal * float raises TypeError.
+        # extract()/grouping shape  Decimal * float raises TypeError.
         avg_sec = float(avg_row.avg_sec or 0.0)
         avg_ms = round(avg_sec * 1000.0, 1)
 
@@ -1112,7 +1112,7 @@ async def get_latency_by_account(
         return items
 
 
-# ─── Overview Endpoint ───────────────────────────────────────────────
+#  Overview Endpoint 
 
 
 async def get_overview(

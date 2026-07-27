@@ -26,7 +26,7 @@ class LinkInspectResponse(BaseModel):
 
 
 class LinkJoinTarget(BaseModel):
-    """Identifies one inspected link to join — echoed back by the frontend from a
+    """Identifies one inspected link to join  echoed back by the frontend from a
     prior /inspect response so we don't need to persist inspection results.
 
     Carries raw_link (re-parsed at join time) rather than username/chat_id: an

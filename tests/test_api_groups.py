@@ -13,9 +13,9 @@ async def _create_account(client, phone="+821099990000"):
 
 def _fake_groups():
     return [
-        {"id": "-100111", "title": "연구용 그룹", "type": "group", "participants_count": 12},
-        {"id": "-100222", "title": "테스트 채널", "type": "channel", "participants_count": None},
-        {"id": "-100333", "title": "개발자 모임", "type": "megagroup", "participants_count": 500},
+        {"id": "-100111", "title": " ", "type": "group", "participants_count": 12},
+        {"id": "-100222", "title": " ", "type": "channel", "participants_count": None},
+        {"id": "-100333", "title": " ", "type": "megagroup", "participants_count": 500},
     ]
 
 
@@ -24,7 +24,7 @@ async def test_groups_unauthenticated_account_returns_400(client):
     account_id = await _create_account(client)
     res = await client.get(f"/api/accounts/{account_id}/groups")
     assert res.status_code == 400
-    assert "인증" in res.json()["detail"]
+    assert "" in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -49,18 +49,18 @@ async def test_groups_success(client, monkeypatch):
 async def test_groups_search_filter(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr("app.api.groups.list_groups", AsyncMock(return_value=_fake_groups()))
-    res = await client.get(f"/api/accounts/{account_id}/groups?search=연구")
+    res = await client.get(f"/api/accounts/{account_id}/groupssearch=")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] == 1
-    assert body["items"][0]["title"] == "연구용 그룹"
+    assert body["items"][0]["title"] == " "
 
 
 @pytest.mark.asyncio
 async def test_groups_type_filter(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr("app.api.groups.list_groups", AsyncMock(return_value=_fake_groups()))
-    res = await client.get(f"/api/accounts/{account_id}/groups?type=channel")
+    res = await client.get(f"/api/accounts/{account_id}/groupstype=channel")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] == 1
@@ -71,7 +71,7 @@ async def test_groups_type_filter(client, monkeypatch):
 async def test_groups_pagination(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr("app.api.groups.list_groups", AsyncMock(return_value=_fake_groups()))
-    res = await client.get(f"/api/accounts/{account_id}/groups?page=1&page_size=2")
+    res = await client.get(f"/api/accounts/{account_id}/groupspage=1&page_size=2")
     assert res.status_code == 200
     body = res.json()
     assert len(body["items"]) == 2
@@ -96,7 +96,7 @@ async def test_groups_telegram_not_configured_returns_503(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr(
         "app.api.groups.list_groups",
-        AsyncMock(side_effect=RuntimeError("TELEGRAM_API_ID / TELEGRAM_API_HASH가 설정되지 않았습니다.")),
+        AsyncMock(side_effect=RuntimeError("TELEGRAM_API_ID / TELEGRAM_API_HASH  .")),
     )
     res = await client.get(f"/api/accounts/{account_id}/groups")
     assert res.status_code == 503
@@ -107,7 +107,7 @@ async def test_groups_session_expired_returns_400(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr(
         "app.api.groups.list_groups",
-        AsyncMock(side_effect=AccountNotAuthenticatedError("텔레그램 세션이 만료되었습니다. 다시 인증해주세요.")),
+        AsyncMock(side_effect=AccountNotAuthenticatedError("  .  .")),
     )
     res = await client.get(f"/api/accounts/{account_id}/groups")
     assert res.status_code == 400

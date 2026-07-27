@@ -13,7 +13,7 @@ JSONType = JSONB().with_variant(JSON(), "sqlite")
 
 
 class AiAgent(Base):
-    """AI Agent — 사용자가 생성하는 AI 직원."""
+    """AI Agent    AI ."""
     __tablename__ = "ai_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -33,7 +33,7 @@ class AiAgent(Base):
 
 
 class AiChat(Base):
-    """Agent별 채팅방."""
+    """Agent ."""
     __tablename__ = "ai_chats"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -44,7 +44,7 @@ class AiChat(Base):
 
 
 class AiMessage(Base):
-    """채팅방 내 메시지."""
+    """  ."""
     __tablename__ = "ai_messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

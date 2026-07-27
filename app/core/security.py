@@ -21,9 +21,9 @@ def _get_user_jwt_secret() -> str:
 
 
 def verify_admin_credentials(username: str, password: str) -> bool:
-    # Constant-time comparisons — a naive `==` leaks timing information that could help
+    # Constant-time comparisons  a naive `==` leaks timing information that could help
     # an attacker guess the credentials character-by-character. compare_digest requires
-    # bytes or ASCII-only str (raises TypeError otherwise), so encode first — a wrong
+    # bytes or ASCII-only str (raises TypeError otherwise), so encode first  a wrong
     # password containing non-ASCII characters (e.g. Korean) would otherwise 500 instead
     # of cleanly reporting "invalid credentials".
     return secrets.compare_digest(
@@ -56,7 +56,7 @@ def generate_user_api_key() -> str:
 
 
 def hash_api_key(raw_key: str) -> str:
-    """SHA-256 is fine here (not bcrypt/argon2) — this hashes a high-entropy random
+    """SHA-256 is fine here (not bcrypt/argon2)  this hashes a high-entropy random
     token, not a human-chosen password, so there's no offline-guessing risk to slow down."""
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 

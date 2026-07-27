@@ -1,15 +1,15 @@
-"""Webhook notification service — sends HTTP callbacks to user-configured URLs.
+"""Webhook notification service  sends HTTP callbacks to user-configured URLs.
 
 Supports multiple webhook URLs per tenant, event-type filtering, and
 automatic retry with exponential backoff for transient failures.
 
 Events:
-  - broadcast.completed  — a broadcast finished (success or partial failure)
-  - broadcast.failed     — a broadcast fully failed
-  - account.unauthorized — an account session expired / needs re-auth
-  - account.banned       — an account was banned by Telegram
-  - auto_reply.triggered — an auto-reply rule was triggered
-  - macro.sent           — a reply macro was sent
+  - broadcast.completed   a broadcast finished (success or partial failure)
+  - broadcast.failed      a broadcast fully failed
+  - account.unauthorized  an account session expired / needs re-auth
+  - account.banned        an account was banned by Telegram
+  - auto_reply.triggered  an auto-reply rule was triggered
+  - macro.sent            a reply macro was sent
 """
 
 import asyncio
@@ -119,7 +119,7 @@ async def send_webhook(
     """Send a webhook event to all configured URLs for a tenant.
 
     Returns the number of successfully delivered webhooks (0..N).
-    Silently ignores failures — the caller should not block on this.
+    Silently ignores failures  the caller should not block on this.
     """
     urls = await _load_webhook_urls(tenant_id)
     if not urls:
@@ -171,7 +171,7 @@ async def send_webhook(
     return success_count
 
 
-# ─── Convenience helpers for common events ────────────────────────────
+#  Convenience helpers for common events 
 
 
 async def notify_broadcast_completed(

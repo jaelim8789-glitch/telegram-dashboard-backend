@@ -26,7 +26,7 @@ class StyleProfileAnalyzeRequest(BaseModel):
             raise ValueError("source_type=text인 경우 source_text는 필수입니다.")
         if self.source_type == "channel":
             if not self.account_id:
-                raise ValueError("source_type=channel인 경우 account_id는 필수입니다.")
+                raise ValueError("source_type=channel  chat_id .")
             if not self.chat_id:
                 raise ValueError("source_type=channel인 경우 chat_id는 필수입니다.")
         return self

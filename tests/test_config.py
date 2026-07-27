@@ -27,9 +27,9 @@ def test_database_url_leaves_explicit_driver_alone():
     assert _settings(url).database_url == url
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 25 — Broadcast timeout configuration
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 25  Broadcast timeout configuration
+# 
 
 
 def test_broadcast_timeout_default_is_600():
@@ -68,9 +68,9 @@ def test_broadcast_timeout_rejects_very_negative():
         _settings("postgresql+asyncpg://u:p@h/db", broadcast_timeout_seconds=-999)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 26 — Broadcast retry limits
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 26  Broadcast retry limits
+# 
 
 
 def test_broadcast_max_retries_default_is_3():
@@ -103,9 +103,9 @@ def test_broadcast_max_retries_rejects_very_negative():
         _settings("postgresql+asyncpg://u:p@h/db", broadcast_max_retries=-999)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 27 — Production startup guard (insecure defaults)
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 27  Production startup guard (insecure defaults)
+# 
 
 
 def test_development_allows_insecure_defaults():
@@ -178,7 +178,7 @@ def test_production_accepts_overridden_credentials():
     sms_provider, frontend_url, cors_origins) is accepted. The validator was
     extended, in an earlier unrelated hardening change, to also require
     debug=False / a real sms_provider / a non-localhost frontend_url and
-    cors_origins — this test's config must satisfy all of them, not just the
+    cors_origins  this test's config must satisfy all of them, not just the
     admin credentials, to be a genuinely valid production example."""
     s = _settings(
         "postgresql+asyncpg://u:p@h/db",

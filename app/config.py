@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # official-channel membership verification for the free-trial signup gate below.
     telegram_bot_token: str = ""
     # Public @username of that bot (no leading @), used only to build the
-    # t.me/<username>?start=<token> deep link shown to users — not a secret.
+    # t.me/<username>start=<token> deep link shown to users  not a secret.
     telegram_bot_username: str = ""
     # The official TeleMon channel to require membership in before a free trial can be
     # created. Accepts either a numeric chat id (e.g. "-1001234567890") or a

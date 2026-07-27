@@ -143,7 +143,7 @@ async def _call_deepseek(messages: list[dict]) -> str | None:
 
 async def send_message(db: AsyncSession, telegram_user_id: int, text: str) -> AiChatResult:
     if _is_in_flight(telegram_user_id):
-        return AiChatResult(status="rate_limited", detail="이전 메시지를 처리 중입니다. 잠시 후 다시 시도해주세요.")
+        return AiChatResult(status="server_error", detail="    .    .")
 
     if len(text) > _MAX_INPUT_CHARS:
         return AiChatResult(

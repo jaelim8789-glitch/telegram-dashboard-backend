@@ -11,11 +11,11 @@ async def test_generate_endpoint_returns_ok(client):
     payload = ContentGenerateRequest(
         content_type="promotional",
         tone="short",
-        topic="테스트 상품",
-        context="무료 배송",
+        topic=" ",
+        context=" ",
     )
 
-    fake_reply = "🔥 지금 바로 테스트 상품을 만나보세요! 무료 배송으로 오늘만 특가!"
+    fake_reply = "     !    !"
     with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 42, "cs-123")) as mock_gen:
         with patch("app.services.ai_core_service.check_ai_quota", return_value=(True, "")):
             response = await client.post("/api/ai/content-studio/generate", json=payload.model_dump())
@@ -33,8 +33,8 @@ async def test_generate_endpoint_returns_ok(client):
     call_kwargs = mock_gen.call_args.kwargs
     assert call_kwargs["content_type"] == "promotional"
     assert call_kwargs["tone"] == "short"
-    assert call_kwargs["topic"] == "테스트 상품"
-    assert call_kwargs["context"] == "무료 배송"
+    assert call_kwargs["topic"] == " "
+    assert call_kwargs["context"] == " "
     assert call_kwargs["style_profile_id"] is None
 
 
@@ -43,11 +43,11 @@ async def test_generate_endpoint_with_style_profile(client):
     payload = ContentGenerateRequest(
         content_type="engagement",
         tone="emotional",
-        topic="커뮤니티 이벤트",
+        topic=" ",
         style_profile_id="style-123",
     )
 
-    fake_reply = "💌 여러분의 이야기가 궁금해요... 참여해주세요!"
+    fake_reply = "   ... !"
     with patch("app.api.content_studio.generate_content", return_value=(fake_reply, 30, "cs-456")) as mock_gen:
         with patch("app.services.ai_core_service.check_ai_quota", return_value=(True, "")):
             response = await client.post("/api/ai/content-studio/generate", json=payload.model_dump())

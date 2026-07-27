@@ -10,9 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 1 — Feature Runtime Reachability
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 1  Feature Runtime Reachability
+# 
 
 def test_all_sprint7_routers_registered():
     """Verify every Sprint 7 router prefix is present in the FastAPI app."""
@@ -50,12 +50,12 @@ def test_message_template_models_exported():
     assert TeamMember.__tablename__ == "team_members"
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 2 — Multi-tenant Isolation Audit
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 2  Multi-tenant Isolation Audit
+# 
 
 def test_account_has_tenant_id():
-    """Sprint 8: Account now has tenant_id FK — establishes tenant boundary."""
+    """Sprint 8: Account now has tenant_id FK  establishes tenant boundary."""
     from app.models.account import Account
     cols = [c.name for c in Account.__table__.columns]
     assert "tenant_id" in cols, "Account must have tenant_id for cross-tenant isolation"
@@ -93,9 +93,9 @@ def test_tenant_isolation_matrix():
     assert not hasattr(GroupSearchResult, "tenant_id")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 3 — Billing Security Audit
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 3  Billing Security Audit
+# 
 
 def test_billing_routers_missing_auth():
     """
@@ -126,12 +126,12 @@ def test_billing_routers_missing_auth():
             # Same trust model as /status/{payment_ref} above, documented in
             # usdt_payment.py's module docstring: the caller hasn't paid/signed
             # up yet, so there's no session to require. payment_ref is an
-            # unguessable, single-use, rate-limited (10/5min per IP) token —
+            # unguessable, single-use, rate-limited (10/5min per IP) token 
             # knowing it *is* the authentication, the same pattern as a
             # password-reset or Stripe checkout-session link.
             "/api/payment/claim-key/{payment_ref}",
             # NOWPayments' own servers call this IPN endpoint and can't carry our
-            # session/API-key headers — it verifies the x-nowpayments-signature
+            # session/API-key headers  it verifies the x-nowpayments-signature
             # header itself instead (see app/api/nowpayments.py::nowpayments_webhook).
             "/api/payments/nowpayments/webhook",
         ):
@@ -158,7 +158,7 @@ def test_payment_amount_not_trusted():
 
 def test_tx_id_uniqueness():
     """
-    PaymentRecord.tx_id has a UNIQUE constraint — prevents duplicate processing.
+    PaymentRecord.tx_id has a UNIQUE constraint  prevents duplicate processing.
     Checks both column-level and table-level unique constraints.
     """
     from app.models.tenant import PaymentRecord
@@ -175,13 +175,13 @@ def test_tx_id_uniqueness():
     pytest.fail("PaymentRecord.tx_id MUST be UNIQUE to prevent double-spending")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 4 — Scheduler Audit
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 4  Scheduler Audit
+# 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 6 — API Serialization Audit
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 6  API Serialization Audit
+# 
 
 def test_reply_macro_read_target_chats_is_list():
     """Sprint 8: ReplyMacroRead.target_chats now returns list[str] consistently."""
@@ -202,9 +202,9 @@ def test_all_schemas_have_from_attributes():
         assert schema.model_config.get("from_attributes"), f"{schema.__name__} missing from_attributes"
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 7 — Integration Defect Tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 7  Integration Defect Tests
+# 
 
 def test_billing_api_injects_auth():
     """Verify billing routers have auth_required dependency."""
@@ -218,7 +218,7 @@ def test_billing_api_injects_auth():
     
     for path, dep_count in billing_paths:
         if dep_count == 0:
-            pytest.fail(f"{path} has 0 dependencies — needs auth_required")
+            pytest.fail(f"{path} has 0 dependencies  needs auth_required")
 
 
 def test_features_routers_have_auth():
@@ -234,9 +234,9 @@ def test_features_routers_have_auth():
         pytest.fail(f"Features routes without auth: {route_zero_auth}")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 9 — Model Schema Matches Migration
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 9  Model Schema Matches Migration
+# 
 
 def test_migration_f8a5d3b2c1e0_creates_expected_tables():
     """Verify migration creates all Sprint 7 tables."""

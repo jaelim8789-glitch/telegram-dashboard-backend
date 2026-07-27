@@ -10,7 +10,7 @@ from app.database import Base
 class AiOpsReport(Base):
     """A periodic, AI-generated ops summary (see app.services.ai_ops_service).
 
-    Read-only for operators — generation is suggestion/report-only, no action
+    Read-only for operators  generation is suggestion/report-only, no action
     is ever taken automatically from this table.
     """
 

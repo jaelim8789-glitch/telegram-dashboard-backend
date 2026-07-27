@@ -1,4 +1,4 @@
-"""AI Workflow schemas — Pydantic models for workflow definitions and executions."""
+"""AI Workflow schemas  Pydantic models for workflow definitions and executions."""
 
 from __future__ import annotations
 

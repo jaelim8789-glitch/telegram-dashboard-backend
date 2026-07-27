@@ -1,4 +1,4 @@
-"""Delivery Message Log — per-recipient delivery record.
+"""Delivery Message Log  per-recipient delivery record.
 
 Stores operational evidence for every Telegram message delivery attempt
 through the canonical delivery pipeline (app/services/delivery.py).
@@ -36,7 +36,7 @@ class MessageLog(Base):
     success: Mapped[bool] = mapped_column(nullable=False, default=False)
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Safe error — never contains secrets, session strings, or raw Telethon exceptions
+    # Safe error  never contains secrets, session strings, or raw Telethon exceptions
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 

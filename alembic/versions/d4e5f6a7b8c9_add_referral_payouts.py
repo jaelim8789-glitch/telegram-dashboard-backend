@@ -1,4 +1,4 @@
-﻿"""add referral_payouts table
+"""add referral_payouts table
 
 Revision ID: d4e5f6a7b8c9
 Revises: a7b8c9d0e1f2

@@ -4,7 +4,7 @@ Connection hardening:
 - ``pool_pre_ping``: verifies connections are alive before handing them out
   (prevents stale-connection errors after Render free-tier sleep or network blips).
 - ``pool_size`` / ``max_overflow``: tuned for a single-worker uvicorn process.
-- ``PoolTimeout`` is deliberately *not* set here — the caller (API route or scheduler)
+- ``PoolTimeout`` is deliberately *not* set here  the caller (API route or scheduler)
   should handle the timeout and return a 503 / retry instead of crashing the process.
 
 N+1 detection (development only):
@@ -36,7 +36,7 @@ if not str(settings.database_url).startswith("sqlite"):
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
-# ─── N+1 / slow-query detection ──────────────────────────────────────────
+#  N+1 / slow-query detection 
 # When SQLALCHEMY_ECHO=true, log all queries to a dedicated file with
 # per-request query-count tracking to spot N+1 patterns.
 if settings.environment in ("development", "staging") and settings.debug:

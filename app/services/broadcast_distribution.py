@@ -3,13 +3,13 @@
 Why this exists: a single account blasting immediate messages into many groups
 at once is exactly the pattern that got account 07ede2ef flagged by Telegram
 (forbidden across all 11 of its groups within days). The fix is not a more
-aggressive send loop on one account — it's spreading the same group list
+aggressive send loop on one account  it's spreading the same group list
 across the tenant's other active accounts so each one sends at the existing,
 already-safe pace (see app/services/delivery.py pacing / app/services/
 broadcast_processor.py) but only has to carry its own slice.
 
 A Telegram chat is only writable by an account that is actually a member of
-it — there is no persisted "which account is in which group" table (group
+it  there is no persisted "which account is in which group" table (group
 lists are always fetched live via Telethon, see app/services/
 telegram_actions.list_groups). So distribution has to verify live membership
 per candidate account before it can assign a group to it; assigning blind
@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 # Conservative starting default for how many groups one account should be asked
 # to carry in a single broadcast before we split the work across other active
-# accounts. Not a Telegram-documented limit — just a deliberately cautious
+# accounts. Not a Telegram-documented limit  just a deliberately cautious
 # number pending real usage data. Kept as a module constant so it's easy to
 # tune later without touching call sites.
 DISTRIBUTION_GROUP_THRESHOLD = 20
@@ -53,7 +53,7 @@ async def get_eligible_accounts(db: AsyncSession, tenant_id: str | None) -> list
 
     Mirrors the status checks Kiro's restriction-suspension logic relies on
     (app/crud/account.py suspend_account_for_restriction / app/services/
-    delivery.py) — we filter independently here rather than depending on that
+    delivery.py)  we filter independently here rather than depending on that
     code path, since this module should stay correct even if that logic
     changes shape later.
     """
@@ -69,7 +69,7 @@ async def check_membership(
 ) -> dict[str, set[str]]:
     """For each account, which of the target group_ids it's actually a member of.
 
-    Runs one live Telethon dialog listing per account, concurrently — this
+    Runs one live Telethon dialog listing per account, concurrently  this
     only happens once at broadcast-creation time for large group lists, not
     per message, so the latency (a couple seconds per account) is acceptable.
     Accounts that fail to list groups (session issues, etc.) are simply
@@ -137,17 +137,17 @@ async def create_distributed_broadcast(
 ) -> list[Broadcast]:
     """Split a list of chat targets across the tenant's eligible accounts and
     create one Broadcast row per account. Each row goes through the existing
-    broadcast processor pipeline unmodified — distribution only changes how
+    broadcast processor pipeline unmodified  distribution only changes how
     many chats each row is responsible for, not how a row is paced or retried.
 
     ``target_field`` says which Broadcast field ``target_ids`` came from and
-    must be written back into on each child — this matters a lot:
+    must be written back into on each child  this matters a lot:
     - "recipients": each id is a chat to message directly (the mode SendTab's
-      group broadcast actually uses — a "recipient" here is a group's own
+      group broadcast actually uses  a "recipient" here is a group's own
       chat id, one message per chat).
     - "group_ids": each id is a group whose *members* get resolved and
       messaged individually at dispatch time (see
-      broadcast_processor.resolve_group_ids_to_recipients) — a completely
+      broadcast_processor.resolve_group_ids_to_recipients)  a completely
       different, much larger fan-out. Mixing these up would make a handful of
       groups explode into messaging every member of each one.
 
@@ -171,7 +171,7 @@ async def create_distributed_broadcast(
 
     candidates = await get_eligible_accounts(db, requesting_account.tenant_id)
     # Always include the requesting account itself as a candidate, even if a
-    # stricter status filter would exclude it for some reason — the caller
+    # stricter status filter would exclude it for some reason  the caller
     # already validated it directly.
     if not any(a.id == requesting_account.id for a in candidates):
         candidates.append(requesting_account)

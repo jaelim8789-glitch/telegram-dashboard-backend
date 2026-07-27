@@ -66,7 +66,7 @@ def test_alembic_has_migrations(alembic_cfg):
 
     script = ScriptDirectory.from_config(alembic_cfg)
     heads = script.get_heads()
-    assert len(heads) > 0, "No migration heads found — nothing to downgrade from"
+    assert len(heads) > 0, "No migration heads found  nothing to downgrade from"
     print(f"\n  Migration heads: {heads}")
 
 
@@ -76,7 +76,7 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
     This validates that:
       - upgrade() creates tables/columns correctly
       - downgrade() reverses them correctly
-      - chaining upgrade → downgrade → upgrade doesn't crash
+      - chaining upgrade  downgrade  upgrade doesn't crash
     """
     from alembic import command
     from alembic.config import Config
@@ -91,7 +91,7 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
     engine = create_engine(url)
 
     try:
-        # ── 1. Apply all migrations ──
+        #  1. Apply all migrations 
         print(f"\n  Applying all migrations (upgrade head)...")
         command.upgrade(alembic_cfg, "head")
 
@@ -101,16 +101,16 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
             tables_after_upgrade = set(inspector.get_table_names())
         print(f"  Tables after upgrade ({len(tables_after_upgrade)}): {sorted(tables_after_upgrade)}")
 
-        # ── 2. Get current revision ──
+        #  2. Get current revision 
         current_head = script.get_heads()[0]
 
-        # ── 3. Downgrade by one revision ──
+        #  3. Downgrade by one revision 
         print(f"  Downgrading from {current_head} by one revision...")
         # Find the parent revision of the head
         head_revision = script.get_revision(current_head)
         downgrade_target = head_revision.down_revision
         assert downgrade_target is not None, (
-            f"Head revision {current_head} has no down_revision — cannot downgrade"
+            f"Head revision {current_head} has no down_revision  cannot downgrade"
         )
 
         command.downgrade(alembic_cfg, downgrade_target)
@@ -123,10 +123,10 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
 
         # Tables should have changed (downgrade removed some)
         assert tables_after_downgrade != tables_after_upgrade, (
-            "Downgrade did not change the schema — the migration may be a no-op"
+            "Downgrade did not change the schema  the migration may be a no-op"
         )
 
-        # ── 4. Upgrade back to head ──
+        #  4. Upgrade back to head 
         print(f"  Upgrading back to head...")
         command.upgrade(alembic_cfg, current_head)
 
@@ -139,7 +139,7 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
             f"  After upgrade: {sorted(tables_after_upgrade)}\n"
             f"  After roundtrip: {sorted(tables_after_roundtrip)}"
         )
-        print(f"  ✅ Round-trip verified — tables match after upgrade → downgrade → upgrade")
+        print(f"   Round-trip verified  tables match after upgrade  downgrade  upgrade")
 
     finally:
         engine.dispose()
@@ -148,7 +148,7 @@ def test_alembic_upgrade_and_downgrade_roundtrip(alembic_cfg):
 def test_alembic_downgrade_all_the_way(alembic_cfg):
     """Downgrade all the way to base, then upgrade back to head.
 
-    This is the most thorough test — it validates the entire migration chain
+    This is the most thorough test  it validates the entire migration chain
     is reversible.
     """
     from alembic import command
@@ -158,7 +158,7 @@ def test_alembic_downgrade_all_the_way(alembic_cfg):
     engine = create_engine(url)
 
     try:
-        # ── First, ensure we're at head ──
+        #  First, ensure we're at head 
         print(f"\n  Ensuring at head...")
         command.upgrade(alembic_cfg, "head")
 
@@ -167,7 +167,7 @@ def test_alembic_downgrade_all_the_way(alembic_cfg):
             full_schema_tables = set(inspector.get_table_names())
         print(f"  Full schema tables ({len(full_schema_tables)}): {sorted(full_schema_tables)}")
 
-        # ── Downgrade to base ──
+        #  Downgrade to base 
         print(f"  Downgrading to base...")
         command.downgrade(alembic_cfg, "base")
 
@@ -176,7 +176,7 @@ def test_alembic_downgrade_all_the_way(alembic_cfg):
             base_tables = set(inspector.get_table_names())
         print(f"  Tables at base ({len(base_tables)}): {sorted(base_tables)}")
 
-        # ── Upgrade back to head ──
+        #  Upgrade back to head 
         print(f"  Upgrading back to head...")
         command.upgrade(alembic_cfg, "head")
 
@@ -184,9 +184,9 @@ def test_alembic_downgrade_all_the_way(alembic_cfg):
             inspector = inspect(conn)
             final_tables = set(inspector.get_table_names())
         assert final_tables == full_schema_tables, (
-            f"Full downgrade → upgrade roundtrip mismatch"
+            f"Full downgrade  upgrade roundtrip mismatch"
         )
-        print(f"  ✅ Full round-trip verified — base → head → base → head")
+        print(f"   Full round-trip verified  base  head  base  head")
 
     finally:
         engine.dispose()

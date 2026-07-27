@@ -1,5 +1,5 @@
 """
-AI Workflow Models — workflow definitions, executions, and step tracking.
+AI Workflow Models  workflow definitions, executions, and step tracking.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiWorkflowDefinition(Base):
-    """AI Workflow Definition — DAG-based workflow template."""
+    """AI Workflow Definition  DAG-based workflow template."""
 
     __tablename__ = "ai_workflow_definitions"
 
@@ -38,7 +38,7 @@ class AiWorkflowDefinition(Base):
 
 
 class AiWorkflowExecution(Base):
-    """AI Workflow Execution — a running/completed instance of a workflow."""
+    """AI Workflow Execution  a running/completed instance of a workflow."""
 
     __tablename__ = "ai_workflow_executions"
 
@@ -59,7 +59,7 @@ class AiWorkflowExecution(Base):
 
 
 class AiWorkflowStep(Base):
-    """AI Workflow Step — individual step within a workflow execution."""
+    """AI Workflow Step  individual step within a workflow execution."""
 
     __tablename__ = "ai_workflow_steps"
 

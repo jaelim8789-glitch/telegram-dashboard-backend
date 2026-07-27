@@ -45,7 +45,7 @@ async def upsert_verification_code(db: AsyncSession, phone: str, code: str) -> P
 async def verify_code(db: AsyncSession, phone: str, code: str) -> bool:
     """Returns True for a correct, unexpired code with attempts still remaining, and
     deletes it so it can't be replayed. Returns False for anything else (no pending
-    code, expired, attempt cap reached, or wrong code) — a wrong guess still increments
+    code, expired, attempt cap reached, or wrong code)  a wrong guess still increments
     the persisted attempt counter so repeated guessing eventually locks the code out
     even across separate requests, rather than only within one process's memory."""
     verification = await get_pending_verification(db, phone)
@@ -109,7 +109,7 @@ async def list_users(db: AsyncSession) -> list[User]:
 
 class UserWithTenantInfo:
     """Lightweight row wrapper combining a User with its matching Tenant (joined on
-    phone — tenants aren't FK-linked to users, see Tenant model docstring) and its
+    phone  tenants aren't FK-linked to users, see Tenant model docstring) and its
     account count. Used only for the admin users list, which needs plan/subscription/
     account-count columns the bare User model doesn't have."""
 

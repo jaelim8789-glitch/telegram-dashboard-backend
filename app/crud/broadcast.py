@@ -197,13 +197,13 @@ async def batch_retry_broadcasts(db: AsyncSession, broadcast_ids: list[str], ide
     for bid in broadcast_ids:
         broadcast = await db.get(Broadcast, bid)
         if broadcast is None:
-            results.append({"id": bid, "status": "skipped", "error": "발송 작업을 찾을 수 없습니다."})
+            results.append({"id": bid, "status": "failed", "error": "    ."})
             continue
 
         # Tenant check
         account = await db.get(Account, broadcast.account_id)
         if account is None:
-            results.append({"id": bid, "status": "skipped", "error": "계정을 찾을 수 없습니다."})
+            results.append({"id": bid, "status": "skipped", "error": f"  ({settings.broadcast_max_retries}) "})
             continue
         if identity.kind != "admin" and identity.tenant_id and account.tenant_id != identity.tenant_id:
             results.append({"id": bid, "status": "skipped", "error": "접근 권한이 없습니다."})

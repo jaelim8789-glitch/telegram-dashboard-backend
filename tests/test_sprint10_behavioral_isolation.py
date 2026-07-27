@@ -13,7 +13,7 @@ from app.main import app
 from app.api.deps import get_current_identity, require_api_key_or_admin, Identity
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -115,9 +115,9 @@ def _cleanup(acc_ids, tenant_ids):
     asyncio.run(_clean())
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 1: Account LIST isolation — Tenant A/B behavioral
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Phase 1: Account LIST isolation  Tenant A/B behavioral
+# 
 
 def test_tenant_a_cannot_list_tenant_b_accounts(client):
     """Tenant A LIST /api/accounts must NOT return Tenant B accounts."""
@@ -183,9 +183,9 @@ def test_tenant_a_cannot_delete_tenant_b_account(client, tenant_a):
         _cleanup([acc_b_id], ["tenant-A-del", "tenant-B-del"])
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2: Telegram Auth operation isolation
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_tenant_a_cannot_send_code_on_tenant_b_account(client, tenant_a):
     """Tenant A POST /api/accounts/{b_id}/send-code must be denied before Telethon call."""
@@ -247,9 +247,9 @@ def test_tenant_a_cannot_get_status_on_tenant_b_account(client, tenant_a):
         _cleanup([acc_b_id], ["tenant-A-st", "tenant-B-st"])
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 3: require_tenant_access unit tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_require_tenant_access_admin_bypass():
     """Admin identity must bypass require_tenant_access."""
@@ -307,9 +307,9 @@ def test_require_tenant_access_correct_tenant():
     assert asyncio.run(test_correct()), "Same-tenant access must succeed"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 4: API-key tenant policy
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_api_key_with_wrong_tenant_gets_403(client, api_key_tenant_a):
     """API key with tenant_id=A must get 403 for tenant B resources."""
@@ -327,9 +327,9 @@ def test_api_key_without_tenant_context_gets_403(client, api_key_no_tenant):
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 5: NULL-tenant Account policy
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_null_tenant_account_not_listed_for_tenant_user(client, tenant_a):
     """Accounts with tenant_id=NULL must NOT appear in a tenant user's LIST."""

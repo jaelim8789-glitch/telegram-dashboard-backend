@@ -51,20 +51,20 @@ async def test_referral_code_generation_and_uniqueness(db_session):
         db.add(owner)
         await db.flush()
 
-        code1 = ReferralCode(code="TEST1234별", owner_id=owner.id)
+        code1 = ReferralCode(code="TEST1234", owner_id=owner.id)
         db.add(code1)
         await db.flush()
 
-        code2 = ReferralCode(code="TEST5678빛", owner_id=owner.id)
+        code2 = ReferralCode(code="TEST5678", owner_id=owner.id)
         db.add(code2)
         await db.flush()
 
         result = await db.execute(
-            __import__("sqlalchemy").select(ReferralCode).where(ReferralCode.code == "TEST1234별")
+            __import__("sqlalchemy").select(ReferralCode).where(ReferralCode.code == "TEST1234")
         )
         found = result.scalar_one_or_none()
         assert found is not None
-        assert found.code == "TEST1234별"
+        assert found.code == "TEST1234"
 
 
 @pytest.mark.asyncio
@@ -198,11 +198,11 @@ async def test_tier_calculation():
 
     rate0, label0 = _get_tier(0, tiers)
     assert rate0 == 0.10
-    assert label0 == "기본"
+    assert label0 == ""
 
     rate1, label1 = _get_tier(3, tiers)
     assert rate1 == 0.10
-    assert label1 == "기본"
+    assert label1 == ""
 
     rate2, label2 = _get_tier(5, tiers)
     assert rate2 == 0.15

@@ -46,7 +46,7 @@ router = APIRouter(prefix="/api/ai-reply-v2", tags=["ai-reply-v2"])
 logger = get_logger(__name__)
 
 
-# ── Persona Endpoints ────────────────────────────────────────────────────
+#  Persona Endpoints 
 
 
 @router.get("/accounts/{account_id}/personas", response_model=list[PersonaRead])
@@ -115,7 +115,7 @@ async def get_active_persona_endpoint(
     return await get_active_persona(db, account_id)
 
 
-# ── Suggestion Endpoints ─────────────────────────────────────────────────
+#  Suggestion Endpoints 
 
 
 @router.post("/suggestions", response_model=SuggestionGenerateResponse, status_code=status.HTTP_201_CREATED)
@@ -238,7 +238,7 @@ async def feedback_suggestion(
     return updated
 
 
-# ── Conversation Context ─────────────────────────────────────────────────
+#  Conversation Context 
 
 
 @router.get("/accounts/{account_id}/conversations/{chat_id}", response_model=ConversationRead)
@@ -254,7 +254,7 @@ async def get_conversation(
     return conv
 
 
-# ── Auto-Reply Settings ──────────────────────────────────────────────────
+#  Auto-Reply Settings 
 
 
 @router.get("/accounts/{account_id}/settings", response_model=AutoReplyV2Settings)

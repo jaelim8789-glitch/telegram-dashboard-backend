@@ -1,4 +1,4 @@
-"""Local development DB seed — creates dummy data for local-only testing.
+"""Local development DB seed  creates dummy data for local-only testing.
 
 Usage:
     cd telegram-dashboard-backend
@@ -22,14 +22,14 @@ from sqlalchemy import select
 
 async def seed():
     async with async_session_maker() as db:
-        # ── Tenant ──
+        #  Tenant 
         tenant_id = "demo-tenant-00001"
         existing = await db.get(Tenant, tenant_id)
         if not existing:
             db.add(Tenant(id=tenant_id, name="Demo Corp", settings={}))
             print("  + Tenant: Demo Corp")
 
-        # ── Admin user ──
+        #  Admin user 
         admin_id = "demo-admin-00001"
         existing = await db.get(User, admin_id)
         if not existing:
@@ -40,7 +40,7 @@ async def seed():
             ))
             print("  + User: admin")
 
-        # ── Regular users ──
+        #  Regular users 
         usernames = ["alice", "bob", "charlie", "diana"]
         for name in usernames:
             uid = f"demo-user-{name}"
@@ -53,7 +53,7 @@ async def seed():
                 ))
                 print(f"  + User: {name}")
 
-        # ── Team members ──
+        #  Team members 
         roles = ["manager", "operator", "viewer"]
         for i, name in enumerate(usernames[:3]):
             mid = f"demo-tm-{name}"
@@ -66,7 +66,7 @@ async def seed():
                 ))
                 print(f"  + TeamMember: {name} ({roles[i]})")
 
-        # ── Telegram accounts ──
+        #  Telegram accounts 
         phone_numbers = ["+821011111111", "+821022222222", "+821033333333"]
         for phone in phone_numbers:
             aid = f"demo-acc-{phone[-4:]}"
@@ -82,7 +82,7 @@ async def seed():
                 ))
                 print(f"  + Account: {phone}")
 
-        # ── Phone verifications ──
+        #  Phone verifications 
         for phone in phone_numbers[:2]:
             pvid = f"demo-pv-{phone[-4:]}"
             existing = await db.get(PhoneVerification, pvid)
@@ -97,7 +97,7 @@ async def seed():
                 ))
                 print(f"  + PhoneVerification: {phone}")
 
-        # ── Reply macros (2 rules, 2 commands each) ──
+        #  Reply macros (2 rules, 2 commands each) 
         for rule_name, trigger in [("Auto Reply", "hello"), ("Support", "help")]:
             rule_id = f"demo-rule-{rule_name.lower().replace(' ', '-')}"
             existing = await db.get(ReplyMacroRule, rule_id)
@@ -110,7 +110,7 @@ async def seed():
                 print(f"  + ReplyMacroRule: {rule_name}")
 
             for i, (cmd, reply) in enumerate([
-                ("hi", "Hello! How can I help you?"),
+                ("hi", "Hello! How can I help you"),
                 ("info", "Here is the information you requested."),
             ]):
                 macro_id = f"demo-macro-{rule_name.lower()}-{i}"
@@ -124,7 +124,7 @@ async def seed():
                     ))
                     print(f"  + ReplyMacro: {rule_name}/{cmd}")
 
-        # ── Message logs ──
+        #  Message logs 
         account_ids = [f"demo-acc-{p[-4:]}" for p in phone_numbers]
         for i in range(20):
             mid = f"demo-msg-{i:04d}"
@@ -143,7 +143,7 @@ async def seed():
                 ))
         print("  + MessageLog: 20 entries")
 
-        # ── Broadcasts ──
+        #  Broadcasts 
         for i in range(3):
             bid = f"demo-bcast-{i:04d}"
             existing = await db.get(Broadcast, bid)
@@ -160,9 +160,9 @@ async def seed():
         print("  + Broadcast: 3 entries")
 
         await db.commit()
-        print("\n✅ Seed complete. Run with a fresh DB to reset all data.")
+        print("\n Seed complete. Run with a fresh DB to reset all data.")
 
 
 if __name__ == "__main__":
-    print("🌱 Seeding local demo data...")
+    print(" Seeding local demo data...")
     asyncio.run(seed())

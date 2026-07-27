@@ -38,7 +38,7 @@ async def db_session():
     await engine.dispose()
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 async def _make_tenant(db_session, tenant_id: str, plan: str) -> Tenant:
@@ -65,7 +65,7 @@ async def _seed_plan_limit(db_session, plan: str, feature: str, **kwargs) -> Non
     await db_session.commit()
 
 
-# ── Bug 1: _get_tenant_plan resolves the real plan ────────────────────────
+#  Bug 1: _get_tenant_plan resolves the real plan 
 
 
 class TestGetTenantPlan:
@@ -87,7 +87,7 @@ class TestGetTenantPlan:
         assert plan == "free"
 
 
-# ── Bug 1: check_ai_quota applies paid limits via the real plan ───────────
+#  Bug 1: check_ai_quota applies paid limits via the real plan 
 
 
 class TestCheckAiQuotaUsesRealPlan:
@@ -102,7 +102,7 @@ class TestCheckAiQuotaUsesRealPlan:
         await _seed_plan_limit(db_session, "free", "chat", max_requests_per_day=10)
         await _seed_plan_limit(db_session, "pro", "chat", max_requests_per_day=200)
 
-        # No usage yet → allowed under either plan, but the applied plan must be pro.
+        # No usage yet  allowed under either plan, but the applied plan must be pro.
         allowed, _ = await check_ai_quota(db_session, "t-pro2", "chat")
         assert allowed is True
 
@@ -135,16 +135,16 @@ class TestCheckAiQuotaUsesRealPlan:
             ))
         await db_session.commit()
 
-        # 10 uses == free limit (10) → next call denied.
+        # 10 uses == free limit (10)  next call denied.
         allowed, _ = await check_ai_quota(db_session, "t-free", "chat")
         assert allowed is False
 
 
-# ── Bug 1: the 4 endpoints use real plan limits (integration smoke) ────────
+#  Bug 1: the 4 endpoints use real plan limits (integration smoke) 
 # Confirms /api/ai chat, reply-assistant, broadcast-assistant, operations-report
 # route through check_ai_quota -> _get_tenant_plan and are NOT silently capped
 # at free for a paid tenant. We stub DeepSeek so no real API call is made, and
-# seed only a *paid* plan limit (no free limit row) — if the endpoint fell back
+# seed only a *paid* plan limit (no free limit row)  if the endpoint fell back
 # to free it would hit `limit is None -> allow`, which is acceptable, so instead
 # we assert that a pro tenant is allowed a request count that exceeds the free
 # default implied by seeding pro-only limits at a high count.
@@ -169,17 +169,17 @@ async def test_ai_endpoints_accept_pro_tenant_high_volume(client, db_session, mo
     monkeypatch.setattr(ai_module, "call_deepseek", AsyncMock(return_value=("{}", 10, None)))
 
     # chat
-    r = await client.post("/api/ai/chat", json={"message": "안녕"})
+    r = await client.post("/api/ai/chat", json={"message": ""})
     assert r.status_code == 200, r.text
 
     # reply-assistant
     r = await client.post("/api/ai/reply-assistant", json={
-        "account_id": "a1", "chat_id": "c1", "incoming_message": "영업시간?",
+        "account_id": "a1", "chat_id": "c1", "incoming_message": "",
     })
     assert r.status_code == 200, r.text
 
     # broadcast-assistant
-    r = await client.post("/api/ai/broadcast-assistant", json={"purpose": "할인 안내"})
+    r = await client.post("/api/ai/broadcast-assistant", json={"purpose": " "})
     assert r.status_code == 200, r.text
 
     # operations-report
@@ -187,7 +187,7 @@ async def test_ai_endpoints_accept_pro_tenant_high_volume(client, db_session, mo
     assert r.status_code == 200, r.text
 
 
-# ── Bug 2: streaming token count uses real usage ──────────────────────────
+#  Bug 2: streaming token count uses real usage 
 
 
 class TestStreamTokenCount:
@@ -198,8 +198,8 @@ class TestStreamTokenCount:
         import app.services.ai_core_service as core
 
         async def fake_stream(*args, **kwargs):
-            yield ("안녕", 0)
-            yield ("하세요", 0)
+            yield ("", 0)
+            yield ("", 0)
             yield ("", 123)  # usage chunk
 
         monkeypatch.setattr(core, "_call_deepseek_stream", fake_stream)
@@ -212,7 +212,7 @@ class TestStreamTokenCount:
             if usage:
                 total_tokens = usage
 
-        assert "".join(content_parts) == "안녕하세요"
+        assert "".join(content_parts) == ""
         assert total_tokens == 123
 
     @pytest.mark.asyncio
@@ -234,8 +234,8 @@ class TestStreamTokenCount:
         await db_session.commit()
 
         async def fake_stream(*args, **kwargs):
-            yield ("안녕하세요 고객님", 0)
-            # 40 real tokens — far more than len(cleaned)//4 (~3 for 9 chars).
+            yield (" ", 0)
+            # 40 real tokens  far more than len(cleaned)//4 (~3 for 9 chars).
             yield ("", 40)
 
         monkeypatch.setattr(ai_agent_module, "_call_deepseek_stream", fake_stream)
@@ -257,7 +257,7 @@ class TestStreamTokenCount:
 
         async with client.stream(
             "POST", "/api/ai/chats/chat-real-tok/message/stream",
-            json={"content": "안녕하세요"},
+            json={"content": ""},
         ) as response:
             assert response.status_code == 200
             # Drain the SSE stream so _stream() runs to completion.
@@ -273,5 +273,5 @@ class TestStreamTokenCount:
             )
         )
         msg = result.scalar_one()
-        # Before the fix this would be len("안녕하세요 고객님")//4 == 3.
+        # Before the fix this would be len(" ")//4 == 3.
         assert msg.tokens_used == 40, f"expected real token count, got {msg.tokens_used}"

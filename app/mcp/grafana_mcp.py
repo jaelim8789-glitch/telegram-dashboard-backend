@@ -4,7 +4,7 @@ Exposes Grafana datasource queries as MCP tools. It talks to the Grafana HTTP
 API (``/api/datasources/proxy`` for Prometheus, ``/api/ds/query`` for the
 unified query endpoint). When ``grafana_base_url`` / ``grafana_api_token`` are
 not configured the server stays ``enabled=False`` and every tool returns a
-clear "not configured" result — never crashing the gateway.
+clear "not configured" result  never crashing the gateway.
 
 Tools are read-only (Prometheus instant/range queries, Loki log queries), so
 they do not require approval.
@@ -29,25 +29,25 @@ class GrafanaMCPServer(MCPToolServer):
     title = "Grafana MCP"
     enabled = settings.grafana_mcp_enabled
 
-    # ─── Tool catalog ──────────────────────────────────────────────────────
+    #  Tool catalog 
 
     def list_tools(self) -> list[MCPTool]:
         return [
             MCPTool(
                 name="query_prometheus",
-                description="Grafana의 Prometheus datasource에 대해 PromQL instant query를 실행합니다.",
+                description="Grafana Prometheus datasource  PromQL instant query .",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "PromQL 표현식"},
-                        "time": {"type": "string", "description": "ISO8601 또는 Unix timestamp (선택)"},
+                        "query": {"type": "string", "description": "PromQL "},
+                        "time": {"type": "string", "description": "ISO8601  Unix timestamp ()"},
                     },
                     "required": ["query"],
                 },
             ),
             MCPTool(
                 name="query_range",
-                description="Prometheus range query를 실행하여 시계열 데이터를 조회합니다.",
+                description="Prometheus range query    .",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -61,11 +61,11 @@ class GrafanaMCPServer(MCPToolServer):
             ),
             MCPTool(
                 name="query_logs",
-                description="Loki datasource에 대해 LogQL 쿼리를 실행하여 로그를 조회합니다.",
+                description="Loki datasource  LogQL    .",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "LogQL 표현식 (예: {app=\"telemon\"})"},
+                        "query": {"type": "string", "description": "LogQL  (: {app=\"telemon\"})"},
                         "limit": {"type": "integer", "default": 100},
                     },
                     "required": ["query"],
@@ -73,12 +73,12 @@ class GrafanaMCPServer(MCPToolServer):
             ),
             MCPTool(
                 name="list_dashboards",
-                description="Grafana에 등록된 대시보드 목록을 조회합니다.",
+                description="Grafana    .",
                 input_schema={"type": "object", "properties": {}},
             ),
         ]
 
-    # ─── Internal helpers ──────────────────────────────────────────────────
+    #  Internal helpers 
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -102,7 +102,7 @@ class GrafanaMCPServer(MCPToolServer):
             resp.raise_for_status()
             return resp.json()
 
-    # ─── Tool implementations ──────────────────────────────────────────────
+    #  Tool implementations 
 
     async def _tool_query_prometheus(
         self, query: str, time: str | None = None
@@ -178,7 +178,7 @@ class GrafanaMCPServer(MCPToolServer):
         try:
             async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
                 resp = await client.get(
-                    f"{settings.grafana_base_url}/api/search?type=dash-db",
+                    f"{settings.grafana_base_url}/api/searchtype=dash-db",
                     headers=self._headers(),
                 )
                 resp.raise_for_status()

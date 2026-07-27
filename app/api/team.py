@@ -50,7 +50,7 @@ async def get_team_member(
     await require_tenant_access(tenant_id, identity)
     member = await team_crud.get_member(db, member_id)
     if member is None or member.tenant_id != tenant_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="멤버를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner   .")
     return member
 
 
@@ -120,7 +120,7 @@ async def update_team_member(
     if payload.role is not None and payload.role != "owner" and member.role == "owner":
         owner_count = await team_crud.count_owners(db, tenant_id)
         if owner_count <= 1:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="마지막 Owner는 역할을 변경할 수 없습니다.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=" Owner   .")
 
     updated = await team_crud.update_member(db, member, payload)
     logger.info("team_member_updated", tenant_id=tenant_id, member_id=member_id, role=updated.role)

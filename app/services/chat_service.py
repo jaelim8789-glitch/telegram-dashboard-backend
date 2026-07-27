@@ -20,8 +20,8 @@ SYSTEM_PROMPT = """당신은 TeleMon의 AI 운영 비서입니다. TeleMon은 Te
 항상 친절하고 실용적인 조언을 제공하며, 사용자가 TeleMon의 기능을 최대한 활용할 수 있도록 도와주세요."""
 
 # ── 마스킹 ─────────────────────────────────────────────────────────────
-_PHONE = re.compile(r"01[0-9][ -]?\d{3,4}[ -]?\d{4}")
-_SSN = re.compile(r"\d{6}[ -]?\d{7}")
+_PHONE = re.compile(r"01[0-9][ -]\d{3,4}[ -]\d{4}")
+_SSN = re.compile(r"\d{6}[ -]\d{7}")
 _EMAIL = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 def mask_sensitive(text: str) -> str:

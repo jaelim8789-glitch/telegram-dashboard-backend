@@ -2,7 +2,7 @@
 
 These columns exist on the SQLAlchemy models (app/models/api_key.py,
 app/models/broadcast.py) but were never given a migration, so
-production was missing them entirely — breaking admin API key
+production was missing them entirely  breaking admin API key
 issuance (UndefinedColumnError: purpose) and the recurring-broadcast
 dispatch job every 30s (UndefinedColumnError: batch_size).
 

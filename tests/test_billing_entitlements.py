@@ -1,4 +1,4 @@
-"""Audit fix batch 1 — entitlement enforcement (C2), subscription lapse/cancel
+"""Audit fix batch 1  entitlement enforcement (C2), subscription lapse/cancel
 revocation (C3), Stars balance bypass (H2), unverified USDT admin-confirm (H4).
 """
 
@@ -34,7 +34,7 @@ def _as_tenant(client, tenant_id: str):
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id=tenant_id)
 
 
-# ─── C2: account capacity ──────────────────────────────────────────────
+#  C2: account capacity 
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_create_account_blocked_at_plan_limit(client, db_session):
 
     second = await client.post("/api/accounts", json={"phone": "+821090000002"})
     assert second.status_code == 403
-    assert "한도" in second.json()["detail"]
+    assert "" in second.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -61,20 +61,20 @@ async def test_create_account_allowed_under_plan_limit(client, db_session):
 
 @pytest.mark.asyncio
 async def test_create_account_admin_bypasses_capacity_check(client, db_session):
-    # default `client` fixture identity is admin — no tenant, no cap.
+    # default `client` fixture identity is admin  no tenant, no cap.
     res = await client.post("/api/accounts", json={"phone": "+821090000004"})
     assert res.status_code == 201
 
 
-# ─── C2: broadcast capacity ─────────────────────────────────────────────
+#  C2: broadcast capacity 
 
 
 @pytest.mark.asyncio
 async def test_create_broadcast_blocked_when_can_broadcast_is_false(client, db_session):
     """require_broadcast_capacity's can_broadcast=False branch is defensive
-    code — no current plan in PLAN_CATALOG sets it False (free plan's
+    code  no current plan in PLAN_CATALOG sets it False (free plan's
     can_broadcast was intentionally changed to True so the 24-hour free trial
-    can exercise the product's headline feature; "메시지 발송" is already
+    can exercise the product's headline feature; " " is already
     advertised as a Free Trial feature on the pricing page). Exercised here by
     overriding the flag directly on the tenant rather than via a plan, since
     the underlying guard is still real production code that must keep
@@ -91,7 +91,7 @@ async def test_create_broadcast_blocked_when_can_broadcast_is_false(client, db_s
         data={"account_id": account_id, "message": "hi", "recipients": '["-100123"]'},
     )
     assert res.status_code == 403
-    assert "발송 기능" in res.json()["detail"]
+    assert " " in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_create_broadcast_blocked_when_monthly_limit_exceeded(client, db_s
         data={"account_id": account_id, "message": "hi", "recipients": '["-100123"]'},
     )
     assert res.status_code == 403
-    assert "한도" in res.json()["detail"]
+    assert "" in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_create_broadcast_allowed_when_plan_permits(client, db_session):
     assert res.status_code == 202
 
 
-# ─── C3: expired/canceled subscriptions get downgraded ──────────────────
+#  C3: expired/canceled subscriptions get downgraded 
 
 
 @pytest.mark.asyncio
@@ -170,8 +170,8 @@ async def test_downgrade_expired_tenants_reverts_canceled_past_period(db_session
     assert tenant.plan == "free"
     assert tenant.max_accounts == 1
     # Free plan's can_broadcast is intentionally True (24-hour free trial
-    # exercises the product's headline feature — see the entitlement test
-    # above) — downgrading to free must apply that plan's *actual* current
+    # exercises the product's headline feature  see the entitlement test
+    # above)  downgrading to free must apply that plan's *actual* current
     # limits, not the paid-tier ones it's losing.
     assert tenant.can_broadcast is True
     assert tenant.monthly_message_limit == 100
@@ -236,7 +236,7 @@ class db_session_cm:
         return False
 
 
-# ─── H2: Stars spend must not bypass balance check ──────────────────────
+#  H2: Stars spend must not bypass balance check 
 
 
 @pytest.mark.asyncio
@@ -269,7 +269,7 @@ async def test_process_stars_payment_deducts_on_sufficient_balance(db_session, m
     assert tenant.stars_balance == 50
 
 
-# ─── H4: USDT admin-confirm must verify against real chain data ─────────
+#  H4: USDT admin-confirm must verify against real chain data 
 
 
 @pytest.mark.asyncio

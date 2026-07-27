@@ -68,7 +68,7 @@ async def create_broadcast(
     message: Annotated[str, Form()],
     recipients: Annotated[str, Form(description="JSON array of recipient chat ids, e.g. [\"-100123\"]")],
     scheduled_at: Annotated[
-        str | None, Form(description="ISO 8601 datetime — omit or leave blank to send immediately")
+        str | None, Form(description="JSON array of inline buttons, e.g. [{\"label\":\"\",\"url\":\"https://...\"}]")
     ] = None,
     recurring_interval_minutes: Annotated[
         str | None, Form(description="Minutes between recurring sends. One of: 30, 60, 120, 180, 360, 720, 1440")
@@ -105,7 +105,7 @@ async def create_broadcast(
     try:
         recipients_list = json.loads(recipients) if recipients else []
     except json.JSONDecodeError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="recipients는 JSON 배열이어야 합니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="     .")
 
     # Parse group_ids
     parsed_group_ids: list[str] | None = None

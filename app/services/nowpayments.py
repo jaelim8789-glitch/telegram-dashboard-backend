@@ -1,24 +1,19 @@
 """
-NOWPayments Service — 암호화폐 결제 처리를 위한 서비스.
-
-API 문서 기반으로 구현:
-- Invoice 생성
-- IPN (Instant Payment Notification) 서명 검증
-- 금액 검증
-- 중복 방지 로직
+NOWPayments Service  Crypto payment processing service.
+Webhook data handling and payment processing.
 """
-
+              
 import hashlib
 import hmac
 import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
-
+              
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+          
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import PLAN_CATALOG, get_plan
@@ -40,17 +35,17 @@ class NOWPaymentsService:
         
     async def create_payment(self, amount: float, currency: str, plan_id: str, tenant_id: str, order_description: str = "TeleMon Subscription"):
         """
-        NOWPayments를 통해 결제 인보이스 생성
+        NOWPayments    
         
         Args:
-            amount: 결제 금액
-            currency: 통화 (예: usdt, btc, eth 등)
-            plan_id: 플랜 ID
-            tenant_id: 테넌트 ID
-            order_description: 주문 설명
+            amount:  
+            currency:  (: usdt, btc, eth )
+            plan_id:  ID
+            tenant_id:  ID
+            order_description:  
             
         Returns:
-            생성된 결제 정보
+              
         """
         headers = {
             "x-api-key": self.api_key,
@@ -59,7 +54,7 @@ class NOWPaymentsService:
         
         payload = {
             "price_amount": amount,
-            "price_currency": "usd",  # 항상 USD로 고정
+            "price_currency": "usd",  #  USD 
             "pay_currency": currency.lower(),
             "order_id": f"tenant_{tenant_id}_plan_{plan_id}_{int(datetime.now().timestamp())}",
             "order_description": order_description,
@@ -105,36 +100,36 @@ class NOWPaymentsService:
     
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
-        IPN 웹훅 서명 검증
+        IPN   
         
         Args:
-            payload: 요청 본문
-            signature: 헤더의 서명
+            payload:  
+            signature:  
             
         Returns:
-            서명이 유효한지 여부
+              
         """
         if not self.ipn_secret:
             logger.error("NOWPAYMENTS_IPN_SECRET not configured")
             return False
             
-        # HMAC-SHA512으로 서명 생성
+        # HMAC-SHA512  
         computed_signature = hmac.new(
             self.ipn_secret.encode('utf-8'),
             payload,
             hashlib.sha512
         ).hexdigest()
         
-        # 비교
+        # 
         return hmac.compare_digest(computed_signature, signature)
     
     async def process_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
         """
-        웹훅 데이터 처리
+          
         
         Args:
-            webhook_data: 웹훅에서 받은 데이터
-            db: 데이터베이스 세션
+            webhook_data:   
+            db:  
         """
         payment_id = webhook_data.get('payment_id')
         status = webhook_data.get('payment_status')
@@ -144,17 +139,17 @@ class NOWPaymentsService:
         
         logger.info(f"Processing NOWPayments webhook for payment_id: {payment_id}, status: {status}")
         
-        # 주문 ID에서 테넌트 ID와 플랜 ID 추출
-        # 예: tenant_abc123_plan_pro_1234567890
+        #  ID  ID  ID 
+        # : tenant_abc123_plan_pro_1234567890
         parts = order_id.split('_')
         if len(parts) < 4:
             logger.error(f"Invalid order_id format: {order_id}")
             return
         
         tenant_id = parts[1]
-        plan_id = parts[3] if len(parts) > 3 else parts[2]  # 호환성을 위해 두 가지 형식 지원
+        plan_id = parts[3] if len(parts) > 3 else parts[2]  #      
         
-        # 기존 거래 조회
+        #   
         existing_transaction = await db.execute(
             select(NowPaymentsTransaction).where(NowPaymentsTransaction.payment_id == payment_id)
         )
@@ -164,21 +159,21 @@ class NOWPaymentsService:
             logger.error(f"No existing transaction found for payment_id: {payment_id}")
             return
         
-        # 중복 처리 방지 - 이미 완료된 상태면 종료
+        #    -    
         if transaction.payment_status in ['finished', 'confirmed']:
             logger.info(f"Payment {payment_id} already processed with status {transaction.payment_status}")
             return
         
-        # 거래 상태 업데이트
+        #   
         transaction.payment_status = status
         transaction.paid_amount = paid_amount
         transaction.pay_currency = pay_currency
         
-        # 결제 완료 상태인지 확인
-        # (중복 방지는 위 transaction.payment_status 체크로 이미 처리됨 —
-        # 같은 payment_id가 finished/confirmed로 다시 들어오면 위에서 return됨)
+        #    
+        # (   transaction.payment_status    
+        #  payment_id finished/confirmed    return)
         if status in ['finished', 'confirmed']:
-            # 금액 검증
+            #  
             plan = get_plan(plan_id)
             if not plan:
                 logger.error(f"Invalid plan_id: {plan_id}")
@@ -186,14 +181,14 @@ class NOWPaymentsService:
                 
             billing = "quarterly" if "quarterly" in plan["prices_usdt"] else "monthly"
             expected_amount = plan["prices_usdt"].get(billing, 0)
-            if abs(paid_amount - expected_amount) > 0.01:  # 소수점 오차 허용
+            if abs(paid_amount - expected_amount) > 0.01:  #   
                 logger.error(f"Amount mismatch for payment {payment_id}. Expected: {expected_amount}, Paid: {paid_amount}")
-                # 결제는 완료되었지만 금액이 일치하지 않음 - 수동 검토 필요
+                #      -   
                 transaction.note = f"Amount mismatch. Expected: {expected_amount}, Paid: {paid_amount}"
                 await db.commit()
                 return
             
-            # 테넌트 조회
+            #  
             tenant_result = await db.execute(
                 select(Tenant).where(Tenant.id == tenant_id)
             )
@@ -203,10 +198,10 @@ class NOWPaymentsService:
                 logger.error(f"Tenant not found: {tenant_id}")
                 return
             
-            # 플랜 적용
+            #  
             await activate_tenant_plan(db, tenant_id, plan_id)
 
-            # 추천인 커미션 생성
+            #   
             amount_cents = int(paid_amount * 100)
             await create_commission(db, tenant_id, payment_id, "nowpayments", amount_cents)
 
@@ -215,7 +210,7 @@ class NOWPaymentsService:
         await db.commit()
 
 
-# 전역 인스턴스
+#  
 _nowpayments_service = None
 
 

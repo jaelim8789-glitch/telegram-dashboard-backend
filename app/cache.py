@@ -10,7 +10,7 @@ Usage:
         ttl=300,
     )
 
-Degrades gracefully when Redis is unavailable — falls back to direct DB read.
+Degrades gracefully when Redis is unavailable  falls back to direct DB read.
 """
 import json
 import os

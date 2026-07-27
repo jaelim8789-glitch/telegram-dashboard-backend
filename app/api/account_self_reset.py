@@ -111,7 +111,7 @@ async def self_reset_send_code(
             detail="텔레그램 서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.",
         )
     except PhoneNumberInvalidError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="유효하지 않은 전화번호입니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2    .")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -128,7 +128,7 @@ async def self_reset_send_code(
         requested_by_identity=identity.kind,
         requested_by_tenant=identity.tenant_id,
     )
-    return SelfResetResult(reset=False, detail="인증번호를 전송했습니다.")
+    return SelfResetResult(reset=True, detail="      .  .")
 
 
 @router.post("/verify-code", response_model=SelfResetResult)

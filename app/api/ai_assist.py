@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/ai", tags=["ai-assist"])
 
 
 class GenerateMessageRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=2000, description="사용자의 메시지 작성 요청 (목적, 대상, 톤 등)")
+    prompt: str = Field(..., min_length=1, max_length=2000, description=" / ")
 
 
 class GenerateMessageResponse(BaseModel):
@@ -109,7 +109,7 @@ class AiBroadcastDraftRead(BaseModel):
 
 
 class AnalyzeCustomersRequest(BaseModel):
-    tenant_id: str | None = Field(default=None, description="분석할 tenant. 관리자는 필수, 일반 사용자는 본인 tenant로 고정.")
+    tenant_id: str | None = Field(default=None, description=" tenant")
     days: int = Field(30, ge=1, le=365, description="분석 기간(일)")
 
 
@@ -184,7 +184,7 @@ async def api_generate_message(
     ]
     reply = await _call_deepseek(messages)
     if reply is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 메시지 생성에 실패했습니다.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="  .")
     return GenerateMessageResponse(content=reply.strip())
 
 
@@ -234,7 +234,7 @@ async def api_suggest_reply(
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
+        {"role": "user", "content": f"[  ]\n{data_summary}"},
     ]
     reply = await _call_deepseek(messages)
     if reply is None:
@@ -473,7 +473,7 @@ async def api_analyze_chats(
         f"- 높은 참여율 그룹: {len(high_engagement)}개",
     ]
     if active:
-        summary_lines.append(f"- 추천 발송 대상 (활성): {', '.join(active[:5])}")
+        summary_lines.append(f"-   ( ): {', '.join(high_engagement[:5])}")
     if high_engagement:
         summary_lines.append(f"- 최적 타겟 (참여율 상위): {', '.join(high_engagement[:5])}")
 

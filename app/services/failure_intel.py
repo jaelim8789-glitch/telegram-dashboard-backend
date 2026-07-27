@@ -94,7 +94,7 @@ def _classify_from_status(status_value: str, error_message: str | None) -> Failu
             category="unauthorized",
             retryable="conditional",
             recovery_action="reauthenticate_account",
-            summary="Telegram 세션이 만료되었습니다. 계정 등록 탭에서 재인증해주세요.",
+            summary="Telegram    .  .",
         )
 
     if status_value == "banned":

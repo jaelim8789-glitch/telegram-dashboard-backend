@@ -29,7 +29,7 @@ class AutoReplyRule(Base):
 
 class AutoReplySuggestion(Base):
     """An AI-drafted reply for a message that didn't match any keyword/exact
-    AutoReplyRule. Suggestion-only — never sent automatically. Only created
+    AutoReplyRule. Suggestion-only  never sent automatically. Only created
     when Account.ai_fallback_reply_enabled is True (opt-in, default off)."""
 
     __tablename__ = "auto_reply_suggestions"

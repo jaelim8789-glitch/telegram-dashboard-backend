@@ -9,12 +9,12 @@ import pytest
 
 
 async def _create_account(client, phone="+821099990001"):
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "폴더 테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
     assert res.status_code == 201
     return res.json()["id"]
 
 
-async def _create_folder(client, account_id, name="테스트 폴더", group_ids=None, parent_id=None):
+async def _create_folder(client, account_id, name=" ", group_ids=None, parent_id=None):
     res = await client.post(
         f"/api/accounts/{account_id}/folders",
         json={"name": name, "group_ids": group_ids or [], "parent_id": parent_id},
@@ -26,8 +26,8 @@ async def _create_folder(client, account_id, name="테스트 폴더", group_ids=
 @pytest.mark.asyncio
 async def test_create_and_list_folder(client):
     account_id = await _create_account(client)
-    folder = await _create_folder(client, account_id, name="VIP 그룹", group_ids=["-100111", "-100222"])
-    assert folder["name"] == "VIP 그룹"
+    folder = await _create_folder(client, account_id, name="VIP ", group_ids=["-100111", "-100222"])
+    assert folder["name"] == "VIP "
     assert folder["group_ids"] == ["-100111", "-100222"]
     assert folder["order"] == 0
     assert folder["is_smart"] is False
@@ -50,7 +50,7 @@ async def test_create_folder_with_missing_parent_404s(client):
     account_id = await _create_account(client)
     res = await client.post(
         f"/api/accounts/{account_id}/folders",
-        json={"name": "고아 폴더", "parent_id": "nonexistent-parent"},
+        json={"name": " ", "parent_id": "nonexistent-parent"},
     )
     assert res.status_code == 404
 
@@ -58,10 +58,10 @@ async def test_create_folder_with_missing_parent_404s(client):
 @pytest.mark.asyncio
 async def test_nested_folder_tree(client):
     account_id = await _create_account(client)
-    parent = await _create_folder(client, account_id, name="부모")
-    child = await _create_folder(client, account_id, name="자식", parent_id=parent["id"])
+    parent = await _create_folder(client, account_id, name="")
+    child = await _create_folder(client, account_id, name="", parent_id=parent["id"])
 
-    res = await client.get(f"/api/accounts/{account_id}/folders?tree=true")
+    res = await client.get(f"/api/accounts/{account_id}/folderstree=true")
     assert res.status_code == 200
     tree = res.json()
     assert len(tree) == 1
@@ -73,15 +73,15 @@ async def test_nested_folder_tree(client):
 @pytest.mark.asyncio
 async def test_update_folder(client):
     account_id = await _create_account(client)
-    folder = await _create_folder(client, account_id, name="원래이름")
+    folder = await _create_folder(client, account_id, name="")
 
     res = await client.put(
         f"/api/accounts/{account_id}/folders/{folder['id']}",
-        json={"name": "바뀐이름", "color": "#ff0000", "group_ids": ["-100999"]},
+        json={"name": "", "color": "#ff0000", "group_ids": ["-100999"]},
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["name"] == "바뀐이름"
+    assert body["name"] == ""
     assert body["color"] == "#ff0000"
     assert body["group_ids"] == ["-100999"]
 
@@ -108,9 +108,9 @@ async def test_update_unknown_folder_404s(client):
 @pytest.mark.asyncio
 async def test_delete_folder_reparents_children(client):
     account_id = await _create_account(client)
-    grandparent = await _create_folder(client, account_id, name="조부모")
-    parent = await _create_folder(client, account_id, name="부모", parent_id=grandparent["id"])
-    child = await _create_folder(client, account_id, name="자식", parent_id=parent["id"])
+    grandparent = await _create_folder(client, account_id, name="")
+    parent = await _create_folder(client, account_id, name="", parent_id=grandparent["id"])
+    child = await _create_folder(client, account_id, name="", parent_id=parent["id"])
 
     res = await client.delete(f"/api/accounts/{account_id}/folders/{parent['id']}")
     assert res.status_code == 204
@@ -152,8 +152,8 @@ async def test_reorder_folders(client):
 @pytest.mark.asyncio
 async def test_batch_move_groups_between_folders(client):
     account_id = await _create_account(client)
-    source = await _create_folder(client, account_id, name="소스", group_ids=["-100111", "-100222"])
-    target = await _create_folder(client, account_id, name="타겟", group_ids=[])
+    source = await _create_folder(client, account_id, name="", group_ids=["-100111", "-100222"])
+    target = await _create_folder(client, account_id, name="", group_ids=[])
 
     res = await client.post(
         f"/api/accounts/{account_id}/folders/batch/move",
@@ -245,11 +245,11 @@ async def test_workspace_state_persists_collapsed_and_pinned(client):
 @pytest.mark.asyncio
 async def test_send_to_folder_creates_broadcast(client, db_session):
     account_id = await _create_account(client)
-    folder = await _create_folder(client, account_id, name="발송대상", group_ids=["-100111", "-100222"])
+    folder = await _create_folder(client, account_id, name="", group_ids=["-100111", "-100222"])
 
     res = await client.post(
         f"/api/accounts/{account_id}/folders/send",
-        json={"folder_ids": [folder["id"]], "message": "안녕하세요"},
+        json={"folder_ids": [folder["id"]], "message": ""},
     )
     assert res.status_code == 202, res.text
     body = res.json()
@@ -261,17 +261,17 @@ async def test_send_to_folder_creates_broadcast(client, db_session):
     broadcast = await broadcast_crud.get_broadcast(db_session, body["broadcast_ids"][0])
     assert broadcast is not None
     assert set(broadcast.recipients) == {"-100111", "-100222"}
-    assert broadcast.message == "안녕하세요"
+    assert broadcast.message == ""
 
 
 @pytest.mark.asyncio
 async def test_send_to_folder_with_no_groups_400s(client):
     account_id = await _create_account(client)
-    folder = await _create_folder(client, account_id, name="빈폴더", group_ids=[])
+    folder = await _create_folder(client, account_id, name="", group_ids=[])
 
     res = await client.post(
         f"/api/accounts/{account_id}/folders/send",
-        json={"folder_ids": [folder["id"]], "message": "안녕하세요"},
+        json={"folder_ids": [folder["id"]], "message": ""},
     )
     assert res.status_code == 400
 
@@ -280,9 +280,9 @@ async def test_send_to_folder_with_no_groups_400s(client):
 async def test_folder_from_other_account_is_not_accessible(client):
     account_a = await _create_account(client, phone="+821099990002")
     account_b = await _create_account(client, phone="+821099990003")
-    folder = await _create_folder(client, account_a, name="A의 폴더")
+    folder = await _create_folder(client, account_a, name="A ")
 
-    res = await client.put(f"/api/accounts/{account_b}/folders/{folder['id']}", json={"name": "탈취 시도"})
+    res = await client.put(f"/api/accounts/{account_b}/folders/{folder['id']}", json={"name": " "})
     assert res.status_code == 404
 
     res = await client.delete(f"/api/accounts/{account_b}/folders/{folder['id']}")

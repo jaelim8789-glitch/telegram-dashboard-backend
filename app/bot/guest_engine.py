@@ -445,7 +445,7 @@ class GuestEngine:
         if not context.text:
             return (
                 "📝 **번역 사용법**\n\n"
-                f"`@TeleMonBot 번역 [텍스트]`\n\n"
+                f"`@TeleMonBot  [] []`\n\n"
                 f"예시: `@TeleMonBot 번역 Hello World`\n"
                 f"예시: `@TeleMonBot translate 안녕하세요`"
             )

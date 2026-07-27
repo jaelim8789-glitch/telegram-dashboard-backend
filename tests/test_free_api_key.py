@@ -138,8 +138,8 @@ async def test_issue_rejects_expired_token(client, db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_issue_succeeds_without_phone(client, db_session, monkeypatch):
-    """Regression: missing/empty phone is now allowed — the token's telegram_user_id
-    is used as the identifier instead. This enables the /admin/login 무료체험 tab flow."""
+    """Regression: missing/empty phone is now allowed  the token's telegram_user_id
+    is used as the identifier instead. This enables the /admin/login  tab flow."""
     _patch_channel(monkeypatch)
     token = await _create_verified_token(db_session)
 
@@ -151,7 +151,7 @@ async def test_issue_succeeds_without_phone(client, db_session, monkeypatch):
 
 
 async def test_issue_succeeds_with_empty_phone(client, db_session, monkeypatch):
-    """Regression: empty phone string is now accepted — the token's telegram_user_id
+    """Regression: empty phone string is now accepted  the token's telegram_user_id
     is used as the identifier."""
     _patch_channel(monkeypatch)
     token = await _create_verified_token(db_session)
@@ -189,7 +189,7 @@ async def test_issued_free_key_can_login(client, db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_issued_free_key_allows_dashboard_access(unauthenticated_client, db_session, monkeypatch):
-    """Full E2E: free-issued key → login → dashboard /api/auth/me returns user role."""
+    """Full E2E: free-issued key  login  dashboard /api/auth/me returns user role."""
     _patch_channel(monkeypatch)
     token = await _create_verified_token(db_session)
 
@@ -223,13 +223,13 @@ async def test_free_trial_key_never_resolves_to_admin_role(unauthenticated_clien
 
     Investigated 2026-07-13: `test_issued_free_key_can_login` was reported as
     possibly returning role="admin". Root cause was NOT a production
-    authorization bug — `_resolve_identity` in app/api/deps.py strictly
+    authorization bug  `_resolve_identity` in app/api/deps.py strictly
     requires an exact `sub == "admin"` JWT claim (see decode_access_token),
     which a user token (`sub="user:<id>"` from create_user_access_token) can
     never satisfy. The symptom came from that test using the `client` fixture,
     which conftest.py documents as unconditionally overriding
     get_current_identity to Identity(kind="admin") for convenience on tests
-    that don't exercise auth — /me short-circuited to the fixture's hardcoded
+    that don't exercise auth  /me short-circuited to the fixture's hardcoded
     admin identity regardless of the real Bearer token supplied. This test
     uses `unauthenticated_client` (the real, non-bypassed auth dependency) so
     it actually exercises production role resolution end to end, and pins the

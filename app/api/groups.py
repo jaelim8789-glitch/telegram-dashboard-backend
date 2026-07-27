@@ -48,7 +48,7 @@ async def read_groups(
     await require_account_tenant_access(account_id, db, identity)
     account = await account_crud.get_account(db, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="  .")
 
     try:
         all_groups = await _get_cached_groups(account_id)

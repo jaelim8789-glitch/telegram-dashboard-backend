@@ -5,7 +5,7 @@ Revises: create_campaigns_table
 Create Date: 2026-07-17 04:06:00.000000
 
 Re-parented onto create_campaigns_table (was: merge_session_and_inline_buttons
-directly) — this migration's create_table has a FK to campaigns.id, but no
+directly)  this migration's create_table has a FK to campaigns.id, but no
 migration ever created that table until create_campaigns_table was added.
 """
 from typing import Sequence, Union

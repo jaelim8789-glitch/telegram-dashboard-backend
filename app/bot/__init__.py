@@ -1,5 +1,5 @@
 """
-Telegram Bot Module — Bot API integration, fully separate from the
+Telegram Bot Module  Bot API integration, fully separate from the
 Telethon-based account runtime (backend/account_runtime.py).
 
 Responsibilities:

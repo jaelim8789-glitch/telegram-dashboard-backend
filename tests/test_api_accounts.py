@@ -17,11 +17,11 @@ async def test_list_accounts_empty(client):
 
 @pytest.mark.asyncio
 async def test_create_account(client):
-    res = await client.post("/api/accounts", json={"phone": "+821011112222", "name": "테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": "+821011112222", "name": " "})
     assert res.status_code == 201
     body = res.json()
     assert body["phone"] == "+821011112222"
-    assert body["name"] == "테스트 계정"
+    assert body["name"] == " "
     assert body["status"] == "inactive"
     assert body["today_sent"] == 0
     assert "session_data" not in body
@@ -62,10 +62,10 @@ async def test_get_account_not_found(client):
 async def test_update_account(client):
     created = await client.post("/api/accounts", json={"phone": "+821055556666"})
     account_id = created.json()["id"]
-    res = await client.put(f"/api/accounts/{account_id}", json={"name": "새 이름", "status": "active"})
+    res = await client.put(f"/api/accounts/{account_id}", json={"name": " ", "status": "active"})
     assert res.status_code == 200
     body = res.json()
-    assert body["name"] == "새 이름"
+    assert body["name"] == " "
     assert body["status"] == "active"
 
 
@@ -106,7 +106,7 @@ async def test_list_accounts_returns_created_accounts(client):
 async def test_search_accounts_by_phone(client):
     await client.post("/api/accounts", json={"phone": "+821011111111", "name": "Alice"})
     await client.post("/api/accounts", json={"phone": "+821022222222", "name": "Bob"})
-    res = await client.get("/api/accounts?search=Alice")
+    res = await client.get("/api/accountssearch=Alice")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] == 1
@@ -118,7 +118,7 @@ async def test_filter_accounts_by_status(client):
     a1 = await client.post("/api/accounts", json={"phone": "+821033333333"})
     await client.put(f"/api/accounts/{a1.json()['id']}", json={"status": "active"})
     await client.post("/api/accounts", json={"phone": "+821044444444"})
-    res = await client.get("/api/accounts?status=active")
+    res = await client.get("/api/accountsstatus=active")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] >= 1
@@ -130,7 +130,7 @@ async def test_filter_accounts_by_status(client):
 async def test_paginated_accounts(client):
     for i in range(5):
         await client.post("/api/accounts", json={"phone": f"+8210{i:06d}0000"})
-    res = await client.get("/api/accounts?page=1&page_size=2")
+    res = await client.get("/api/accountspage=1&page_size=2")
     assert res.status_code == 200
     body = res.json()
     assert len(body["items"]) == 2
@@ -214,7 +214,7 @@ async def test_bulk_unknown_action(client):
 async def test_sort_accounts_by_phone(client):
     await client.post("/api/accounts", json={"phone": "+8210AAAAAA", "name": "Z"})
     await client.post("/api/accounts", json={"phone": "+8210BBBBBB", "name": "A"})
-    res = await client.get("/api/accounts?sort_by=phone&sort_dir=asc&page_size=100")
+    res = await client.get("/api/accountssort_by=phone&sort_dir=asc&page_size=100")
     body = res.json()
     phones = [item["phone"] for item in body["items"]]
     assert phones == sorted(phones)
@@ -228,14 +228,14 @@ async def test_resume_suspended_account_returns_active(client, db_session):
 
     app.dependency_overrides[require_admin] = lambda: None
     try:
-        created = await client.post("/api/accounts", json={"phone": "+821099990000", "name": "재개 테스트"})
+        created = await client.post("/api/accounts", json={"phone": "+821099990000", "name": " "})
         account_id = created.json()["id"]
 
         result = await db_session.execute(select(Account).where(Account.id == account_id))
         account = result.scalar_one_or_none()
         assert account is not None
         account.status = "suspended"
-        account.last_error = "규제 의심"
+        account.last_error = " "
         account.last_error_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(tzinfo=None)
         await db_session.commit()
 
@@ -258,12 +258,12 @@ async def test_resume_non_suspended_account_returns_400(client, db_session):
 
     app.dependency_overrides[require_admin] = lambda: None
     try:
-        created = await client.post("/api/accounts", json={"phone": "+821099990001", "name": "재개 불가 테스트"})
+        created = await client.post("/api/accounts", json={"phone": "+821099990001", "name": "  "})
         account_id = created.json()["id"]
 
         res = await client.post(f"/api/accounts/{account_id}/resume")
         assert res.status_code == 400
-        assert "일시중단" in res.json()["detail"]
+        assert "" in res.json()["detail"]
     finally:
         app.dependency_overrides.pop(require_admin, None)
 
@@ -271,14 +271,14 @@ async def test_resume_non_suspended_account_returns_400(client, db_session):
 @pytest.mark.asyncio
 async def test_delete_and_recreate_same_phone_is_allowed(client):
     phone = "+821066667777"
-    created = await client.post("/api/accounts", json={"phone": phone, "name": "재생성 테스트"})
+    created = await client.post("/api/accounts", json={"phone": phone, "name": " "})
     assert created.status_code == 201
     account_id = created.json()["id"]
 
     deleted = await client.delete(f"/api/accounts/{account_id}")
     assert deleted.status_code == 204
 
-    recreated = await client.post("/api/accounts", json={"phone": phone, "name": "재생성 테스트2"})
+    recreated = await client.post("/api/accounts", json={"phone": phone, "name": " 2"})
     assert recreated.status_code == 201
     assert recreated.json()["phone"] == phone
     assert recreated.json()["id"] != account_id

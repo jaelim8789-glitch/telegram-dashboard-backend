@@ -14,7 +14,7 @@ from app.models.join_queue import JoinQueueConfig, JoinQueueItem
 from app.models.group_search import GroupJoinLog
 
 
-# ── Queue Item CRUD ──────────────────────────────────────────────────────────
+#  Queue Item CRUD 
 
 
 async def add_to_queue(
@@ -218,7 +218,7 @@ async def clear_queue(db: AsyncSession, account_id: str, status: Optional[str] =
     return count
 
 
-# ── Queue Config CRUD ────────────────────────────────────────────────────────
+#  Queue Config CRUD 
 
 
 async def get_or_create_config(db: AsyncSession, account_id: str) -> JoinQueueConfig:
@@ -255,7 +255,7 @@ async def update_config(
     return config
 
 
-# ── Daily join counter (reuses GroupJoinLog) ─────────────────────────────────
+#  Daily join counter (reuses GroupJoinLog) 
 
 
 async def count_today_joins(db: AsyncSession, account_id: str) -> int:

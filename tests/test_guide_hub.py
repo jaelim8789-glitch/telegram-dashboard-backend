@@ -1,4 +1,4 @@
-"""Tests for the 이용 가이드 허브 (guide hub) feature:
+"""Tests for the    (guide hub) feature:
   - keyboard build omits buttons with no configured URL, pairs 2-per-row
   - first publish sends + pins a new message and persists chat/message id
   - second publish edits the same message in place (no duplicate row)
@@ -39,7 +39,7 @@ class _FakeBot:
     """Records calls instead of hitting the real Telegram API.
 
     Mirrors the real Bot API's behavior of rejecting a no-op edit (identical
-    text + keyboard) with a "message is not modified" BadRequest — this is
+    text + keyboard) with a "message is not modified" BadRequest  this is
     what actually happens on every repeat publish call with unchanged content,
     so the fake must reproduce it rather than always succeeding silently.
     """
@@ -75,7 +75,7 @@ class _FakeBot:
         self.pinned.append({"chat_id": chat_id, "message_id": message_id})
 
 
-# ── keyboard construction ────────────────────────────────────────────────
+#  keyboard construction 
 
 
 def test_keyboard_omits_unconfigured_buttons(monkeypatch):
@@ -105,7 +105,7 @@ def test_keyboard_empty_when_no_links_configured(monkeypatch):
     assert len(markup.inline_keyboard) == 0
 
 
-# ── publish / update ─────────────────────────────────────────────────────
+#  publish / update 
 
 
 @pytest.mark.asyncio
@@ -159,7 +159,7 @@ async def test_second_publish_edits_existing_message_when_content_changed(db_ses
 @pytest.mark.asyncio
 async def test_second_publish_with_unchanged_content_is_a_noop_not_a_duplicate(db_session, monkeypatch):
     """Regression test: Telegram rejects an edit with identical content as
-    "message is not modified" — a real production call hit exactly this and,
+    "message is not modified"  a real production call hit exactly this and,
     before this fix, was mistaken for "message deleted" and posted (and
     pinned) a duplicate message instead of leaving the original alone."""
     _patch_bot_config(monkeypatch)
@@ -172,7 +172,7 @@ async def test_second_publish_with_unchanged_content_is_a_noop_not_a_duplicate(d
 
     assert created is False
     assert message_id == fake_bot.next_message_id
-    assert len(fake_bot.sent) == 1  # still just the one message — no duplicate
+    assert len(fake_bot.sent) == 1  # still just the one message  no duplicate
     assert len(fake_bot.pinned) == 1  # not re-pinned
 
     row = await guide_hub_crud.get_latest(db_session)
@@ -199,7 +199,7 @@ async def test_edit_failure_falls_back_to_new_post(db_session, monkeypatch):
     assert len(fake_bot.pinned) == 2
 
 
-# ── admin-only HTTP endpoint ─────────────────────────────────────────────
+#  admin-only HTTP endpoint 
 
 
 @pytest.mark.asyncio

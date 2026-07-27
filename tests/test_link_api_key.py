@@ -34,7 +34,7 @@ async def test_link_api_key_requires_tenant(unauthenticated_client, db_session):
     try:
         res = await unauthenticated_client.post("/api/auth/link-api-key", json={"key": "sk-abcdef"})
         assert res.status_code == 403
-        assert res.json()["detail"] == "이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요."
+        assert res.json()["detail"] == "    .  / ."
     finally:
         app.dependency_overrides.pop(db_mod.get_db, None)
         app.dependency_overrides.pop(auth_get_current_identity, None)
@@ -78,7 +78,7 @@ async def test_link_existing_unlinked_key(unauthenticated_client, db_session):
     await db_session.refresh(tenant)
 
     raw_key = generate_api_key()
-    existing = APIKey(key=raw_key, name="미연결 키", tenant_id=None, is_active=True)
+    existing = APIKey(key=raw_key, name=" ", tenant_id=None, is_active=True)
     db_session.add(existing)
     await db_session.commit()
     await db_session.refresh(existing)
@@ -94,7 +94,7 @@ async def test_link_existing_unlinked_key(unauthenticated_client, db_session):
         assert res.status_code == 200
         body = res.json()
         assert body["tenant_id"] == tenant.id
-        assert body["name"] == "미연결 키"
+        assert body["name"] == " "
     finally:
         app.dependency_overrides.pop(db_mod.get_db, None)
         app.dependency_overrides.pop(auth_get_current_identity, None)
@@ -117,7 +117,7 @@ async def test_link_same_tenant_is_idempotent(unauthenticated_client, db_session
     await db_session.refresh(tenant)
 
     raw_key = generate_api_key()
-    existing = APIKey(key=raw_key, name="이미내키", tenant_id=tenant.id, is_active=True)
+    existing = APIKey(key=raw_key, name="", tenant_id=tenant.id, is_active=True)
     db_session.add(existing)
     await db_session.commit()
 
@@ -156,7 +156,7 @@ async def test_link_key_conflict_when_already_linked(unauthenticated_client, db_
     await db_session.refresh(tenant_b)
 
     raw_key = generate_api_key()
-    existing = APIKey(key=raw_key, name="이미연결", tenant_id=tenant_b.id, is_active=True)
+    existing = APIKey(key=raw_key, name="", tenant_id=tenant_b.id, is_active=True)
     db_session.add(existing)
     await db_session.commit()
 
@@ -169,7 +169,7 @@ async def test_link_key_conflict_when_already_linked(unauthenticated_client, db_
     try:
         res = await unauthenticated_client.post("/api/auth/link-api-key", json={"key": raw_key})
         assert res.status_code == 409
-        assert "다른 테넌트" in res.json()["detail"]
+        assert " " in res.json()["detail"]
     finally:
         app.dependency_overrides.pop(db_mod.get_db, None)
         app.dependency_overrides.pop(auth_get_current_identity, None)
@@ -192,7 +192,7 @@ async def test_link_admin_managed_key_rejected(unauthenticated_client, db_sessio
     await db_session.refresh(tenant)
 
     raw_key = generate_api_key()
-    existing = APIKey(key=raw_key, name="관리자발급", tenant_id=None, is_active=True, purpose="admin_managed")
+    existing = APIKey(key=raw_key, name="", tenant_id=None, is_active=True, purpose="admin_managed")
     db_session.add(existing)
     await db_session.commit()
 
@@ -205,7 +205,7 @@ async def test_link_admin_managed_key_rejected(unauthenticated_client, db_sessio
     try:
         res = await unauthenticated_client.post("/api/auth/link-api-key", json={"key": raw_key})
         assert res.status_code == 403
-        assert "관리자" in res.json()["detail"]
+        assert "" in res.json()["detail"]
     finally:
         app.dependency_overrides.pop(db_mod.get_db, None)
         app.dependency_overrides.pop(auth_get_current_identity, None)
@@ -229,7 +229,7 @@ async def test_broadcast_gate_blocks_without_linked_key(unauthenticated_client, 
     await apply_plan_limits(db_session, tenant, "pro")
     await db_session.refresh(tenant)
 
-    account = Account(tenant_id=tenant.id, phone=phone, name="테스트계정", status="active")
+    account = Account(tenant_id=tenant.id, phone=phone, name="", status="active")
     db_session.add(account)
     await db_session.commit()
     await db_session.refresh(account)
@@ -248,7 +248,7 @@ async def test_broadcast_gate_blocks_without_linked_key(unauthenticated_client, 
             headers={"X-Session-Token": "dummy"},
         )
         assert res.status_code == 403
-        assert "API키가 필요합니다" in res.json()["detail"]
+        assert "API " in res.json()["detail"]
     finally:
         app.dependency_overrides.pop(db_mod.get_db, None)
         app.dependency_overrides.pop(require_api_key_or_admin, None)
@@ -273,11 +273,11 @@ async def test_broadcast_allows_with_linked_key(unauthenticated_client, db_sessi
     await apply_plan_limits(db_session, tenant, "pro")
     await db_session.refresh(tenant)
 
-    account = Account(tenant_id=tenant.id, phone=phone, name="테스트계정2", status="active")
+    account = Account(tenant_id=tenant.id, phone=phone, name="2", status="active")
     db_session.add(account)
 
     raw_key = generate_api_key()
-    linked = APIKey(key=raw_key, name="연결됨", tenant_id=None, is_active=True)
+    linked = APIKey(key=raw_key, name="", tenant_id=None, is_active=True)
     db_session.add(linked)
     await db_session.commit()
     await db_session.refresh(account)

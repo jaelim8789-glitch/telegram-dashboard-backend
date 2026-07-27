@@ -7,7 +7,7 @@ Each test class corresponds to one verified, fixed production bug:
   unverified input, and were reachable by any authenticated member of the
   tenant (not just admin, despite the confirm endpoint's own docstring).
 - PaymentStatusLookup: GET /api/payment/status/{ref} matched PaymentRecord.tx_id
-  (a blockchain hash) against the payment_ref (memo) — which never matches —
+  (a blockchain hash) against the payment_ref (memo)  which never matches 
   then fell back to an unscoped APIKey.name ILIKE '%{plan}%' lookup that could
   return a different tenant's masked API key, or crash once two tenants ever
   shared a plan.
@@ -40,9 +40,9 @@ async def _make_tenant(db_session, *, phone, plan="pro", status="pending", payme
     return tenant
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Billing: usdt/confirm and stars/add must require real admin auth
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -50,7 +50,7 @@ async def test_usdt_confirm_rejected_without_admin_auth(unauthenticated_client, 
     tenant = await _make_tenant(db_session, phone="+821000010001", plan="pro", status="pending")
 
     res = await unauthenticated_client.post(
-        f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=not-a-real-tx"
+        f"/api/billing/usdt/confirmtenant_id={tenant.id}&tx_hash=not-a-real-tx"
     )
     assert res.status_code in (401, 403)
 
@@ -63,7 +63,7 @@ async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_clien
     """Admin gating itself must let a correctly-authenticated request through.
 
     tx_hash must still be a real, Trongrid-verified transaction (see the H4 fix in
-    tests/test_billing_entitlements.py) — mock the chain lookup here so this test
+    tests/test_billing_entitlements.py)  mock the chain lookup here so this test
     stays about auth gating, not blockchain verification, and doesn't hit the real
     network.
     """
@@ -84,7 +84,7 @@ async def test_usdt_confirm_succeeds_with_real_admin_token(unauthenticated_clien
     tenant = await _make_tenant(db_session, phone="+821000010002", plan="pro", status="pending")
 
     res = await unauthenticated_client.post(
-        f"/api/billing/usdt/confirm?tenant_id={tenant.id}&tx_hash=confirmed-tx-hash",
+        f"/api/billing/usdt/confirmtenant_id={tenant.id}&tx_hash=confirmed-tx-hash",
         headers=_admin_headers(),
     )
     assert res.status_code == 200
@@ -97,7 +97,7 @@ async def test_stars_add_rejected_without_admin_auth(unauthenticated_client, db_
     tenant = await _make_tenant(db_session, phone="+821000010003", plan="pro", status="active")
 
     res = await unauthenticated_client.post(
-        f"/api/billing/stars/add?tenant_id={tenant.id}&stars_amount=999999"
+        f"/api/billing/stars/addtenant_id={tenant.id}&stars_amount=999999"
     )
     assert res.status_code in (401, 403)
 
@@ -110,7 +110,7 @@ async def test_stars_add_succeeds_with_real_admin_token(unauthenticated_client, 
     tenant = await _make_tenant(db_session, phone="+821000010004", plan="pro", status="active")
 
     res = await unauthenticated_client.post(
-        f"/api/billing/stars/add?tenant_id={tenant.id}&stars_amount=100",
+        f"/api/billing/stars/addtenant_id={tenant.id}&stars_amount=100",
         headers=_admin_headers(),
     )
     assert res.status_code == 200
@@ -118,15 +118,15 @@ async def test_stars_add_succeeds_with_real_admin_token(unauthenticated_client, 
     assert tenant.stars_balance == 100
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Payment status lookup: must be tenant-scoped, never leak another
 # tenant's API key, and never crash when plans collide across tenants
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
 async def test_payment_status_returns_own_tenant_key_not_a_stranger(unauthenticated_client, db_session):
-    """Two tenants share the same plan name — checking one's status must never surface
+    """Two tenants share the same plan name  checking one's status must never surface
     the other's key (the old APIKey.name ILIKE '%{plan}%' lookup ignored tenant_id
     entirely and could return either one, or crash outright)."""
     victim = await _make_tenant(db_session, phone="+821000020001", plan="pro", status="active", payment_ref="TM-VICTIM1")
@@ -171,9 +171,9 @@ async def test_payment_status_unknown_ref_reports_pending_not_error(unauthentica
     assert res.json()["status"] == "pending"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Group search: joining must never act on another account's search results
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio

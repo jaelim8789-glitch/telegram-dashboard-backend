@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # True no-op. 2b68d1568159 (create_ai_agents_chats_messages_tables) is what
-    # actually creates ai_agents, already including level/exp — but that
+    # actually creates ai_agents, already including level/exp  but that
     # migration sits on a parallel branch merged in later by
     # drop_reply_macro_schedule, so ai_agents does not necessarily exist yet
     # when this revision runs (ALTER TABLE here raised UndefinedTableError in

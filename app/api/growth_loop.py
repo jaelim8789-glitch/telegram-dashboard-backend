@@ -133,7 +133,7 @@ async def _run_growth_cycle(
             prev_cycle = loop.cycles[-1] if loop.cycles else None
             if prev_cycle:
                 prev_message = prev_cycle.get("content_generated", "")
-                cycle_context = f"Previous cycle (#{prev_cycle['cycle_number']})\nMessage: {prev_message}\nSuccess rate: {prev_cycle.get('success_rate', 0)}%\nSuggestions: {', '.join(prev_cycle.get('suggestions', []))}"
+                cycle_context = "First cycle  use the initial strategy message."
             else:
                 cycle_context = "First cycle — use the initial strategy message."
 
@@ -237,7 +237,7 @@ async def start_growth_loop(
 ):
     """자율 성장 루프 시작 — 목표 설정 후 백그라운드에서 자동 실행"""
     if not body.goal.strip():
-        raise HTTPException(status_code=400, detail="목표를 입력해주세요")
+        raise HTTPException(status_code=404, detail="    ")
 
     # Generate initial strategy via LLM
     strategy_resp = await call_deepseek(

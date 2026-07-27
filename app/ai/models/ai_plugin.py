@@ -1,5 +1,5 @@
 """
-AI Plugin Models — plugin registration and metadata.
+AI Plugin Models  plugin registration and metadata.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiPluginRegistration(Base):
-    """AI Plugin Registration — registered plugins in the AI platform."""
+    """AI Plugin Registration  registered plugins in the AI platform."""
 
     __tablename__ = "ai_plugin_registrations"
 

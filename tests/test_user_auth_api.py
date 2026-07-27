@@ -5,7 +5,7 @@ import pytest
 from app.core.limits import OTP_MAX_ATTEMPTS
 from app.crud import user as user_crud
 
-# The OTP is stored only as a hash, so tests can't recover the code from the DB — each
+# The OTP is stored only as a hash, so tests can't recover the code from the DB  each
 # test that needs the real code monkeypatches app.api.auth.send_verification_sms to
 # capture it instead of actually sending (or logging) it.
 
@@ -74,7 +74,7 @@ async def test_verify_code_locks_out_after_max_attempts(unauthenticated_client, 
         )
         assert res.status_code == 400
 
-    # Even the code is now gone (deleted once the attempt cap was hit) — a request with
+    # Even the code is now gone (deleted once the attempt cap was hit)  a request with
     # any code, right or wrong, is rejected rather than silently retried forever.
     res = await unauthenticated_client.post(
         "/api/auth/verify-code", json={"phone": "+821000000003", "code": "111111"}
@@ -177,7 +177,7 @@ async def test_auth_me_reports_admin_role(unauthenticated_client):
     res = await unauthenticated_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
     # MeResponse gained plan/subscription_status/trial_expires_at in an
-    # earlier, unrelated commit (73803c9, channel-verification gate) — an
+    # earlier, unrelated commit (73803c9, channel-verification gate)  an
     # admin identity has no linked User/Tenant, so these stay null.
     assert res.json() == {
         "role": "admin",
@@ -212,7 +212,7 @@ async def test_auth_me_reports_user_role_and_phone(unauthenticated_client, monke
     body = res.json()
     # verify-code creates a fresh free-trial Tenant, so MeResponse's later
     # plan/subscription_status/trial_expires_at fields (73803c9) are populated
-    # from it — trial_expires_at is a live timestamp, so only its presence is
+    # from it  trial_expires_at is a live timestamp, so only its presence is
     # checked, not an exact value.
     assert body["role"] == "user"
     assert body["phone"] == "+821000000008"
@@ -240,7 +240,7 @@ async def test_auth_me_reports_api_key_role(unauthenticated_client):
     assert res.status_code == 200
     # An admin-issued key with no linked User/Tenant has nothing to enrich
     # MeResponse's later plan/subscription_status/trial_expires_at fields
-    # (73803c9) with — they stay null.
+    # (73803c9) with  they stay null.
     assert res.json() == {
         "role": "api_key",
         "phone": None,

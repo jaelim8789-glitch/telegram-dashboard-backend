@@ -74,7 +74,7 @@ async def test_verify_code_wrong_code_does_not_delete_account(client, monkeypatc
     res = await client.post("/api/accounts/self-reset/verify-code", json={"phone": PHONE, "code": "00000"})
     assert res.status_code == 400
 
-    # Wrong code must NOT wipe the account — that's the whole security point.
+    # Wrong code must NOT wipe the account  that's the whole security point.
     assert await account_crud.get_account(db_session, account_id) is not None
 
 
@@ -121,7 +121,7 @@ async def test_verify_code_requires_2fa_does_not_delete_yet(client, monkeypatch,
     assert body["reset"] is False
     assert body["requires_2fa"] is True
 
-    # Not verified yet — account must survive until 2FA also succeeds.
+    # Not verified yet  account must survive until 2FA also succeeds.
     assert await account_crud.get_account(db_session, account_id) is not None
 
 
@@ -158,7 +158,7 @@ async def test_verify_2fa_success_deletes_stale_account(client, monkeypatch, db_
 
 @pytest.mark.asyncio
 async def test_verify_code_no_stale_account_still_succeeds_idempotently(client, monkeypatch):
-    """Nothing to delete (no conflicting row) shouldn't error — this endpoint is
+    """Nothing to delete (no conflicting row) shouldn't error  this endpoint is
     reachable any time a user wants to prove ownership, not only on a 409."""
     get_pending_auth = Mock(return_value=SimpleNamespace(phone_code_hash="hash123"))
     monkeypatch.setattr("app.api.account_self_reset.pool.get_pending_auth", get_pending_auth)

@@ -88,7 +88,7 @@ async def operator_run(
     tenant_id = identity.tenant_id
 
     # ── Step 1: Planner (LLM으로 목표 분석 + 계획 생성) ──
-    steps.append(OperatorStep(step="planner", status="running", detail="AI가 목표를 분석 중..."))
+    steps.append(OperatorStep(step="summary", status="running", detail="   ..."))
     try:
         planner_resp = await call_deepseek(
             messages=[

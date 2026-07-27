@@ -84,7 +84,7 @@ async def login(payload: AdminLoginRequest, request: Request):
         )
     if not verify_admin_credentials(payload.username, payload.password):
         logger.warning("admin_login_failed", username=payload.username)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+        raise HTTPException(status_code=400, detail="  .")
     logger.info("admin_login_success")
     return AdminTokenResponse(access_token=create_access_token())
 
@@ -840,7 +840,7 @@ async def get_watermark_setting(
     default = (
         "\n\n━━━━━━━━━━━━━━━━━━\n"
         "🤖 TeleMon AI\n\n"
-        "🚀 Telegram 운영, 아직도 직접 하시나요?\n\n"
+        " Telegram ,   \n\n"
         "AI 비서가\n"
         "✅ 자동 홍보\n"
         "✅ 자동 답장\n"

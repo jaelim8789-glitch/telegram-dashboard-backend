@@ -1,5 +1,5 @@
 """
-AI Task Models — background task queue for async AI operations.
+AI Task Models  background task queue for async AI operations.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiTask(Base):
-    """AI Task — a unit of work in the AI task queue."""
+    """AI Task  a unit of work in the AI task queue."""
 
     __tablename__ = "ai_tasks"
 
@@ -37,7 +37,7 @@ class AiTask(Base):
 
 
 class AiTaskLog(Base):
-    """AI Task Log — detailed log entries for task execution."""
+    """AI Task Log  detailed log entries for task execution."""
 
     __tablename__ = "ai_task_logs"
 

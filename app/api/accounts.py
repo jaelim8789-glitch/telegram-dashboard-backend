@@ -202,7 +202,7 @@ async def create_account(
             await db.refresh(account)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 등록된 전화번호입니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
     logger.info("account_created", account_id=account.id)
     return account
 

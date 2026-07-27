@@ -74,7 +74,7 @@ def parse_telegram_link(raw: str) -> tuple[str, str]:
         # Not a URL — maybe a bare username was pasted.
         return ("username", s2) if USERNAME_RE.match(s2) else ("invalid", raw)
 
-    s2 = s2.split("?")[0].strip("/")
+    s2 = s2.split("")[0].strip("/")
     if not s2:
         return "invalid", raw
 
@@ -95,7 +95,7 @@ def _dedupe_links(links: list[str]) -> tuple[list[str], int]:
     """Returns (deduped_links, duplicates_removed_count).
 
     Dedupe key is the normalized (kind, value) pair so "t.me/foo", "@foo", and
-    "https://t.me/foo?x=1" all collapse to the same link before we spend a
+    "https://t.me/foox=1" all collapse to the same link before we spend a
     Telethon round-trip on each.
     """
     seen: set[tuple[str, str]] = set()

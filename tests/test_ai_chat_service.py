@@ -1,4 +1,4 @@
-"""Tests for app.services.ai_chat_service — the bot "🤖 AI Chat" DeepSeek flow.
+"""Tests for app.services.ai_chat_service  the bot " AI Chat" DeepSeek flow.
 
 Mirrors the fixture/helper style of tests/test_billing_entitlements.py:
 _make_tenant + db_session_cm to let a service that opens its own
@@ -46,7 +46,7 @@ async def _make_tenant(db, telegram_user_id: int, *, plan="free", **overrides):
     return tenant
 
 
-def _patch_common(monkeypatch, db_session, *, deepseek_reply="테스트 응답입니다.", deepseek_key="test-key"):
+def _patch_common(monkeypatch, db_session, *, deepseek_reply=" .", deepseek_key="test-key"):
     monkeypatch.setattr(usage_tracker_module, "async_session_maker", lambda: db_session_cm(db_session))
     monkeypatch.setattr(ai_chat_module.settings, "deepseek_api_key", deepseek_key)
 
@@ -76,10 +76,10 @@ async def test_send_message_success_within_quota(db_session, monkeypatch):
     tenant = await _make_tenant(db_session, telegram_user_id, plan="free")
     calls = _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, telegram_user_id, "안녕")
+    result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
 
     assert result.status == "ok"
-    assert result.reply == "테스트 응답입니다."
+    assert result.reply == " ."
     assert len(calls) == 1
     assert await _message_count(db_session, tenant.id) == 2
 
@@ -91,7 +91,7 @@ async def test_quota_exceeded_without_credit_blocks_call(db_session, monkeypatch
     await _seed_usage(db_session, tenant.id, count=20)
     calls = _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, telegram_user_id, "안녕")
+    result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
 
     assert result.status == "quota_exceeded"
     assert calls == []
@@ -105,7 +105,7 @@ async def test_quota_exceeded_spends_credit_and_succeeds(db_session, monkeypatch
     await _seed_usage(db_session, tenant.id, count=20)
     calls = _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, telegram_user_id, "안녕")
+    result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
 
     assert result.status == "ok"
     assert len(calls) == 1
@@ -117,7 +117,7 @@ async def test_quota_exceeded_spends_credit_and_succeeds(db_session, monkeypatch
 async def test_not_linked_tenant_returns_not_linked(db_session, monkeypatch):
     _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, 999999, "안녕")
+    result = await ai_chat_module.send_message(db_session, 999999, "")
 
     assert result.status == "not_linked"
 
@@ -134,7 +134,7 @@ async def test_deepseek_failure_returns_server_error_without_charging_quota(db_s
 
     monkeypatch.setattr(ai_chat_module, "_call_deepseek", _failing_deepseek)
 
-    result = await ai_chat_module.send_message(db_session, telegram_user_id, "안녕")
+    result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
 
     assert result.status == "server_error"
     assert await _message_count(db_session, tenant.id) == 0
@@ -147,7 +147,7 @@ async def test_deepseek_failure_returns_server_error_without_charging_quota(db_s
 async def test_input_too_long_rejected_before_any_call(db_session, monkeypatch):
     calls = _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, 555, "가" * 2001)
+    result = await ai_chat_module.send_message(db_session, 555, "" * 2001)
 
     assert result.status == "too_long"
     assert calls == []

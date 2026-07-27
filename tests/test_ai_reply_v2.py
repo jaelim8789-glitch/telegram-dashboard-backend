@@ -33,7 +33,7 @@ from app.services.ai_reply_v2_service import (
 )
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -66,13 +66,13 @@ def sample_suggestion_request():
         chat_title="Test Group",
         user_id="987654321",
         user_name="Test User",
-        incoming_message="안녕하세요, 제품 문의 드립니다.",
+        incoming_message=",   .",
         persona_id=None,
         auto_reply_enabled=False,
     )
 
 
-# ── _parse_suggestions Tests ────────────────────────────────────────────
+#  _parse_suggestions Tests 
 
 
 class TestParseSuggestions:
@@ -136,7 +136,7 @@ class TestParseSuggestions:
         assert len(result["alternatives"]) == 3
 
 
-# ── Persona CRUD Tests ──────────────────────────────────────────────────
+#  Persona CRUD Tests 
 
 
 class TestPersonaCRUD:
@@ -214,7 +214,7 @@ class TestPersonaCRUD:
         assert active is None
 
 
-# ── Conversation Context Tests ──────────────────────────────────────────
+#  Conversation Context Tests 
 
 
 class TestConversationContext:
@@ -269,7 +269,7 @@ class TestConversationContext:
         assert len(conv.messages) <= 20
 
 
-# ── Suggestion Generation Tests ─────────────────────────────────────────
+#  Suggestion Generation Tests 
 
 
 class TestSuggestionGeneration:
@@ -282,10 +282,10 @@ class TestSuggestionGeneration:
         # Mock DeepSeek response
         mock_call_deepseek.return_value = (
             json.dumps({
-                "primary": {"text": "네, 문의 감사합니다! 어떤 제품에 관심이 있으신가요?", "confidence": 0.92, "reason": "Professional greeting"},
+                "primary": {"text": ",  !    ", "confidence": 0.92, "reason": "Professional greeting"},
                 "alternatives": [
-                    {"text": "안녕하세요! 무엇을 도와드릴까요?", "confidence": 0.75, "reason": "Friendly approach"},
-                    {"text": "문의해 주셔서 감사합니다. 자세히 알려주시면 답변 드리겠습니다.", "confidence": 0.60, "reason": "Formal response"},
+                    {"text": "!  ", "confidence": 0.75, "reason": "Friendly approach"},
+                    {"text": "  .    .", "confidence": 0.60, "reason": "Formal response"},
                 ],
             }),
             150,
@@ -377,7 +377,7 @@ class TestSuggestionGeneration:
         assert suggestion.status == "pending"
 
 
-# ── Review Workflow Tests ───────────────────────────────────────────────
+#  Review Workflow Tests 
 
 
 class TestReviewWorkflow:
@@ -448,7 +448,7 @@ class TestReviewWorkflow:
         assert result is None
 
 
-# ── Feedback Tests ──────────────────────────────────────────────────────
+#  Feedback Tests 
 
 
 class TestFeedback:

@@ -8,7 +8,7 @@ from app.mcp.telegram_mcp import TelegramMCPServer
 from app.services.mcp_gateway import MCPGateway
 
 
-# ─── Catalog / registry ──────────────────────────────────────────────────────
+#  Catalog / registry 
 
 
 def test_gateway_registers_default_servers():
@@ -29,7 +29,7 @@ def test_gateway_catalog_shape():
         assert isinstance(server["tools"], list)
 
 
-# ─── Telegram MCP PoC ────────────────────────────────────────────────────────
+#  Telegram MCP PoC 
 
 
 def test_telegram_mcp_lists_expected_tools():
@@ -52,7 +52,7 @@ async def test_telegram_mcp_unknown_tool():
     assert "unknown tool" in result.error
 
 
-# ─── Grafana MCP ─────────────────────────────────────────────────────────────
+#  Grafana MCP 
 
 
 def test_grafana_mcp_lists_expected_tools():
@@ -66,12 +66,12 @@ async def test_grafana_mcp_not_configured_reports_clearly():
     server = GrafanaMCPServer()
     result = await server.invoke("query_prometheus", {"query": "up"})
     # Either properly reports not-configured, or (if token set) hits network
-    # and returns an error — both are non-crashing.
+    # and returns an error  both are non-crashing.
     assert result.ok is False
     assert "not configured" in (result.error or "") or "failed" in (result.error or "")
 
 
-# ─── Gateway approval gating ─────────────────────────────────────────────────
+#  Gateway approval gating 
 
 
 @pytest.mark.asyncio

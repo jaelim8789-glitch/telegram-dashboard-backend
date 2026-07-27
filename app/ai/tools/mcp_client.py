@@ -1,5 +1,5 @@
 """
-MCP Client — connects to external MCP servers for tool discovery and execution.
+MCP Client  connects to external MCP servers for tool discovery and execution.
 
 This allows the AI platform to call tools from any MCP-compatible server,
 extending the AI's capabilities with external tool ecosystems.
@@ -101,7 +101,7 @@ class McpClient:
         self._tools_cache = None
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _client: McpClient | None = None
 

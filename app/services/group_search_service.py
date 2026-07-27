@@ -24,7 +24,7 @@ class DailyJoinLimitExceededError(Exception):
 async def search_public_groups(account: Account, keyword: str) -> list[dict]:
     """Search Telegram for public groups/channels matching a keyword.
 
-    Uses the Telegram web search (t.me/s?q=keyword) to find public groups,
+    Uses the Telegram web search (t.me/sq=keyword) to find public groups,
     then resolves their info via Telethon.
 
     Returns a list of dicts with keys: chat_id, title, chat_type, username,
@@ -34,7 +34,7 @@ async def search_public_groups(account: Account, keyword: str) -> list[dict]:
     found: list[dict] = []
     seen_ids: set[str] = set()
 
-    # --- Step 1: Scrape t.me/s?q=... ---
+    # --- Step 1: Scrape t.me/sq=... ---
     try:
         async with httpx.AsyncClient(timeout=15.0) as http:
             resp = await http.get(TELEGRAM_WEB_SEARCH_URL, params={"q": keyword})
@@ -175,7 +175,7 @@ def _parse_member_count(text: str | None) -> int | None:
     if not text:
         return None
     text = text.replace("\xa0", " ").strip()
-    match = re.search(r"([\d\s.,]+)([KkMm])?", text)
+    match = re.search(r"([\d\s.,]+)([KkMm])", text)
     if not match:
         return None
     num_str = match.group(1).replace(" ", "").replace(",", "").replace(".", "")
@@ -188,4 +188,4 @@ def _parse_member_count(text: str | None) -> int | None:
         num *= 1000
     elif suffix == "m":
         num *= 1000000
-    return num
+    return num

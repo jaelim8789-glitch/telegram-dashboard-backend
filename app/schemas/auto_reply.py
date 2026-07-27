@@ -44,7 +44,7 @@ class AutoReplyRuleRead(BaseModel):
 
 
 class AutoReplySettingsRead(BaseModel):
-    """GET /api/accounts/{id}/auto-reply — the master switch plus every rule under it."""
+    """GET /api/accounts/{id}/auto-reply  the master switch plus every rule under it."""
 
     account_id: str
     auto_reply_enabled: bool

@@ -7,7 +7,7 @@ cross-tenant isolation at the HTTP level.
 import pytest
 from fastapi.testclient import TestClient
 
-# ─── Fixtures ─────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -30,9 +30,9 @@ def tenant_a_headers():
     return {}
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2+3: Account-scoped ownership enforcement
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_account_list_requires_auth(client):
     """GET /api/accounts must require authentication."""
@@ -64,9 +64,9 @@ def test_account_delete_requires_auth(client):
     assert resp.status_code in (401, 403), "Unauthenticated delete must be denied"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2+3: Reply Macro ownership
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_reply_macro_list_requires_auth(client):
     """GET /api/accounts/{id}/reply-macros must require auth."""
@@ -112,9 +112,9 @@ def test_reply_macro_logs_requires_auth(client):
     assert resp.status_code in (401, 403, 404), "Must deny unauthenticated logs"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2+3: Group Search ownership
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_group_search_requires_auth(client):
     """POST /api/group-search/search must require auth."""
@@ -146,9 +146,9 @@ def test_group_join_logs_requires_auth(client):
     assert resp.status_code in (401, 403), "Must deny unauthenticated join-logs"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 3: Billing/Payment ownership
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_billing_usdt_confirm_requires_auth(client):
     """POST /api/billing/usdt/confirm must require auth."""
@@ -180,9 +180,9 @@ def test_billing_stars_spend_requires_auth(client):
     assert resp.status_code in (401, 403), "Must deny unauthenticated stars spend"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2: Features router tenant isolation (require_tenant_access)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_features_templates_list_requires_auth(client):
     """GET /api/features/{tenant_id}/templates must require auth."""
@@ -214,7 +214,7 @@ def test_features_calendar_requires_auth(client):
     assert resp.status_code in (401, 403), "Must deny unauthenticated calendar"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 5: Scheduler atomic claim (via CRUD layer)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 

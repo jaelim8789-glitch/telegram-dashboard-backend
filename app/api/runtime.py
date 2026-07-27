@@ -1,4 +1,4 @@
-"""Runtime Inspector API — account session health inspection and recovery."""
+"""Runtime Inspector API  account session health inspection and recovery."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 

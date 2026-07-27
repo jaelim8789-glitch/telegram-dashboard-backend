@@ -1,4 +1,4 @@
-"""AI Schedule schemas — Pydantic models for scheduled jobs."""
+"""AI Schedule schemas  Pydantic models for scheduled jobs."""
 
 from __future__ import annotations
 

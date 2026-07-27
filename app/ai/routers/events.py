@@ -1,4 +1,4 @@
-"""AI Events API — manage event subscriptions and publish events."""
+"""AI Events API  manage event subscriptions and publish events."""
 
 from __future__ import annotations
 

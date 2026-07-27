@@ -1,5 +1,5 @@
 """
-AI Schedule Models — scheduled job definitions and execution records.
+AI Schedule Models  scheduled job definitions and execution records.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiScheduleDefinition(Base):
-    """AI Schedule Definition — recurring or one-time scheduled AI jobs."""
+    """AI Schedule Definition  recurring or one-time scheduled AI jobs."""
 
     __tablename__ = "ai_schedule_definitions"
 
@@ -41,7 +41,7 @@ class AiScheduleDefinition(Base):
 
 
 class AiScheduleExecution(Base):
-    """AI Schedule Execution — record of a scheduled job execution."""
+    """AI Schedule Execution  record of a scheduled job execution."""
 
     __tablename__ = "ai_schedule_executions"
 

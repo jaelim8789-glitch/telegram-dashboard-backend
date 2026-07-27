@@ -25,7 +25,7 @@ class UserToggleRequest(BaseModel):
 
 
 class UserApiKeyReissued(BaseModel):
-    """The only response that ever carries the full API key — shown once, at reissue."""
+    """The only response that ever carries the full API key  shown once, at reissue."""
 
     id: str
     api_key: str

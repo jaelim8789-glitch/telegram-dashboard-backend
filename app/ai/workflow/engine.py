@@ -1,5 +1,5 @@
 """
-Workflow Engine — manages workflow definitions and execution lifecycle.
+Workflow Engine  manages workflow definitions and execution lifecycle.
 
 Supports DAG-based workflows with conditional branching, parallel execution,
 retry logic, and human-in-the-loop approval steps.
@@ -27,7 +27,7 @@ class WorkflowEngine:
     def __init__(self) -> None:
         self._config = get_ai_config()
 
-    # ── Definition Management ─────────────────────────────────────────
+    #  Definition Management 
 
     async def create_definition(
         self, db: AsyncSession, tenant_id: str, data: dict[str, Any]
@@ -98,7 +98,7 @@ class WorkflowEngine:
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    # ── Execution Lifecycle ───────────────────────────────────────────
+    #  Execution Lifecycle 
 
     async def start_execution(
         self,
@@ -186,7 +186,7 @@ class WorkflowEngine:
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    # ── Step Management ───────────────────────────────────────────────
+    #  Step Management 
 
     async def create_step(
         self,
@@ -255,7 +255,7 @@ class WorkflowEngine:
         return list(result.scalars().all())
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _engine: WorkflowEngine | None = None
 

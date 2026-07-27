@@ -20,7 +20,7 @@ async def miniapp_chat(req: ChatRequest):
     action = parse_action(reply)
     clean_reply = reply
     import re
-    clean_reply = re.sub(r'<ACTION>.*?</ACTION>', '', reply, flags=re.DOTALL).strip()
+    clean_reply = re.sub(r'<ACTION>.*</ACTION>', '', reply, flags=re.DOTALL).strip()
     return ChatResponse(reply=clean_reply, action=action)
 
 @router.get("/pixel-offices")

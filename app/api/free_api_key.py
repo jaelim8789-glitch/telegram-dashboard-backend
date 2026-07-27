@@ -55,7 +55,7 @@ async def start(request: Request, db: AsyncSession = Depends(get_db)):
     row = await verification_crud.create_verification(db)
     return TelegramVerifyStartResponse(
         token=row.id,
-        bot_deep_link=f"https://t.me/{settings.telegram_bot_username}?start={row.id}",
+        bot_deep_link=f"https://t.me/{settings.telegram_bot_username}start={row.id}",
         channel_url=settings.telegram_official_channel_url,
     )
 
@@ -83,7 +83,7 @@ async def issue(
 
     row = await verification_crud.get_verification(db, payload.token)
     if row is None:
-        raise HTTPException(status_code=404, detail="인증 세션을 찾을 수 없거나 만료되었습니다.")
+        raise HTTPException(status_code=409, detail="    .")
 
     if row.status != "verified":
         if row.telegram_user_id is None:

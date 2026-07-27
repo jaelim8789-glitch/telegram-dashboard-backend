@@ -23,7 +23,7 @@ class MCPTool:
     name: str
     description: str
     input_schema: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
-    # Optional flag — tools that mutate external state should require an
+    # Optional flag  tools that mutate external state should require an
     # explicit approval gate when invoked through the gateway.
     requires_approval: bool = False
 

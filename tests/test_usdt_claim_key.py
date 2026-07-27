@@ -1,4 +1,4 @@
-"""USDT payment → claim-key → login-with-api-key E2E tests.
+"""USDT payment  claim-key  login-with-api-key E2E tests.
 
 Focuses on the ``GET /api/payment/claim-key/{payment_ref}`` one-time key retrieval
 endpoint and the watcher's ``process_incoming_tx`` / admin ``confirm_usdt_payment``
@@ -60,7 +60,7 @@ async def _setup_paid_tenant_and_key(
     return tenant, raw_key
 
 
-# ── 1. Paid user gets one usable raw key ─────────────────────────────────────
+#  1. Paid user gets one usable raw key 
 
 
 async def test_claim_key_returns_raw_key(unauthenticated_client, db_session):
@@ -73,7 +73,7 @@ async def test_claim_key_returns_raw_key(unauthenticated_client, db_session):
     assert body["api_key"] == raw_key
 
 
-# ── 2. Second claim cannot retrieve raw key ──────────────────────────────────
+#  2. Second claim cannot retrieve raw key 
 
 
 async def test_claim_key_second_call_returns_already_claimed(unauthenticated_client, db_session):
@@ -89,7 +89,7 @@ async def test_claim_key_second_call_returns_already_claimed(unauthenticated_cli
     assert "api_key" not in res2.json()
 
 
-# ── 3. Claimed key works with login-with-api-key ─────────────────────────────
+#  3. Claimed key works with login-with-api-key 
 
 
 async def test_claimed_key_works_with_login(unauthenticated_client, db_session):
@@ -116,7 +116,7 @@ async def test_claimed_key_works_with_login(unauthenticated_client, db_session):
     assert me_res.json()["phone"] == tenant.phone
 
 
-# ── 4. Watcher cannot create duplicate issuance for the same transaction ──────
+#  4. Watcher cannot create duplicate issuance for the same transaction 
 
 
 async def test_duplicate_tx_id_is_rejected(unauthenticated_client, db_session):
@@ -148,7 +148,7 @@ async def test_duplicate_tx_id_is_rejected(unauthenticated_client, db_session):
         await db_session.commit()
 
 
-# ── 5. Raw key is never logged ──────────────────────────────────────────────
+#  5. Raw key is never logged 
 
 
 async def test_no_raw_key_in_log_output(unauthenticated_client, db_session, caplog):
@@ -167,12 +167,12 @@ async def test_no_raw_key_in_log_output(unauthenticated_client, db_session, capl
     assert "sk-" not in log_text
 
 
-# ── 6. Admin-confirmed payment also produces a usable login key ──────────────
+#  6. Admin-confirmed payment also produces a usable login key 
 
 
 async def test_admin_confirmed_user_can_login(unauthenticated_client, db_session):
     """Simulate admin confirm_usdt_payment: tenant activated + APIKey created +
-    user.api_key_hash set → user logs in with login-with-api-key."""
+    user.api_key_hash set  user logs in with login-with-api-key."""
     from app.core.security import generate_user_api_key, hash_api_key
 
     phone = "+821099991101"

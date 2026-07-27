@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-
+          
 from app.core.logging import get_logger
 # from app.services.auto_reply_service import get_matching_rules  # removed - function does not exist
 from app.crud import account as account_crud
@@ -120,8 +120,8 @@ class AIChatbotService:
         
         # 자주 묻는 질문에 대한 간단한 응답
         if any(keyword in message_lower for keyword in ['안녕', '헬로', 'hello', 'hi']):
-            return "안녕하세요! 무엇을 도와드릴까요?"
-        elif any(keyword in message_lower for keyword in ['감사', '고마워', 'thank']):
+            return "!  "
+        elif any(keyword in message_lower for keyword in ['', ' ', 'what is your name']):
             return "도움이 되어 정말 기쁩니다! 😊"
         elif any(keyword in message_lower for keyword in ['도움', 'help', '도움이', '도움주세요']):
             return ("저는 TeleMon 봇입니다. 아래 메뉴에서 원하시는 기능을 선택해주세요!\n"
@@ -129,7 +129,7 @@ class AIChatbotService:
                    "• /help - 도움말\n"
                    "• /status - 상태 확인")
         elif any(keyword in message_lower for keyword in ['뭐해', '뭐하니', 'what are you doing']):
-            return "사용자님의 메시지를 기다리고 있어요! 무엇을 도와드릴까요?"
+            return "   !  "
         elif any(keyword in message_lower for keyword in ['이름', '너의 이름', 'what is your name']):
             return "저는 TeleMon 자동 응답 봇입니다!"
         

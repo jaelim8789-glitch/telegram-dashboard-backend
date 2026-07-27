@@ -28,19 +28,19 @@ async def _admin_headers(client) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  POST /api/copilot/chat
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
 async def test_copilot_chat_returns_context_aware_reply(client, monkeypatch):
-    fake_reply = "현재 전달 상태는 양호합니다. 최근 7일간 성공률이 95%입니다."
+    fake_reply = "   .  7  95%."
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_reply))
 
     res = await client.post(
         "/api/copilot/chat",
-        json={"message": "현재 운영 상태가 어떤가요?"},
+        json={"message": "   "},
     )
 
     assert res.status_code == 200
@@ -52,19 +52,19 @@ async def test_copilot_chat_returns_context_aware_reply(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_copilot_chat_with_focus_scopes_context(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="고객 분석 결과입니다."))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  ."))
 
     res = await client.post(
         "/api/copilot/chat",
         json={
-            "message": "고객 상태를 분석해줘",
+            "message": "  ",
             "context": {"focus": "customers", "days": 14},
         },
     )
 
     assert res.status_code == 200
     body = res.json()
-    assert "고객 분석 결과입니다" in body["reply"]
+    assert "  " in body["reply"]
 
 
 @pytest.mark.asyncio
@@ -73,20 +73,20 @@ async def test_copilot_chat_503_on_deepseek_failure(client, monkeypatch):
 
     res = await client.post(
         "/api/copilot/chat",
-        json={"message": "안녕하세요"},
+        json={"message": ""},
     )
 
     assert res.status_code == 503
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  POST /api/copilot/actions
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
 async def test_one_click_health_check_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="운영 상태는 양호합니다.\n모든 계정 정상"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  .\n  "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -103,7 +103,7 @@ async def test_one_click_health_check_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_weekly_report_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="## 📊 주간 리포트\n전달 성공률 94%"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="##   \n  94%"))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -114,12 +114,12 @@ async def test_one_click_weekly_report_completes(client, monkeypatch):
     body = res.json()
     assert body["action"] == "weekly_report"
     assert body["status"] in ("completed", "partial")
-    assert any("주간" in d.get("finding", "") for d in body["details"])
+    assert any("" in d.get("finding", "") for d in body["details"])
 
 
 @pytest.mark.asyncio
 async def test_one_click_optimize_broadcast_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="오전 10시 발송을 추천합니다."))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=" 10  ."))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -134,7 +134,7 @@ async def test_one_click_optimize_broadcast_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_customer_insights_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="고객 세그먼트 분석 결과"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="   "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -148,7 +148,7 @@ async def test_one_click_customer_insights_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_reply_audit_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="응답 품질 진단 결과"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="   "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -170,9 +170,9 @@ async def test_one_click_unknown_action_returns_400(client):
     assert res.status_code == 400
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  GET /api/copilot/recommendations
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -181,28 +181,28 @@ async def test_recommendations_returns_structured_items(client, monkeypatch):
         "overall_health": "good",
         "recommendations": [
             {
-                "title": "발송 시간대 최적화",
-                "description": "오전 시간대 발송 성공률이 높습니다.",
+                "title": "  ",
+                "description": "    .",
                 "category": "broadcast",
                 "confidence": 0.87,
-                "reasoning": "최근 7일간 오전 발송 성공률 96%",
-                "suggested_action": "주요 발송을 오전 10-11시로 조정",
+                "reasoning": " 7    96%",
+                "suggested_action": "   10-11 ",
                 "impact": "high",
             },
             {
-                "title": "휴면 고객 리액티베이션",
-                "description": "30일 이상 미응답 고객이 있습니다.",
+                "title": "  ",
+                "description": "30    .",
                 "category": "customers",
                 "confidence": 0.72,
-                "reasoning": "전체 리드 중 40%가 30일 이상 미활성",
-                "suggested_action": "재참여 캠페인 기획",
+                "reasoning": "   40% 30  ",
+                "suggested_action": "  ",
                 "impact": "medium",
             },
         ],
     })
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
 
-    res = await client.get("/api/copilot/recommendations?days=7")
+    res = await client.get("/api/copilot/recommendationsdays=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -216,9 +216,9 @@ async def test_recommendations_returns_structured_items(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_recommendations_degrades_on_malformed_json(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="순수 텍스트 응답"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  "))
 
-    res = await client.get("/api/copilot/recommendations?days=7")
+    res = await client.get("/api/copilot/recommendationsdays=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -230,14 +230,14 @@ async def test_recommendations_degrades_on_malformed_json(client, monkeypatch):
 async def test_recommendations_503_on_deepseek_failure(client, monkeypatch):
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=None))
 
-    res = await client.get("/api/copilot/recommendations?days=7")
+    res = await client.get("/api/copilot/recommendationsdays=7")
 
     assert res.status_code == 503
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  POST /api/copilot/recommendations/refresh
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -246,19 +246,19 @@ async def test_recommendations_refresh_triggers_new_call(client, monkeypatch):
         "overall_health": "needs_attention",
         "recommendations": [
             {
-                "title": "긴급 조치 필요",
-                "description": "계정 제한 발생",
+                "title": "  ",
+                "description": "  ",
                 "category": "accounts",
                 "confidence": 0.95,
-                "reasoning": "2개 계정에서 전송 차단 감지",
-                "suggested_action": "계정 상태 확인 및 재인증",
+                "reasoning": "2    ",
+                "suggested_action": "    ",
                 "impact": "high",
             }
         ],
     })
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
 
-    res = await client.post("/api/copilot/recommendations/refresh?days=7")
+    res = await client.post("/api/copilot/recommendations/refreshdays=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -266,9 +266,9 @@ async def test_recommendations_refresh_triggers_new_call(client, monkeypatch):
     assert len(body["recommendations"]) >= 1
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  POST /api/copilot/smart-send-time
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -276,7 +276,7 @@ async def test_smart_send_time_returns_recommended_hour(client, monkeypatch):
     fake_json = json.dumps({
         "recommended_hour": 14,
         "recommended_day": "weekday",
-        "reasoning": "오후 2시 발송이 가장 높은 오픈율을 보입니다.",
+        "reasoning": " 2     .",
         "confidence": 0.82,
     })
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
@@ -296,7 +296,7 @@ async def test_smart_send_time_returns_recommended_hour(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_smart_send_time_degrades_on_bad_json(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="텍스트 응답"))
+    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=" "))
 
     res = await client.post(
         "/api/copilot/smart-send-time",
@@ -321,9 +321,9 @@ async def test_smart_send_time_503_on_deepseek_failure(client, monkeypatch):
     assert res.status_code == 503
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  GET /api/copilot/dashboard
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -344,9 +344,9 @@ async def test_copilot_dashboard_returns_quick_actions(client):
     assert isinstance(body["total_leads"], int)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 
 #  Schema validation tests
-# ═══════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_recommendations_validates_days_range(client, monkeypatch):
     # but the GET endpoint uses a plain query param without Query(ge=1, le=90).
     # The endpoint will attempt a DeepSeek call; mock it to avoid 503.
     monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value='{"overall_health":"good","recommendations":[]}'))
-    res = await client.get("/api/copilot/recommendations?days=999")
+    res = await client.get("/api/copilot/recommendationsdays=999")
     assert res.status_code == 200
 
 

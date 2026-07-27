@@ -76,7 +76,7 @@ async def pause_scheduler_job(job_id: str):
     try:
         from app.scheduler.scheduler import scheduler
     except ImportError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스케줄러 모듈을 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f" '{job_id}'()   .")
 
     job = scheduler.get_job(job_id)
     if job is None:

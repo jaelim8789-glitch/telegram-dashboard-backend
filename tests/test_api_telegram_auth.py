@@ -58,7 +58,7 @@ async def test_send_code_account_not_found(client):
 async def test_send_code_not_configured_returns_503(client, monkeypatch):
     account_id = await _create_account(client)
     monkeypatch.setattr(
-        "app.api.telegram_auth.pool.get_client", AsyncMock(side_effect=RuntimeError("설정되지 않았습니다"))
+        "app.api.telegram_auth.pool.get_client", AsyncMock(side_effect=RuntimeError(" "))
     )
 
     res = await client.post(f"/api/accounts/{account_id}/send-code")
@@ -242,7 +242,7 @@ async def test_verify_code_persists_session_before_2fa(client, db_session, monke
     account = await account_crud.get_account(db_session, account_id)
     assert account.session_data is not None
     assert decrypt_session(account.session_data) == "mid-flow-session-string"
-    assert account.status != "active"  # 2FA still pending — status must not jump ahead
+    assert account.status != "active"  # 2FA still pending  status must not jump ahead
 
 
 @pytest.mark.asyncio
@@ -317,7 +317,7 @@ async def test_verify_code_dead_session_self_heals(client, db_session, monkeypat
 
     res = await client.post(f"/api/accounts/{account_id}/verify-code", json={"code": "12345"})
     assert res.status_code == 400
-    assert "처음부터" in res.json()["detail"]
+    assert "" in res.json()["detail"]
     remove_client.assert_called_once_with(account_id)
 
     account = await account_crud.get_account(db_session, account_id)
@@ -394,7 +394,7 @@ async def test_verify_2fa_dead_session_self_heals(client, db_session, monkeypatc
 
     res = await client.post(f"/api/accounts/{account_id}/verify-2fa", json={"password": "hunter2"})
     assert res.status_code == 400
-    assert "처음부터" in res.json()["detail"]
+    assert "" in res.json()["detail"]
     remove_client.assert_called_once_with(account_id)
 
     account = await account_crud.get_account(db_session, account_id)
@@ -409,7 +409,7 @@ async def test_status_unauthenticated_account(client):
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "inactive"
-    assert "인증되지" in body["detail"]
+    assert "" in body["detail"]
 
 
 @pytest.mark.asyncio

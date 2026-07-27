@@ -1,4 +1,4 @@
-"""AI Tools API — manage tool definitions and execute tool calls."""
+"""AI Tools API  manage tool definitions and execute tool calls."""
 
 from __future__ import annotations
 

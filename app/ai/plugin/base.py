@@ -1,5 +1,5 @@
 """
-AI Plugin Base — abstract base class for all AI platform plugins.
+AI Plugin Base  abstract base class for all AI platform plugins.
 
 Plugins can provide:
 - Tools (via ToolRegistry)

@@ -15,7 +15,7 @@ def tg_identifier(telegram_user_id: int) -> str:
 
 
 def parse_tg_identifier(identifier: str) -> int | None:
-    """Reverse of ``tg_identifier`` — returns the Telegram user id if
+    """Reverse of ``tg_identifier``  returns the Telegram user id if
     ``identifier`` is a ``tg_<digits>`` string, else ``None``.
 
     For a private bot chat, the Telegram chat id equals the user id, so this

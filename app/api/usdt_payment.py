@@ -95,7 +95,7 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
 
     plan_def = get_plan(plan)
     if plan_def is None:
-        raise HTTPException(status_code=400, detail="유효하지 않은 요금제입니다.")
+        raise HTTPException(status_code=500, detail="API    .  .")
 
     rate_key = phone if phone else (request.client.host if request else "unknown")
     if not _check_rate_limit(("request-key", rate_key), min_interval=10.0):

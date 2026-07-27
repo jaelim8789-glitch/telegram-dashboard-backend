@@ -1,10 +1,10 @@
 """
-Push Notification Service — Web Push + FCM
+Push Notification Service  Web Push + FCM
 
 Endpoints:
-  POST /api/push/send     — Send push to all subscribed devices
-  POST /api/push/subscribe   — Register a push subscription
-  POST /api/push/unsubscribe — Unsubscribe
+  POST /api/push/send      Send push to all subscribed devices
+  POST /api/push/subscribe    Register a push subscription
+  POST /api/push/unsubscribe  Unsubscribe
 """
 
 import json
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/push", tags=["push"])
 logger = get_logger(__name__)
 
 
-# ── Models ──
+#  Models 
 
 class PushSubscriptionModel(BaseModel):
     endpoint: str
@@ -39,7 +39,7 @@ class PushSendRequest(BaseModel):
     url: Optional[str] = "/app"
 
 
-# ── Push Subscription Table (simple file-based, or use DB if available) ──
+#  Push Subscription Table (simple file-based, or use DB if available) 
 # For production, replace with a proper DB table.
 
 try:
@@ -48,7 +48,7 @@ except ImportError:
     SystemSetting = None
 
 
-# ── POST /api/push/subscribe ──
+#  POST /api/push/subscribe 
 
 @router.post("/subscribe")
 async def subscribe_push(
@@ -79,7 +79,7 @@ async def subscribe_push(
     return {"ok": True}
 
 
-# ── POST /api/push/unsubscribe ──
+#  POST /api/push/unsubscribe 
 
 @router.post("/unsubscribe")
 async def unsubscribe_push(
@@ -98,7 +98,7 @@ async def unsubscribe_push(
     return {"ok": True}
 
 
-# ── POST /api/push/send (admin only) ──
+#  POST /api/push/send (admin only) 
 
 @router.post("/send")
 async def send_push_notification(
@@ -164,7 +164,7 @@ async def _send_web_push(endpoint: str, keys: dict, payload: str):
                 vapid_claims=vapid_claims,
             )
         except ImportError:
-            logger.warning("pywebpush not installed — run: pip install pywebpush")
+            logger.warning("pywebpush not installed  run: pip install pywebpush")
     except Exception as e:
         logger.error("web_push_failed", error=str(e))
 
@@ -189,6 +189,6 @@ async def _send_fcm_push(token: str, title: str, body: str, url: str | None = No
         )
         messaging.send(message)
     except ImportError:
-        logger.warning("firebase-admin not installed — run: pip install firebase-admin")
+        logger.warning("firebase-admin not installed  run: pip install firebase-admin")
     except Exception as e:
         logger.error("fcm_push_failed", error=str(e))

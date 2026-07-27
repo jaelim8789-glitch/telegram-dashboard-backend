@@ -30,7 +30,7 @@ from app.services.ai_chat_v2_service import (
 )
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def sample_template():
     )
 
 
-# ── _apply_template Tests ───────────────────────────────────────────────
+#  _apply_template Tests 
 
 
 class TestApplyTemplate:
@@ -87,7 +87,7 @@ class TestApplyTemplate:
         assert result == "No variables here"
 
 
-# ── Session CRUD Tests ──────────────────────────────────────────────────
+#  Session CRUD Tests 
 
 
 class TestSessionCRUD:
@@ -156,7 +156,7 @@ class TestSessionCRUD:
         assert deleted is False
 
 
-# ── Message Tests ───────────────────────────────────────────────────────
+#  Message Tests 
 
 
 class TestMessages:
@@ -191,7 +191,7 @@ class TestMessages:
         assert messages[1].role == "assistant"
 
 
-# ── Prompt Template Tests ───────────────────────────────────────────────
+#  Prompt Template Tests 
 
 
 class TestPromptTemplates:
@@ -235,7 +235,7 @@ class TestPromptTemplates:
         assert default.id == t2.id
 
 
-# ── Search Tests ────────────────────────────────────────────────────────
+#  Search Tests 
 
 
 class TestSearch:
@@ -272,7 +272,7 @@ class TestSearch:
         assert "broadcast" in result.results[0].content
 
 
-# ── Usage Stats Tests ───────────────────────────────────────────────────
+#  Usage Stats Tests 
 
 
 class TestUsageStats:
@@ -313,7 +313,7 @@ class TestUsageStats:
         assert stats.avg_latency_ms == 200.0
 
 
-# ── Feedback Tests ──────────────────────────────────────────────────────
+#  Feedback Tests 
 
 
 class TestFeedback:

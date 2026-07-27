@@ -159,7 +159,7 @@ class TelethonClientPool:
 
     def peek_client(self, account_id: str) -> TelegramClient | None:
         """Returns the pooled client if one already exists, without creating or
-        connecting one — used by callers (e.g. auto-reply toggle-off) that only need to
+        connecting one  used by callers (e.g. auto-reply toggle-off) that only need to
         act on an already-live client and should no-op if there isn't one."""
         return self._clients.get(account_id)
 

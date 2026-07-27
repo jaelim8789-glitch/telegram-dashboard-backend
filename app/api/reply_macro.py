@@ -65,7 +65,7 @@ async def set_toggle_state(
     try:
         body = await request.json()
     except Exception as e:
-        raise HTTPException(status_code=422, detail="요청 본문 파싱 실패: {}".format(str(e)))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target_chats  1  .")
 
     is_active = bool(body.get("is_active", macro.is_active))
     message_content = body.get("message_content")

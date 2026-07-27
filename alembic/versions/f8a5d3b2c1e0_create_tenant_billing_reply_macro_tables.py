@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ─── Tenants (multi-tenant / 요금제) ──────────────────────────────
+    #  Tenants (multi-tenant / ) 
     op.create_table(
         "tenants",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -55,7 +55,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("referral_code"),
     )
 
-    # ─── Payment Records (USDT) ─────────────────────────────────────
+    #  Payment Records (USDT) 
     op.create_table(
         "payment_records",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -74,7 +74,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_payment_records_tenant_id"), "payment_records", ["tenant_id"], unique=False)
 
-    # ─── Usage Records ──────────────────────────────────────────────
+    #  Usage Records 
     op.create_table(
         "usage_records",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -88,7 +88,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_usage_records_action"), "usage_records", ["action"], unique=False)
     op.create_index(op.f("ix_usage_records_recorded_at"), "usage_records", ["recorded_at"], unique=False)
 
-    # ─── Leads (CRM) ────────────────────────────────────────────────
+    #  Leads (CRM) 
     op.create_table(
         "leads",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -113,7 +113,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_leads_tenant_id"), "leads", ["tenant_id"], unique=False)
     op.create_index(op.f("ix_leads_account_id"), "leads", ["account_id"], unique=False)
 
-    # ─── Reply Macros ───────────────────────────────────────────────
+    #  Reply Macros 
     op.create_table(
         "reply_macros",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -154,7 +154,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_reply_macro_logs_status"), "reply_macro_logs", ["status"], unique=False)
     op.create_index(op.f("ix_reply_macro_logs_created_at"), "reply_macro_logs", ["created_at"], unique=False)
 
-    # ─── Message Templates ──────────────────────────────────────────
+    #  Message Templates 
     op.create_table(
         "message_templates",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -171,7 +171,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_message_templates_tenant_id"), "message_templates", ["tenant_id"], unique=False)
 
-    # ─── Follow-up Rules ────────────────────────────────────────────
+    #  Follow-up Rules 
     op.create_table(
         "follow_up_rules",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -190,7 +190,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_follow_up_rules_tenant_id"), "follow_up_rules", ["tenant_id"], unique=False)
     op.create_index(op.f("ix_follow_up_rules_account_id"), "follow_up_rules", ["account_id"], unique=False)
 
-    # ─── Team Members ──────────────────────────────────────────────
+    #  Team Members 
     op.create_table(
         "team_members",
         sa.Column("id", sa.String(length=36), nullable=False),

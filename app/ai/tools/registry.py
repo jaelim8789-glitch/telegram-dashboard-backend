@@ -1,5 +1,5 @@
 """
-Tool Registry — central registry for all AI-callable tools.
+Tool Registry  central registry for all AI-callable tools.
 
 Tools can be registered from:
 - Built-in Python functions
@@ -38,7 +38,7 @@ class ToolRegistry:
         self._definitions: dict[str, AiToolDefinition] = {}
         self._loaded = False
 
-    # ── Registration ──────────────────────────────────────────────────
+    #  Registration 
 
     def register_handler(self, name: str, handler: ToolHandler) -> None:
         """Register a Python function as a tool handler."""
@@ -57,7 +57,7 @@ class ToolRegistry:
     def has_handler(self, name: str) -> bool:
         return name in self._handlers
 
-    # ── DB-backed definitions ─────────────────────────────────────────
+    #  DB-backed definitions 
 
     async def load_from_db(self, db: AsyncSession) -> int:
         """Load all active tool definitions from the database."""
@@ -153,7 +153,7 @@ class ToolRegistry:
         return self._loaded
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _registry: ToolRegistry | None = None
 

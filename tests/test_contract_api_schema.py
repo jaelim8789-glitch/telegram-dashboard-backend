@@ -22,7 +22,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-# ── Fixture: API client ──────────────────────────────────────────────────────
+#  Fixture: API client 
 
 
 @pytest_asyncio.fixture
@@ -35,7 +35,7 @@ async def contract_client():
         yield ac
 
 
-# ── Helper: resolve dynamic paths ────────────────────────────────────────────
+#  Helper: resolve dynamic paths 
 
 DYNAMIC_PATH_PLACEHOLDER = "{account_id}"
 FAKE_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000"
@@ -49,17 +49,17 @@ def _resolve_path(schema: dict[str, Any]) -> str:
     return path
 
 
-# ── Schema Registry ──────────────────────────────────────────────────────────
+#  Schema Registry 
 # These are derived from the frontend's TypeScript interfaces in src/types/index.ts
 # and src/lib/api.ts. Each entry defines the expected shape of a response.
 #
 # Special entry flags:
-#   is_sub_schema   — only checked as a nested item within another schema
-#   is_dynamic_path — path contains {account_id} placeholder
-#   check_array_item — schema for each element when the response is an array
+#   is_sub_schema    only checked as a nested item within another schema
+#   is_dynamic_path  path contains {account_id} placeholder
+#   check_array_item  schema for each element when the response is an array
 
 SCHEMA_REGISTRY: list[dict[str, Any]] = [
-    # ── Core ───────────────────────────────────────────────────────────
+    #  Core 
     {
         "name": "Accounts list",
         "method": "GET",
@@ -176,7 +176,7 @@ SCHEMA_REGISTRY: list[dict[str, Any]] = [
         ],
     },
 
-    # ── Broadcast ─────────────────────────────────────────────────────
+    #  Broadcast 
     {
         "name": "Broadcast read",
         "method": "POST",
@@ -235,7 +235,7 @@ SCHEMA_REGISTRY: list[dict[str, Any]] = [
         ],
     },
 
-    # ── Groups ─────────────────────────────────────────────────────────
+    #  Groups 
     {
         "name": "Groups list (paginated)",
         "method": "GET",
@@ -274,7 +274,7 @@ SCHEMA_REGISTRY: list[dict[str, Any]] = [
         ],
     },
 
-    # ── Auto-Reply ────────────────────────────────────────────────────
+    #  Auto-Reply 
     {
         "name": "Auto-reply settings",
         "method": "GET",
@@ -336,7 +336,7 @@ SCHEMA_REGISTRY: list[dict[str, Any]] = [
         ],
     },
 
-    # ── Reply Macro ───────────────────────────────────────────────────
+    #  Reply Macro 
     {
         "name": "Reply macros list",
         "method": "GET",
@@ -367,7 +367,7 @@ SCHEMA_REGISTRY: list[dict[str, Any]] = [
     },
 ]
 
-# ── Schema Check Utilities ───────────────────────────────────────────────────
+#  Schema Check Utilities 
 
 
 def _check_field(value: Any, expected_type: type | tuple) -> list[str]:
@@ -438,7 +438,7 @@ def _check_array_items(label: str, data: Any, items: list) -> list[str]:
     return errors
 
 
-# ── Contract Tests ───────────────────────────────────────────────────────────
+#  Contract Tests 
 
 
 @pytest.mark.asyncio
@@ -541,7 +541,7 @@ async def test_contract_with_auth(schema: dict[str, Any], contract_client: Async
         app.main.app.dependency_overrides.clear()
 
 
-# ─── Free-form: health endpoint structure ───────────────────────────────────
+#  Free-form: health endpoint structure 
 
 
 @pytest.mark.asyncio
@@ -566,7 +566,7 @@ async def test_contract_health_api(contract_client: AsyncClient):
         assert "status" in data
 
 
-# ─── Sub-schema tests (validate nested item shapes) ─────────────────────────
+#  Sub-schema tests (validate nested item shapes) 
 
 
 @pytest.mark.asyncio
@@ -579,7 +579,7 @@ async def test_contract_group_item_schema(contract_client: AsyncClient):
     app.dependency_overrides[require_api_key_or_admin] = lambda: None
     try:
         response = await contract_client.get(
-            f"/api/accounts/{FAKE_ACCOUNT_ID}/groups?page_size=1"
+            f"/api/accounts/{FAKE_ACCOUNT_ID}/groupspage_size=1"
         )
         if response.status_code != 200:
             return  # Skip if no accounts
@@ -636,7 +636,7 @@ async def test_contract_auto_reply_rule_schema(contract_client: AsyncClient):
         app.dependency_overrides.clear()
 
 
-# ─── Direct Pydantic Schema Validation (no HTTP call needed) ───────────────
+#  Direct Pydantic Schema Validation (no HTTP call needed) 
 # These tests validate that the Pydantic response models define all the fields
 # the frontend expects. They work without needing seeded data or request bodies.
 
@@ -713,7 +713,7 @@ async def test_contract_auto_reply_rule_schema(contract_client: AsyncClient):
 def test_pydantic_schema_fields(schema_name: str, model_path: str, expected_fields: set[str]):
     """Verify the Pydantic response model has all fields the frontend expects.
 
-    This test does NOT make any HTTP requests — it directly inspects the
+    This test does NOT make any HTTP requests  it directly inspects the
     Pydantic model class definition. This guarantees coverage even when
     test data isn't available in the database.
     """
@@ -729,13 +729,13 @@ def test_pydantic_schema_fields(schema_name: str, model_path: str, expected_fiel
 
     assert not missing, (
         f"\n{schema_name} is MISSING fields the frontend expects:\n"
-        + "\n".join(f"  • {f}" for f in sorted(missing))
+        + "\n".join(f"   {f}" for f in sorted(missing))
     )
     if extra:
-        print(f"  [?] {schema_name} has extra untracked fields: {sorted(extra)}")
+        print(f"  [] {schema_name} has extra untracked fields: {sorted(extra)}")
 
 
-# ─── Verify that all critical frontend-expected endpoints exist ─────────────
+#  Verify that all critical frontend-expected endpoints exist 
 
 
 @pytest.mark.asyncio
@@ -767,5 +767,5 @@ async def test_contract_critical_endpoints_exist(contract_client: AsyncClient):
         response = await getattr(contract_client, method.lower())(path)
         acceptable = (200, 201, 401, 403, 404, 405, 422)
         assert response.status_code in acceptable, (
-            f"{method} {path}: unexpected {response.status_code} — {response.text[:100]}"
+            f"{method} {path}: unexpected {response.status_code}  {response.text[:100]}"
         )

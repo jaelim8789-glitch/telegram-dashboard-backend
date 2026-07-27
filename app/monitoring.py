@@ -1,5 +1,5 @@
 """
-Production Monitoring Module — Prometheus metrics, structured JSON logging, alerting.
+Production Monitoring Module  Prometheus metrics, structured JSON logging, alerting.
 
 Provides:
   - Prometheus metrics endpoint (/metrics)
@@ -8,7 +8,7 @@ Provides:
   - System health metrics (memory, connections, runtime status)
   - Request latency tracking
 
-v1 — Production monitoring foundation.
+v1  Production monitoring foundation.
 """
 
 from __future__ import annotations
@@ -26,14 +26,14 @@ from fastapi.routing import APIRoute
 
 logger = logging.getLogger(__name__)
 
-# ── Configuration ────────────────────────────────────────────────────
+#  Configuration 
 
 METRICS_ENABLED = os.environ.get("METRICS_ENABLED", "true").lower() == "true"
 ALERT_WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "")
 ALERT_LEVEL = os.environ.get("ALERT_LEVEL", "ERROR").upper()
 STRUCTURED_LOGGING = os.environ.get("STRUCTURED_LOGGING", "true").lower() == "true"
 
-# ── Prometheus Metrics (lightweight, no external dependency) ─────────
+#  Prometheus Metrics (lightweight, no external dependency) 
 
 _metrics: dict[str, Any] = {
     "http_requests_total": 0,
@@ -162,7 +162,7 @@ def get_metrics_text() -> str:
         return "\n".join(lines)
 
 
-# ── Structured JSON Logging ──────────────────────────────────────────
+#  Structured JSON Logging 
 
 class JSONFormatter(logging.Formatter):
     """Log formatter that outputs JSON lines for log aggregation."""
@@ -213,7 +213,7 @@ def setup_structured_logging(app_name: str = "telemon") -> None:
     logger.info("Structured logging initialized for %s", app_name)
 
 
-# ── Alerting ─────────────────────────────────────────────────────────
+#  Alerting 
 
 def send_alert(
     title: str,
@@ -274,7 +274,7 @@ def alert_warning(title: str, message: str, metadata: dict[str, Any] | None = No
     send_alert(title, message, severity="warning", metadata=metadata)
 
 
-# ── Middleware ────────────────────────────────────────────────────────
+#  Middleware 
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -320,7 +320,7 @@ def dec_metric(name: str, value: int = 1) -> None:
         _metrics[name] = max(0, _metrics.get(name, 0) - value)
 
 
-# ── Metrics endpoint handler ─────────────────────────────────────────
+#  Metrics endpoint handler 
 
 async def metrics_endpoint(request: Request) -> Response:
     """Serve Prometheus metrics at /metrics."""
@@ -330,7 +330,7 @@ async def metrics_endpoint(request: Request) -> Response:
     )
 
 
-# ── Runtime metrics updater ──────────────────────────────────────────
+#  Runtime metrics updater 
 
 def update_runtime_metrics(total: int, active: int) -> None:
     """Update runtime metrics from RuntimeManager."""

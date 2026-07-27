@@ -1,4 +1,4 @@
-"""Tests for the Smart Join Queue — model CRUD, service logic, and API endpoints.
+"""Tests for the Smart Join Queue  model CRUD, service logic, and API endpoints.
 
 Uses the same test patterns as test_link_inspector.py (async DB, mock Telethon).
 """
@@ -14,7 +14,7 @@ from app.crud import join_queue as queue_crud
 from app.models.join_queue import JoinQueueConfig, JoinQueueItem
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def sample_links() -> list[dict]:
     ]
 
 
-# ── CRUD Tests ──────────────────────────────────────────────────────────────
+#  CRUD Tests 
 
 
 @pytest.mark.asyncio
@@ -157,7 +157,7 @@ async def test_clear_queue(db_session: AsyncSession, sample_account_id, sample_l
     assert total == 0
 
 
-# ── Config Tests ────────────────────────────────────────────────────────────
+#  Config Tests 
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_update_config_partial(db_session: AsyncSession, sample_account_id
     assert config.max_daily_joins == 20  # unchanged default
 
 
-# ── Service Logic Tests (mocked Telethon) ────────────────────────────────────
+#  Service Logic Tests (mocked Telethon) 
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_parse_telegram_link():
     assert kind == "invalid"
 
 
-# ── conftest support ─────────────────────────────────────────────────────────
+#  conftest support 
 
 
 @pytest.fixture

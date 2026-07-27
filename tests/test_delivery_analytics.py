@@ -102,7 +102,7 @@ def _mock_db_session(execute_result=None):
     return mock_db, mock_session
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────
+#  Fixtures 
 
 
 @pytest.fixture
@@ -125,9 +125,9 @@ def no_tenant_identity():
     return Identity(kind="api_key", tenant_id=None)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 1: _resolve_authorized_account_ids tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.async_session_maker")
@@ -147,9 +147,9 @@ async def test_resolve_no_tenant_returns_empty(mock_session_maker, no_tenant_ide
     assert ids == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 2: Summary tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -199,9 +199,9 @@ async def test_summary_mixed(mock_session_maker, mock_resolve, tenant_a_identity
     assert s.success_rate == 75.0
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 3: Failure breakdown tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -226,9 +226,9 @@ async def test_failure_breakdown_empty(mock_resolve, tenant_a_identity):
     assert fb == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 4: Account performance tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -251,9 +251,9 @@ async def test_account_performance(mock_session_maker, mock_resolve, tenant_a_id
     assert ap[1].success_rate == 100.0
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 5: Timeline tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -283,9 +283,9 @@ async def test_timeline_empty(mock_resolve, tenant_a_identity):
     assert tl == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 6: Recent activity tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -311,9 +311,9 @@ async def test_recent_activity_empty(mock_resolve, tenant_a_identity):
     assert ra == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 7: Tenant A/B isolation tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.async_session_maker")
@@ -371,9 +371,9 @@ async def test_no_tenant_returns_empty_summary(mock_resolve, no_tenant_identity)
     assert s.total_attempted == 0
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 8: Zero-division safety
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -388,9 +388,9 @@ async def test_summary_zero_division_safe(mock_session_maker, mock_resolve, tena
     assert s.success_rate == 0.0
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 9: Source attribution (Sprint 15 preserved)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_source_attribution_broadcast():
     log = _make_log(source="broadcast")
@@ -407,24 +407,24 @@ def test_source_attribution_manual():
     assert log.source == "manual"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Phase 10: Safe error messages
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 def test_recent_activity_safe_error():
-    log = _make_log(status="forbidden", success=False, error_message="해당 채팅방에 메시지를 보낼 권한이 없습니다.")
+    log = _make_log(status="forbidden", success=False, error_message="     .")
     assert "UserDeactivatedBanError" not in (log.error_message or "")
-    assert "권한" in (log.error_message or "")
+    assert "" in (log.error_message or "")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — FILTERING TESTS
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 
+# SPRINT 16  FILTERING TESTS
+# 
+# 
 
 
-# ─── _parse_datetime_safe ────────────────────────────────────────────
+#  _parse_datetime_safe 
 
 class TestParseDatetimeSafe:
     def test_valid_iso(self):
@@ -449,7 +449,7 @@ class TestParseDatetimeSafe:
         assert _parse_datetime_safe("") is None
 
 
-# ─── Source filter ───────────────────────────────────────────────────
+#  Source filter 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -523,7 +523,7 @@ async def test_summary_combined_filters(mock_session_maker, mock_resolve, tenant
     assert s.total_attempted == 8
 
 
-# ─── Invalid account authorization ───────────────────────────────────
+#  Invalid account authorization 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.async_session_maker")
@@ -539,7 +539,7 @@ async def test_invalid_account_id_returns_empty(mock_session_maker, tenant_a_ide
     assert s.total_attempted == 0
 
 
-# ─── Cross-tenant account rejection ──────────────────────────────────
+#  Cross-tenant account rejection 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.async_session_maker")
@@ -556,9 +556,9 @@ async def test_cross_tenant_account_rejected(mock_session_maker, tenant_a_identi
     assert s.total_attempted == 0
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — SOURCE ANALYTICS TESTS
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# SPRINT 16  SOURCE ANALYTICS TESTS
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -605,9 +605,9 @@ async def test_source_analytics_tenant_isolation(mock_session_maker, mock_resolv
     assert sa == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — BROADCAST ANALYTICS TESTS
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# SPRINT 16  BROADCAST ANALYTICS TESTS
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -658,9 +658,9 @@ async def test_broadcast_analytics_tenant_isolation(mock_session_maker, mock_res
     assert ba == []
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — FAILURE INTELLIGENCE TESTS
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# SPRINT 16  FAILURE INTELLIGENCE TESTS
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -723,9 +723,9 @@ async def test_failure_intelligence_safe_error_output(mock_session_maker, mock_r
     assert not hasattr(fi[0], "traceback")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — OVERVIEW ENDPOINT TESTS
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# SPRINT 16  OVERVIEW ENDPOINT TESTS
+# 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.get_latency_by_account")
@@ -870,9 +870,9 @@ async def test_overview_bounded_top_accounts(
     assert len(overview.top_accounts) <= 5  # bounded
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 16 — REGRESSION: Existing tests must still pass
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# SPRINT 16  REGRESSION: Existing tests must still pass
+# 
 
 def test_existing_source_attribution_tests_preserved():
     """Verify Sprint 15 source attribution tests are still present."""
@@ -886,25 +886,25 @@ def test_existing_source_attribution_tests_preserved():
 
 def test_existing_safe_error_test_preserved():
     """Verify Sprint 15 safe error test is still present."""
-    log = _make_log(status="forbidden", success=False, error_message="해당 채팅방에 메시지를 보낼 권한이 없습니다.")
+    log = _make_log(status="forbidden", success=False, error_message="     .")
     assert "UserDeactivatedBanError" not in (log.error_message or "")
-    assert "권한" in (log.error_message or "")
+    assert "" in (log.error_message or "")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 17 — LOGICAL DELIVERY ANALYTICS TESTS
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 
+# SPRINT 17  LOGICAL DELIVERY ANALYTICS TESTS
+# 
+# 
 
 
-# ─── get_logical_summary ─────────────────────────────────────────────
+#  get_logical_summary 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_logical_summary_collapses_retries(mock_session_maker, mock_resolve, tenant_a_identity):
-    """3 attempts to same recipient (2 failed, 1 success) → 1 logical recipient, 1 success."""
+    """3 attempts to same recipient (2 failed, 1 success)  1 logical recipient, 1 success."""
     mock_resolve.return_value = ["acc-1"]
     Row = type("Row", (), {"total": 0, "successful": 0})
     row = Row()
@@ -926,7 +926,7 @@ async def test_logical_summary_collapses_retries(mock_session_maker, mock_resolv
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_logical_summary_all_attempts_failed(mock_session_maker, mock_resolve, tenant_a_identity):
-    """3 failed attempts to same recipient → 1 logical recipient, 0 success, 1 failed."""
+    """3 failed attempts to same recipient  1 logical recipient, 0 success, 1 failed."""
     mock_resolve.return_value = ["acc-1"]
     Row = type("Row", (), {"total": 0, "successful": 0})
     row = Row()
@@ -972,13 +972,13 @@ async def test_logical_summary_tenant_isolation(mock_session_maker, mock_resolve
     assert result.total_recipients == 0
 
 
-# ─── get_logical_broadcast_analytics ─────────────────────────────────
+#  get_logical_broadcast_analytics 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_logical_broadcast_collapses_retries(mock_session_maker, mock_resolve, tenant_a_identity):
-    """3 attempts to same recipient in a broadcast → 1 logical recipient."""
+    """3 attempts to same recipient in a broadcast  1 logical recipient."""
     mock_resolve.return_value = ["acc-1"]
     Row = type("Row", (), {
         "source_id": "", "total": 0, "successful": 0,
@@ -1026,7 +1026,7 @@ async def test_logical_broadcast_tenant_isolation(mock_session_maker, mock_resol
     assert result == []
 
 
-# ─── Overview includes logical section ───────────────────────────────
+#  Overview includes logical section 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.get_latency_by_account")
@@ -1064,20 +1064,20 @@ async def test_overview_includes_logical(
     assert overview.logical.success_rate == 90.0
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 18 — DELIVERY LATENCY TESTS
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 
+# SPRINT 18  DELIVERY LATENCY TESTS
+# 
+# 
 
 
-# ─── get_latency_analytics ───────────────────────────────────────────
+#  get_latency_analytics 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_latency_empty_when_no_timing_data(mock_session_maker, mock_resolve, tenant_a_identity):
-    """No rows with started_at/completed_at → empty latency result."""
+    """No rows with started_at/completed_at  empty latency result."""
     mock_resolve.return_value = ["acc-1"]
     # Merged query returns (total=5, timed=0) in one row
     CountRow = type("Row", (), {"total": 0, "timed": 0})
@@ -1100,7 +1100,7 @@ async def test_latency_empty_when_no_timing_data(mock_session_maker, mock_resolv
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
 @patch("app.services.delivery_analytics.async_session_maker")
 async def test_latency_empty_when_no_accounts(mock_session_maker, mock_resolve, tenant_a_identity):
-    """No authorized accounts → empty latency result."""
+    """No authorized accounts  empty latency result."""
     mock_resolve.return_value = []
     result = await get_latency_analytics(tenant_a_identity)
     assert result.total_measured == 0
@@ -1126,7 +1126,7 @@ async def test_latency_tenant_isolation(mock_session_maker, mock_resolve, tenant
     assert result.total_measured == 0
 
 
-# ─── Overview includes latency section ───────────────────────────────
+#  Overview includes latency section 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics.get_latency_by_account")
@@ -1162,14 +1162,14 @@ async def test_overview_includes_latency(
     assert overview.latency.total_measured == 100
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
-# SPRINT 19 — OPTIMIZATION & NEW FUNCTION TESTS
-# ═══════════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 
+# SPRINT 19  OPTIMIZATION & NEW FUNCTION TESTS
+# 
+# 
 
 
-# ─── _resolve_time_range ────────────────────────────────────────────
+#  _resolve_time_range 
 
 def test_resolve_time_range_defaults_to_last_n_days():
     start_dt, end_dt = _resolve_time_range(days=30)
@@ -1187,7 +1187,7 @@ def test_resolve_time_range_with_start_time():
     assert end_dt is None
 
 
-# ─── get_latency_by_source ──────────────────────────────────────────
+#  get_latency_by_source 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -1198,7 +1198,7 @@ async def test_latency_by_source_empty(mock_session_maker, mock_resolve, tenant_
     assert result == []
 
 
-# ─── get_latency_by_account ─────────────────────────────────────────
+#  get_latency_by_account 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -1209,7 +1209,7 @@ async def test_latency_by_account_empty(mock_session_maker, mock_resolve, tenant
     assert result == []
 
 
-# ─── Regression: attempt-level endpoints unchanged ───────────────────
+#  Regression: attempt-level endpoints unchanged 
 
 @pytest.mark.asyncio
 @patch("app.services.delivery_analytics._resolve_authorized_account_ids")
@@ -1227,14 +1227,14 @@ async def test_attempt_level_summary_unchanged(mock_session_maker, mock_resolve,
     assert s.failed == 2
 
 
-# ─── Regression: PostgreSQL strftime compatibility ────────────────
+#  Regression: PostgreSQL strftime compatibility 
 
 @pytest.mark.asyncio
 async def test_timeline_date_trunc_does_not_crash(client, db_session):
     """Verify get_timeline uses PostgreSQL-compatible date_trunc.
     A GET /api/delivery-analytics/timeline must not 500 with strftime."""
-    resp = await client.get("/api/delivery-analytics/timeline?days=1")
-    # 200 or 403 is acceptable — the important thing is no 500
+    resp = await client.get("/api/delivery-analytics/timelinedays=1")
+    # 200 or 403 is acceptable  the important thing is no 500
     assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
 
 
@@ -1242,11 +1242,11 @@ async def test_timeline_date_trunc_does_not_crash(client, db_session):
 async def test_overview_does_not_crash(client, db_session):
     """Verify get_overview does not 500 with strftime.
     A GET /api/delivery-analytics/overview must not crash."""
-    resp = await client.get("/api/delivery-analytics/overview?days=1")
+    resp = await client.get("/api/delivery-analytics/overviewdays=1")
     assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
 
 
-# ─── Regression: broadcast recurring route ─────────────────────────
+#  Regression: broadcast recurring route 
 
 @pytest.mark.asyncio
 async def test_broadcast_recurring_not_confused_with_broadcast_id(client, db_session):
@@ -1260,12 +1260,12 @@ async def test_broadcast_recurring_not_confused_with_broadcast_id(client, db_ses
     )
 
 
-# ─── Regression: date_trunc must declare a result type ──────────────
+#  Regression: date_trunc must declare a result type 
 #
 # Production hit `AttributeError: 'NoneType' object has no attribute
 # 'dialect_impl'` on GET /api/delivery-analytics/overview. Root cause: the
 # custom `date_trunc` FunctionElement had `type = None`, which only breaks
-# once SQLAlchemy needs to resolve the column's result type — a step the
+# once SQLAlchemy needs to resolve the column's result type  a step the
 # fully-mocked test_timeline_daily/test_overview_does_not_crash tests above
 # never exercise (mocked session), and that SQLite's dialect-specific
 # @compiles override can sidestep. This test checks the class attribute
@@ -1280,7 +1280,7 @@ def test_date_trunc_declares_a_result_type():
     col = Column("created_at", SA_DateTime())
     expr = date_trunc("day", col)
     assert expr.type is not None, (
-        "date_trunc.type must not be None — SQLAlchemy raises "
+        "date_trunc.type must not be None  SQLAlchemy raises "
         "AttributeError: 'NoneType' object has no attribute 'dialect_impl' "
         "as soon as this expression's result type is needed (e.g. GROUP BY "
         "+ row materialization on PostgreSQL)."
@@ -1290,7 +1290,7 @@ def test_date_trunc_declares_a_result_type():
 @pytest.mark.asyncio
 async def test_get_timeline_real_query_with_data(db_session):
     """Real (non-mocked) DB round-trip through get_timeline with actual
-    MessageLog rows — exercises the same date_trunc query path production
+    MessageLog rows  exercises the same date_trunc query path production
     hit, unlike the mocked test_timeline_daily above."""
     from app.models.account import Account
     from app.models.message_log import MessageLog
@@ -1316,7 +1316,7 @@ async def test_get_timeline_real_query_with_data(db_session):
     assert isinstance(timeline, list)
 
 
-# ─── Regression: Decimal from SUM() breaks percentage arithmetic ────
+#  Regression: Decimal from SUM() breaks percentage arithmetic 
 #
 # Second production 500 on GET /api/delivery-analytics/overview, uncovered
 # only after the date_trunc fix above stopped masking it: PostgreSQL's SUM()
@@ -1371,8 +1371,8 @@ async def test_summary_handles_decimal_successful_from_postgres_sum(mock_session
 
 @pytest.mark.asyncio
 async def test_get_overview_real_query_does_not_500(db_session):
-    """Full real (non-mocked) round-trip through get_overview — the exact
-    call GET /api/delivery-analytics/overview makes — with actual failed and
+    """Full real (non-mocked) round-trip through get_overview  the exact
+    call GET /api/delivery-analytics/overview makes  with actual failed and
     successful MessageLog rows, exercising every sub-query asyncio.gather
     runs concurrently."""
     from app.models.account import Account
@@ -1386,7 +1386,7 @@ async def test_get_overview_real_query_does_not_500(db_session):
     db_session.add_all([
         # started_at/completed_at populated so the latency sub-queries
         # (get_latency_analytics/by_source/by_account) compute a real
-        # AVG()/percentile_cont() instead of short-circuiting on zero rows —
+        # AVG()/percentile_cont() instead of short-circuiting on zero rows 
         # that's exactly where the Decimal-from-Postgres bug surfaced.
         MessageLog(
             account_id=account.id, recipient="-100001", source="broadcast",

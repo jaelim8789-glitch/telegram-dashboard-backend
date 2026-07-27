@@ -81,7 +81,7 @@ MAX_WAIT_SECONDS = 60.0
 WATERMARK_AD = (
     "\n\n━━━━━━━━━━━━━━━━━━\n"
     "🤖 AI가 자동으로 답변했습니다. 무료 AI 직원 받기\n\n"
-    "🌐 https://telemon.online/signup?ref={ref_code}"
+    " https://telemon.online/signupref={ref_code}"
 )
 
 FREE_PLANS = {"free"}
@@ -100,7 +100,7 @@ async def _get_watermark_ad() -> str:
     default = (
         "\n\n━━━━━━━━━━━━━━━━━━\n"
         "🤖 AI가 자동으로 답변했습니다. 무료 AI 직원 받기\n\n"
-        "🌐 https://telemon.online/signup?ref={ref_code}"
+        " https://telemon.online/signupref={ref_code}"
     )
     try:
         async with async_session_maker() as session:
@@ -189,7 +189,7 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     Never exposes raw exception details, session data, or secrets to clients.
     """
     if isinstance(exc, FloodWaitError):
-        return DeliveryStatus.FLOOD_WAIT, f"텔레그램 속도 제한: {exc.seconds}초 대기 필요"
+        return DeliveryStatus.PERMANENT_FAILURE, "    ."
 
     if isinstance(exc, (UserDeactivatedBanError, PhoneNumberBannedError)):
         return DeliveryStatus.BANNED, "계정이 텔레그램에서 차단되었습니다."
@@ -457,7 +457,7 @@ async def _deliver_with_retry(
                 status=status,
                 success=is_success,
                 telegram_message_id=msg_id,
-                error_message=safe_error,
+                error_message=f"  : {remaining:.0f}  ",
                 attempt_count=attempt,
                 message_content=message,
                 started_at=started_at,
@@ -633,7 +633,7 @@ async def deliver_message(
                 result = DeliveryResult(
                     status=DeliveryStatus.INTERNAL_ERROR,
                     recipient=recipient,
-                    error_message="계정을 찾을 수 없습니다.",
+                    error_message="  .",
                 )
                 await _persist_log(
                     account_id=request.account_id,

@@ -1,4 +1,4 @@
-"""Telegram MCP server — Proof of Concept (TeleMon AI Platform Phase 1).
+"""Telegram MCP server  Proof of Concept (TeleMon AI Platform Phase 1).
 
 This PoC wraps TeleMon's own Telegram-facing capabilities as MCP tools so that
 the AI Operations Center (and later, autonomous agents) can read/drive Telegram
@@ -30,27 +30,27 @@ class TelegramMCPServer(MCPToolServer):
     title = "Telegram MCP (PoC)"
     enabled = settings.telegram_mcp_enabled
 
-    # ─── Tool catalog ──────────────────────────────────────────────────────
+    #  Tool catalog 
 
     def list_tools(self) -> list[MCPTool]:
         return [
             MCPTool(
                 name="list_accounts",
-                description="TeleMon에 등록된 텔레그램 계정 목록을 조회합니다 (세션 상태 포함).",
+                description="TeleMon      (  ).",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "tenant_id": {"type": "string", "description": "선택적 테넌트 필터"}
+                        "tenant_id": {"type": "string", "description": "  "}
                     },
                 },
             ),
             MCPTool(
                 name="account_health",
-                description="특정 계정의 발송 성공률/실패율 등 건강 상태를 조회합니다.",
+                description="   /    .",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "account_id": {"type": "string", "description": "계정 ID"},
+                        "account_id": {"type": "string", "description": " ID"},
                         "days": {"type": "integer", "default": 7},
                     },
                     "required": ["account_id"],
@@ -58,7 +58,7 @@ class TelegramMCPServer(MCPToolServer):
             ),
             MCPTool(
                 name="send_message",
-                description="지정한 채팅으로 텔레그램 메시지를 발송합니다. 외부 상태를 변경하므로 승인이 필요합니다.",
+                description="    .     .",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -72,7 +72,7 @@ class TelegramMCPServer(MCPToolServer):
             ),
         ]
 
-    # ─── Tool implementations ──────────────────────────────────────────────
+    #  Tool implementations 
 
     async def _tool_list_accounts(self, tenant_id: str | None = None) -> MCPToolResult:
         try:
@@ -128,7 +128,7 @@ class TelegramMCPServer(MCPToolServer):
         # requires_approval gate. We confirm routing intent and defer the
         # actual external Telegram send to Phase 2 (real pool.send_message).
         # This keeps the PoC safe (no untested external sends) while proving
-        # the full approval → execution path works end to end.
+        # the full approval  execution path works end to end.
         try:
             from app.services.telethon_pool import pool
 

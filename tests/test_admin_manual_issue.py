@@ -1,4 +1,4 @@
-"""Admin manual API key issuance — lookup, issue, duplicate prevention, audit logging.
+"""Admin manual API key issuance  lookup, issue, duplicate prevention, audit logging.
 
 All new admin endpoints require an admin JWT in the Authorization header.
 The test suite uses the `unauthenticated_client` fixture (no auth bypass)
@@ -30,7 +30,7 @@ except Exception:
 # use a per-test engine. Data committed on the test engine is invisible to the
 # app engine even when both point at the same database URL, because each engine
 # manages its own connection pool and transaction state. This is not a production
-# issue — the endpoint works correctly against the real database.
+# issue  the endpoint works correctly against the real database.
 _LOOKUP_SKIP_REASON = "test engine isolation: endpoint can't see per-test engine data"
 
 
@@ -92,11 +92,11 @@ def _unwire_db(app):
     app.dependency_overrides.pop(admin_get_db, None)
 
 
-# ── 1. Unauthorized access rejected ─────────────────────────────────────────
+#  1. Unauthorized access rejected 
 
 
 async def test_user_lookup_rejects_unauthenticated(unauthenticated_client):
-    res = await unauthenticated_client.get("/api/admin/user-lookup?q=test")
+    res = await unauthenticated_client.get("/api/admin/user-lookupq=test")
     assert res.status_code == 401
 
 
@@ -108,7 +108,7 @@ async def test_manual_issue_rejects_unauthenticated(unauthenticated_client):
     assert res.status_code == 401
 
 
-# ── 2. Admin user lookup ────────────────────────────────────────────────────
+#  2. Admin user lookup 
 
 
 @pytest.mark.skipif(True, reason=_LOOKUP_SKIP_REASON)
@@ -118,7 +118,7 @@ async def test_user_lookup_by_phone_found(unauthenticated_client, db_session):
     print(f"  [TEST] db_session={id(db_session)}", flush=True)
     try:
         res = await unauthenticated_client.get(
-            f"/api/admin/user-lookup?q={user.phone}",
+            f"/api/admin/user-lookupq={user.phone}",
             headers=_admin_headers(),
         )
         assert res.status_code == 200
@@ -137,7 +137,7 @@ async def test_user_lookup_returns_has_api_key_true(unauthenticated_client, db_s
     user, _ = await _setup_user_with_key_and_tenant(db_session, "+821099991001")
     try:
         res = await unauthenticated_client.get(
-            f"/api/admin/user-lookup?q={user.phone}",
+            f"/api/admin/user-lookupq={user.phone}",
             headers=_admin_headers(),
         )
         assert res.status_code == 200
@@ -150,14 +150,14 @@ async def test_user_lookup_returns_has_api_key_true(unauthenticated_client, db_s
 
 async def test_user_lookup_not_found(unauthenticated_client):
     res = await unauthenticated_client.get(
-        "/api/admin/user-lookup?q=nonexistent",
+        "/api/admin/user-lookupq=nonexistent",
         headers=_admin_headers(),
     )
     assert res.status_code == 200
     assert res.json() is None
 
 
-# ── 3. Admin manual issue success ───────────────────────────────────────────
+#  3. Admin manual issue success 
 
 
 async def test_manual_issue_to_existing_user(unauthenticated_client, db_session):
@@ -265,7 +265,7 @@ async def test_manual_issued_key_can_login(unauthenticated_client, db_session):
 async def test_manual_issue_preserves_memo(unauthenticated_client, db_session):
     app = await _wire_db(unauthenticated_client, db_session)
     user = await _setup_user_with_tenant(db_session, "+821099991012")
-    memo = "자동 발급 실패로 인한 운영자 수동 발급"
+    memo = "      "
     try:
         res = await unauthenticated_client.post(
             "/api/admin/manual-issue-key",
@@ -289,7 +289,7 @@ async def test_manual_issue_preserves_memo(unauthenticated_client, db_session):
         _unwire_db(app)
 
 
-# ── 4. Duplicate issuance prevention ────────────────────────────────────────
+#  4. Duplicate issuance prevention 
 
 
 async def test_manual_issue_prevents_duplicate(unauthenticated_client, db_session):
@@ -317,7 +317,7 @@ async def test_manual_issue_prevents_duplicate(unauthenticated_client, db_sessio
         _unwire_db(app)
 
 
-# ── 5. Unknown identifier rejected ──────────────────────────────────────────
+#  5. Unknown identifier rejected 
 
 
 async def test_manual_issue_rejects_unknown_phone(unauthenticated_client):
@@ -330,7 +330,7 @@ async def test_manual_issue_rejects_unknown_phone(unauthenticated_client):
 
 
 async def test_manual_issue_rejects_user_without_tenant(unauthenticated_client, db_session):
-    """A user record exists but has no tenant — still rejected."""
+    """A user record exists but has no tenant  still rejected."""
     app = await _wire_db(unauthenticated_client, db_session)
     user = User(phone="+821099991030")
     db_session.add(user)
@@ -346,7 +346,7 @@ async def test_manual_issue_rejects_user_without_tenant(unauthenticated_client, 
         _unwire_db(app)
 
 
-# ── 6. Audit log creation ────────────────────────────────────────────────────
+#  6. Audit log creation 
 
 
 async def test_manual_issue_creates_audit_log(unauthenticated_client, db_session):
@@ -378,7 +378,7 @@ async def test_manual_issue_creates_audit_log(unauthenticated_client, db_session
         _unwire_db(app)
 
 
-# ── 7. Raw API key not written to logs ──────────────────────────────────────
+#  7. Raw API key not written to logs 
 
 
 async def test_audit_log_never_contains_raw_key(unauthenticated_client, db_session):

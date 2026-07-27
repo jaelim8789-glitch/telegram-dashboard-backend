@@ -24,18 +24,18 @@ async def test_api_key_endpoints_require_admin(unauthenticated_client):
 async def test_create_api_key_returns_full_key_once(unauthenticated_client):
     headers = await _admin_headers(unauthenticated_client)
 
-    res = await unauthenticated_client.post("/api/admin/api-keys", json={"name": "테스트 키"}, headers=headers)
+    res = await unauthenticated_client.post("/api/admin/api-keys", json={"name": " "}, headers=headers)
     assert res.status_code == 201
     body = res.json()
     assert body["key"].startswith("sk-")
     assert len(body["key"]) == 35  # "sk-" + 32 hex chars
-    assert body["name"] == "테스트 키"
+    assert body["name"] == " "
 
 
 @pytest.mark.asyncio
 async def test_list_api_keys_masks_the_key(unauthenticated_client):
     headers = await _admin_headers(unauthenticated_client)
-    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": "목록 테스트"}, headers=headers)
+    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": " "}, headers=headers)
     full_key = created.json()["key"]
 
     res = await unauthenticated_client.get("/api/admin/api-keys", headers=headers)
@@ -51,7 +51,7 @@ async def test_list_api_keys_masks_the_key(unauthenticated_client):
 @pytest.mark.asyncio
 async def test_created_api_key_authenticates_main_api(unauthenticated_client):
     headers = await _admin_headers(unauthenticated_client)
-    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": "동작 확인"}, headers=headers)
+    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": " "}, headers=headers)
     full_key = created.json()["key"]
 
     res = await unauthenticated_client.get("/api/accounts", headers={"X-API-Key": full_key})
@@ -65,7 +65,7 @@ async def test_created_api_key_authenticates_main_api(unauthenticated_client):
 @pytest.mark.asyncio
 async def test_delete_api_key_revokes_access(unauthenticated_client):
     headers = await _admin_headers(unauthenticated_client)
-    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": "삭제 테스트"}, headers=headers)
+    created = await unauthenticated_client.post("/api/admin/api-keys", json={"name": " "}, headers=headers)
     key_id = created.json()["id"]
     full_key = created.json()["key"]
 
@@ -83,19 +83,19 @@ async def test_delete_nonexistent_api_key_returns_404(unauthenticated_client):
     assert res.status_code == 404
 
 
-# ── Regression: admin-issued API key must authenticate via login-with-api-key ──
+#  Regression: admin-issued API key must authenticate via login-with-api-key 
 
 @pytest.mark.asyncio
 async def test_admin_issued_api_key_can_login_with_api_key(unauthenticated_client, db_session):
     """Regression test for the production API key inconsistency bug.
 
-    API keys created in the Admin "API 키 관리" page are stored in the APIKey
+    API keys created in the Admin "API  " page are stored in the APIKey
     model (table api_keys), but /auth/login-with-api-key only checks
     User.api_key_hash.  The fix bridges the two systems by also storing the
     key's hash in User.api_key_hash when the admin creates a key with a
     tenant_id.
 
-    This test proves: issue key → login-with-api-key succeeds.
+    This test proves: issue key  login-with-api-key succeeds.
     """
     from app.core.security import hash_api_key
     from app.crud import user as user_crud

@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-# ── Session ──────────────────────────────────────────────────────────────
+#  Session 
 
 class SessionCreate(BaseModel):
     title: str = Field(default="New Chat", max_length=200)
@@ -56,7 +56,7 @@ class SessionSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Message ──────────────────────────────────────────────────────────────
+#  Message 
 
 class MessageCreate(BaseModel):
     session_id: str
@@ -88,7 +88,7 @@ class MessageFeedback(BaseModel):
     comment: str | None = None
 
 
-# ── Chat (Streaming) ─────────────────────────────────────────────────────
+#  Chat (Streaming) 
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -112,7 +112,7 @@ class ChatResponse(BaseModel):
     model: str
 
 
-# ── Search ───────────────────────────────────────────────────────────────
+#  Search 
 
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
@@ -137,7 +137,7 @@ class SearchResponse(BaseModel):
     query: str
 
 
-# ── Prompt Template ──────────────────────────────────────────────────────
+#  Prompt Template 
 
 class PromptTemplateCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -172,7 +172,7 @@ class PromptTemplateRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Usage ────────────────────────────────────────────────────────────────
+#  Usage 
 
 class UsageStats(BaseModel):
     total_sessions: int

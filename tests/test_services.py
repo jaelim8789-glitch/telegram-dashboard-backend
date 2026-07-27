@@ -41,7 +41,7 @@ async def test_save_broadcast_media_success_uses_server_generated_filename():
     saved_path = await save_broadcast_media(upload)
     try:
         # The client-supplied filename (including any path traversal attempt) must never
-        # end up in the saved path — only a server-generated uuid + known extension.
+        # end up in the saved path  only a server-generated uuid + known extension.
         assert "passwd" not in saved_path
         assert ".." not in saved_path
         assert saved_path.endswith(".jpg")

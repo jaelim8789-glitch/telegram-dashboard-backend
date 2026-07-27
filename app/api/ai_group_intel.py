@@ -1,4 +1,4 @@
-"""AI Group Intelligence — analyzes Telegram groups an account belongs to.
+"""AI Group Intelligence  analyzes Telegram groups an account belongs to.
 
 Uses DeepSeek to classify groups by topic, engagement level, size, and
 recommend the best targets for a broadcast goal.
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/ai/groups", tags=["ai-group-intel"])
 logger = __import__("app.core.logging", fromlist=["get_logger"]).get_logger(__name__)
 
 
-# ─── Schemas ────────────────────────────────────────────────────────────
+#  Schemas 
 
 
 class GroupClassification(BaseModel):
@@ -50,7 +50,7 @@ class AnalyzeGroupsResponse(BaseModel):
 class BestTargetRequest(BaseModel):
     broadcast_purpose: str = Field(
         ..., min_length=1, max_length=1000,
-        description="발송 목적 — 예: '신규 서비스 홍보', 'VIP 고객 대상 할인 쿠폰 안내'",
+        description="   : '  ', 'VIP     '",
     )
     max_recommendations: int = Field(default=5, ge=1, le=20)
 
@@ -80,14 +80,14 @@ class GroupAnalyticsResponse(BaseModel):
     top_channels: list[dict] = []
 
 
-# ─── Internal helpers ───────────────────────────────────────────────────
+#  Internal helpers 
 
 
 async def _fetch_groups(account_id: str, db: AsyncSession) -> list[dict]:
     """Fetch all groups/channels for an account with error handling."""
     account = await account_crud.get_account(db, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
     try:
         return await list_groups(account)
     except AccountNotAuthenticatedError as exc:
@@ -107,14 +107,14 @@ def _classify_size(participants: int) -> str:
         return "xlarge"
 
 
-# ─── Endpoints ──────────────────────────────────────────────────────────
+#  Endpoints 
 
 
 @router.get("/{account_id}/analyze", response_model=AnalyzeGroupsResponse)
 async def analyze_groups(
     account_id: str = Path(..., description="Telegram account ID"),
-    min_members: int = Query(default=0, ge=0, description="최소 멤버 수 필터"),
-    max_groups: int = Query(default=50, ge=1, le=200, description="분석할 최대 그룹 수"),
+    min_members: int = Query(default=0, ge=0, description="   "),
+    max_groups: int = Query(default=50, ge=1, le=200, description="   "),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ) -> AnalyzeGroupsResponse:
@@ -133,38 +133,38 @@ async def analyze_groups(
     groups_to_analyze = filtered[:max_groups]
 
     if not groups_to_analyze:
-        return AnalyzeGroupsResponse(groups=[], summary="분석할 그룹이 없습니다.", total_analyzed=0)
+        return AnalyzeGroupsResponse(groups=[], summary="  .", total_analyzed=0)
 
     # Prepare group data for AI
     group_lines = []
     for g in groups_to_analyze:
         group_lines.append(
-            f"- ID: {g['chat_id']} | 제목: {g.get('title', '')} | 유형: {g.get('type', '')} | "
-            f"멤버: {g.get('participants_count', 0)}명"
+            f"- ID: {g['chat_id']} | : {g.get('title', '')} | : {g.get('type', '')} | "
+            f": {g.get('participants_count', 0)}"
         )
 
     system_prompt = (
-        "너는 TeleMon AI 그룹 분석 전문가야. 텔레그램 그룹/채널 목록을 분석해서 "
-        "각각의 주제(topic), 참여도(engagement_level), 언어(language)를 분류해줘.\n\n"
-        "반드시 아래 JSON 형식으로만 응답 (다른 텍스트 없이):\n"
+        " TeleMon AI   .  /   "
+        " (topic), (engagement_level), (language) .\n\n"
+        "  JSON   (  ):\n"
         "{\n"
         '  "classifications": [\n'
         "    {\n"
-        '      "chat_id": "그룹ID",\n'
-        '      "topic": "분류된 주제 (한국어, 2-4자)",\n'
+        '      "chat_id": "ID",\n'
+        '      "topic": "  (, 2-4)",\n'
         '      "engagement_level": "high|medium|low",\n'
         '      "language": "ko|en|ja|zh|etc"\n'
         "    }\n"
         "  ],\n"
-        '  "summary": "전체 분석 요약 (한국어, 2-3문장)"\n'
+        '  "summary": "   (, 2-3)"\n'
         "}\n\n"
-        "분류 기준:\n"
-        "- topic: 제목과 유형을 보고 주제를 추정 (예: 마케팅, 고객지원, 공지사항, 개발, 커뮤니티, 뉴스, 프로모션, 교육 등)\n"
-        "- engagement_level: 그룹(대화형)은 medium/high, 채널(일방향)은 low/medium으로 기본 설정\n"
-        "- language: 제목과 유형으로 언어 추정\n"
-        "- 한국어로 summary 작성"
+        " :\n"
+        "- topic:      (: , , , , , , ,  )\n"
+        "- engagement_level: () medium/high, () low/medium  \n"
+        "- language:    \n"
+        "-  summary "
     )
-    user_prompt = f"[분석할 그룹/채널 목록 ({len(groups_to_analyze)}개)]\n" + "\n".join(group_lines)
+    user_prompt = f"[ /  ({len(groups_to_analyze)})]\n" + "\n".join(group_lines)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -175,7 +175,7 @@ async def analyze_groups(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 그룹 분석에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            detail="AI   .    .",
         )
 
     try:
@@ -184,7 +184,7 @@ async def analyze_groups(
         summary = parsed.get("summary", "")
     except (json.JSONDecodeError, TypeError, ValueError):
         classifications = []
-        summary = "분류 결과를 파싱하는 중 오류가 발생했습니다."
+        summary = "     ."
 
     # Merge classifications back into group data
     class_map = {c["chat_id"]: c for c in classifications if "chat_id" in c}
@@ -198,7 +198,7 @@ async def analyze_groups(
                 title=g.get("title", ""),
                 type=g.get("type", ""),
                 participants_count=g.get("participants_count") or 0,
-                topic=cls.get("topic", "미분류"),
+                topic=cls.get("topic", ""),
                 engagement_level=cls.get("engagement_level", "unknown"),
                 size_category=_classify_size(g.get("participants_count") or 0),
                 language=cls.get("language", ""),
@@ -236,40 +236,40 @@ async def recommend_best_targets(
         return BestTargetResponse(
             purpose=payload.broadcast_purpose,
             recommendations=[],
-            reasoning_summary="발송 가능한 그룹/채널이 없습니다.",
+            reasoning_summary="  / .",
         )
 
     group_lines = []
     for g in candidates:
         group_lines.append(
-            f"- ID: {g['chat_id']} | 제목: {g.get('title', '')} | 유형: {g.get('type', '')} | "
-            f"멤버: {g.get('participants_count', 0)}명"
+            f"- ID: {g['chat_id']} | : {g.get('title', '')} | : {g.get('type', '')} | "
+            f": {g.get('participants_count', 0)}"
         )
 
     system_prompt = (
-        "너는 TeleMon AI 타겟 추천 전문가야. 텔레그램 그룹/채널 목록에서 "
-        "특정 발송 목적에 가장 적합한 대상을 추천해줘.\n\n"
-        f"[발송 목적]\n{payload.broadcast_purpose}\n\n"
-        f"최대 추천 개수: {payload.max_recommendations}개\n\n"
-        "반드시 아래 JSON 형식으로만 응답 (다른 텍스트 없이):\n"
+        " TeleMon AI   .  /  "
+        "      .\n\n"
+        f"[ ]\n{payload.broadcast_purpose}\n\n"
+        f"  : {payload.max_recommendations}\n\n"
+        "  JSON   (  ):\n"
         "{\n"
         '  "recommendations": [\n'
         "    {\n"
-        '      "chat_id": "그룹ID",\n'
-        '      "reason": "추천 이유 (한국어)",\n'
+        '      "chat_id": "ID",\n'
+        '      "reason": "  ()",\n'
         '      "confidence": 0.0~1.0,\n'
-        '      "estimated_reach": 도달가능인원\n'
+        '      "estimated_reach": \n'
         "    }\n"
         "  ],\n"
-        '  "reasoning_summary": "전체 추천 전략 요약 (한국어, 2-3문장)"\n'
+        '  "reasoning_summary": "    (, 2-3)"\n'
         "}\n\n"
-        "선정 기준:\n"
-        "- 발송 목적과 그룹 주제의 적합성\n"
-        "- 그룹 규모 (멤버 수)\n"
-        "- 그룹 유형 (그룹=대화형, 채널=공지형)\n"
-        "- confidence는 데이터 신뢰도 기반 (제목만 보고 추정시 낮게)"
+        " :\n"
+        "-     \n"
+        "-   ( )\n"
+        "-   (=, =)\n"
+        "- confidence    (   )"
     )
-    user_prompt = f"[후보 그룹/채널 목록 ({len(candidates)}개)]\n" + "\n".join(group_lines)
+    user_prompt = f"[ /  ({len(candidates)})]\n" + "\n".join(group_lines)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -280,7 +280,7 @@ async def recommend_best_targets(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI 타겟 추천에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            detail="AI   .    .",
         )
 
     try:
@@ -289,7 +289,7 @@ async def recommend_best_targets(
         reasoning_summary = parsed.get("reasoning_summary", "")
     except (json.JSONDecodeError, TypeError, ValueError):
         recs_data = []
-        reasoning_summary = "추천 결과를 파싱하는 중 오류가 발생했습니다."
+        reasoning_summary = "     ."
 
     # Build a lookup for candidate titles
     title_map = {g["chat_id"]: g.get("title", "") for g in candidates}
@@ -322,7 +322,7 @@ async def group_analytics(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ) -> GroupAnalyticsResponse:
-    """Get aggregate group analytics for an account — counts by type, size
+    """Get aggregate group analytics for an account  counts by type, size
     distribution, and top groups/channels. No AI call needed; this is a
     lightweight stats endpoint.
     """

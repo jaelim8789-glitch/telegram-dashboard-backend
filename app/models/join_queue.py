@@ -1,4 +1,4 @@
-"""JoinQueue model — persisted queue of bulk-inspected links awaiting sequential join.
+"""JoinQueue model  persisted queue of bulk-inspected links awaiting sequential join.
 
 Each row represents one link queued for joining. The scheduler processes items
 one at a time per account, respecting a configurable conservative join rate and
@@ -29,7 +29,7 @@ class JoinQueueItem(Base):
     username = Column(String, nullable=True)
     chat_id = Column(String, nullable=True)
 
-    # Status machine: queued → processing → success | failed | flood_wait
+    # Status machine: queued  processing  success | failed | flood_wait
     status = Column(String, nullable=False, default="queued", index=True)
     error_message = Column(Text, nullable=True)
     flood_wait_until = Column(DateTime(timezone=True), nullable=True)

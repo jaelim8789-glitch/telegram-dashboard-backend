@@ -23,7 +23,7 @@ async def _make_account(db_session, phone="+821011110000", status="active", tena
     return account
 
 
-# ── plan_distribution (pure) ────────────────────────────────────────
+#  plan_distribution (pure) 
 
 
 def test_plan_distribution_single_member_account_is_not_distributed():
@@ -104,7 +104,7 @@ def test_plan_distribution_partial_membership_balances_load():
         assert len(assigned_to) >= 1 or group_id in plan.assignments.get("acc-a", [])
 
 
-# ── check_membership ─────────────────────────────────────────────────
+#  check_membership 
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_check_membership_treats_unauthenticated_account_as_no_membership(
     assert result == {"acc-a": set()}
 
 
-# ── get_eligible_accounts ────────────────────────────────────────────
+#  get_eligible_accounts 
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_get_eligible_accounts_excludes_suspended_and_banned(db_session):
     assert len(eligible_ids) == 1
 
 
-# ── create_distributed_broadcast (integration) ───────────────────────
+#  create_distributed_broadcast (integration) 
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ async def test_create_distributed_broadcast_splits_across_member_accounts(db_ses
         requesting_account=acc_a,
         target_ids=group_ids,
         target_field="group_ids",
-        message="분산 테스트",
+        message=" ",
         media_path=None,
         delivery_mode="normal",
         delay_seconds=None,
@@ -211,7 +211,7 @@ async def test_create_distributed_broadcast_recipients_mode_splits_into_recipien
     db_session, monkeypatch
 ):
     """This is the mode SendTab's actual group-broadcast UI uses (and the one
-    that caused the 07ede2ef incident) — each "recipient" is a group's own
+    that caused the 07ede2ef incident)  each "recipient" is a group's own
     chat id to message directly, not a group to resolve members from. Mixing
     this up with group_ids mode would turn a handful of groups into messaging
     every member of each one."""
@@ -236,7 +236,7 @@ async def test_create_distributed_broadcast_recipients_mode_splits_into_recipien
         requesting_account=acc_a,
         target_ids=recipient_ids,
         target_field="recipients",
-        message="분산 테스트",
+        message=" ",
         media_path=None,
         delivery_mode="bulk",
         delay_seconds=None,
@@ -270,7 +270,7 @@ async def test_create_distributed_broadcast_single_candidate_has_no_batch_id(db_
         requesting_account=acc_a,
         target_ids=group_ids,
         target_field="group_ids",
-        message="단일 계정",
+        message=" ",
         media_path=None,
         delivery_mode="normal",
         delay_seconds=None,
@@ -294,7 +294,7 @@ async def test_create_distributed_broadcast_empty_target_ids_returns_empty(db_se
         requesting_account=acc_a,
         target_ids=[],
         target_field="group_ids",
-        message="빈 대상",
+        message=" ",
         media_path=None,
         delivery_mode="normal",
         delay_seconds=None,
@@ -327,7 +327,7 @@ async def test_create_distributed_broadcast_requesting_account_suspended_raises(
             requesting_account=acc_a,
             target_ids=group_ids,
             target_field="group_ids",
-            message="suspended 요청",
+            message="suspended ",
             media_path=None,
             delivery_mode="normal",
             delay_seconds=None,
@@ -365,7 +365,7 @@ async def test_create_distributed_broadcast_at_threshold_boundary_is_not_distrib
         "/api/broadcast",
         data={
             "account_id": account_id,
-            "message": "경계값 테스트",
+            "message": " ",
             "recipients": json.dumps([]),
             "group_ids": json.dumps(group_ids),
         },
@@ -374,11 +374,11 @@ async def test_create_distributed_broadcast_at_threshold_boundary_is_not_distrib
     assert res.json()["distribution_batch_id"] is None
 
 
-# ── API integration ──────────────────────────────────────────────────
+#  API integration 
 
 
 async def _create_account_via_api(client, phone):
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "분산 테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
     assert res.status_code == 201
     return res.json()["id"]
 
@@ -413,7 +413,7 @@ async def test_create_broadcast_distributes_when_group_ids_exceed_threshold(
         "/api/broadcast",
         data={
             "account_id": account_a_id,
-            "message": "분산 발송 테스트",
+            "message": "  ",
             "recipients": json.dumps([]),
             "group_ids": json.dumps(group_ids),
         },
@@ -437,7 +437,7 @@ async def test_create_broadcast_distributes_when_recipients_exceed_threshold(
     client, db_session, monkeypatch
 ):
     """SendTab's actual group-broadcast UI sends selected group chat ids via
-    `recipients`, not `group_ids` — this is the real path that produced the
+    `recipients`, not `group_ids`  this is the real path that produced the
     07ede2ef incident, so it must trigger distribution too."""
     account_a_id = await _create_account_via_api(client, "+821022220010")
     account_b_id = await _create_account_via_api(client, "+821022220011")
@@ -464,7 +464,7 @@ async def test_create_broadcast_distributes_when_recipients_exceed_threshold(
         "/api/broadcast",
         data={
             "account_id": account_a_id,
-            "message": "분산 발송 테스트 (recipients)",
+            "message": "   (recipients)",
             "recipients": json.dumps(recipient_ids),
         },
     )
@@ -493,7 +493,7 @@ async def test_create_broadcast_below_threshold_is_not_distributed(client):
         "/api/broadcast",
         data={
             "account_id": account_id,
-            "message": "단일 발송",
+            "message": " ",
             "recipients": json.dumps([]),
             "group_ids": json.dumps(group_ids),
         },

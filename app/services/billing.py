@@ -80,7 +80,7 @@ AI_CHAT_PACK_CREDITS = {
 async def create_usdt_invoice(tenant_id: str, plan: str, billing: Literal["monthly", "quarterly"] = "monthly") -> dict:
     """Create a USDT payment invoice: shows wallet address and amount."""
     if is_deprecated_plan(plan):
-        return {"success": False, "error": "해당 요금제는 더 이상 제공되지 않습니다. Pro 또는 Team을 선택해주세요."}
+        return {"success": False, "error": "  ."}
     amount = get_plan_price_usdt(plan, billing)
     if amount is None:
         return {"success": False, "error": "유효하지 않은 요금제입니다."}

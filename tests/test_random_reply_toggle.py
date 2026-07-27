@@ -1,12 +1,12 @@
-"""Regression coverage for the simplified random-reply on/off toggle — the
+"""Regression coverage for the simplified random-reply on/off toggle  the
 one feature that got the most user-facing confusion this session (turned out
 to be a deploy/cache gap, not a backend bug, but it had zero test coverage
 proving that end to end). Covers:
 
-1. GET/PUT /toggle — the actual API the frontend calls.
-2. list_active_with_message — what the scheduler polls.
+1. GET/PUT /toggle  the actual API the frontend calls.
+2. list_active_with_message  what the scheduler polls.
 3. execute_random_reply resolving target_chats=[] to "every group the
-   account is currently in" (the whole point of the simplified toggle —
+   account is currently in" (the whole point of the simplified toggle 
    no manually picked target list).
 """
 
@@ -20,12 +20,12 @@ _phone_seq = itertools.count(1)
 
 async def _create_account(client, phone=None):
     phone = phone or f"+821099{next(_phone_seq):06d}"
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "랜덤답장 테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
     assert res.status_code == 201, res.text
     return res.json()["id"]
 
 
-# ─── Toggle API ─────────────────────────────────────────────────────────
+#  Toggle API 
 
 
 @pytest.mark.asyncio
@@ -43,16 +43,16 @@ async def test_put_toggle_on_with_message_persists(client):
     account_id = await _create_account(client)
     res = await client.put(
         f"/api/accounts/{account_id}/reply-macros/toggle",
-        json={"is_active": True, "message_content": "안녕하세요! 문의 감사합니다."},
+        json={"is_active": True, "message_content": "!  ."},
     )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["is_active"] is True
-    assert body["message_content"] == "안녕하세요! 문의 감사합니다."
+    assert body["message_content"] == "!  ."
 
     # Re-fetch confirms it actually persisted, not just echoed in the response.
     refetch = await client.get(f"/api/accounts/{account_id}/reply-macros/toggle")
-    assert refetch.json() == {"is_active": True, "message_content": "안녕하세요! 문의 감사합니다."}
+    assert refetch.json() == {"is_active": True, "message_content": "!  ."}
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_put_toggle_off_persists(client):
     assert res.json()["is_active"] is False
 
 
-# ─── Scheduler polling query ────────────────────────────────────────────
+#  Scheduler polling query 
 
 
 @pytest.mark.asyncio
@@ -89,10 +89,10 @@ async def test_list_active_with_message_excludes_inactive_and_empty_message(db_s
 
     on_with_msg = await macro_crud.get_or_create_for_account(db_session, "acct-on")
     on_with_msg.is_active = True
-    on_with_msg.message_content = "안녕"
+    on_with_msg.message_content = ""
     off = await macro_crud.get_or_create_for_account(db_session, "acct-off")
     off.is_active = False
-    off.message_content = "안녕"
+    off.message_content = ""
     on_no_msg = await macro_crud.get_or_create_for_account(db_session, "acct-on-empty")
     on_no_msg.is_active = True
     on_no_msg.message_content = ""
@@ -103,7 +103,7 @@ async def test_list_active_with_message_excludes_inactive_and_empty_message(db_s
     assert account_ids == {"acct-on"}
 
 
-# ─── execute_random_reply: target_chats=[] resolves to all dialogs ─────
+#  execute_random_reply: target_chats=[] resolves to all dialogs 
 
 
 class db_session_cm:
@@ -127,8 +127,8 @@ def _fake_dialog(entity_id: int, is_group=True, is_channel=False):
 
 @pytest.mark.asyncio
 async def test_execute_random_reply_resolves_empty_targets_to_all_account_groups(db_session, monkeypatch):
-    """The simplified toggle never sets target_chats — this is the behavior
-    that makes "그냥 켜면 모든 그룹에 나간다" true. If this regresses, the
+    """The simplified toggle never sets target_chats  this is the behavior
+    that makes "    " true. If this regresses, the
     toggle silently does nothing (exactly last night's user-facing symptom)."""
     import app.services.random_reply_service as rrs
     from app.crud import account as account_crud
@@ -138,13 +138,13 @@ async def test_execute_random_reply_resolves_empty_targets_to_all_account_groups
 
     monkeypatch.setattr(rrs, "async_session_maker", lambda: db_session_cm(db_session))
 
-    account = Account(id="acct-dialogs", phone="+821011112222", name="대상계정", status="active")
+    account = Account(id="acct-dialogs", phone="+821011112222", name="", status="active")
     db_session.add(account)
     await db_session.flush()
 
     macro = await macro_crud.get_or_create_for_account(db_session, "acct-dialogs")
     macro.is_active = True
-    macro.message_content = "자동 답장 메시지"
+    macro.message_content = "  "
     assert macro.target_chats == "[]"
     await db_session.commit()
 
@@ -168,7 +168,7 @@ async def test_execute_random_reply_resolves_empty_targets_to_all_account_groups
     deliver_mock.assert_awaited_once()
     sent_request = deliver_mock.await_args.kwargs.get("request") or deliver_mock.await_args.args[0]
     assert sent_request.recipients == ["-1001"]
-    assert sent_request.message == "자동 답장 메시지"
+    assert sent_request.message == "  "
 
 
 async def _async_iter(items):

@@ -10,7 +10,7 @@ from app.database import Base
 class AiBroadcastDraft(Base):
     """An audit trail entry for a POST /api/ai/generate-broadcast call.
 
-    History-only — this never sends anything itself. Recorded for every call
+    History-only  this never sends anything itself. Recorded for every call
     (even when the model's JSON reply degrades to plain text) so operators can
     review what AI drafted/recommended, matching the AutoReplySuggestion /
     AiOpsReport precedent of keeping a record of AI output.

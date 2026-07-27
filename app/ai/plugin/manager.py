@@ -1,7 +1,7 @@
 """
-Plugin Manager — discovers, loads, and manages AI platform plugins.
+Plugin Manager  discovers, loads, and manages AI platform plugins.
 
-Handles plugin lifecycle: discovery → validation → initialization → activation.
+Handles plugin lifecycle: discovery  validation  initialization  activation.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class PluginManager:
         self._plugins: dict[str, AiPluginBase] = {}
         self._loaded = False
 
-    # ── Plugin Lifecycle ─────────────────────────────────────────────
+    #  Plugin Lifecycle 
 
     async def discover_and_load(self) -> int:
         """Discover plugins from configured paths and load them.
@@ -106,7 +106,7 @@ class PluginManager:
                 plugin_instance = obj()
                 await self.load_plugin(plugin_instance)
 
-    # ── Accessors ────────────────────────────────────────────────────
+    #  Accessors 
 
     def get_plugin(self, name: str) -> AiPluginBase | None:
         """Get a loaded plugin by name."""
@@ -124,7 +124,7 @@ class PluginManager:
         return self._loaded
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _manager: PluginManager | None = None
 

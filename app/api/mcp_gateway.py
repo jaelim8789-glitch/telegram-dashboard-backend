@@ -1,9 +1,9 @@
 """MCP Gateway HTTP API (TeleMon AI Platform Phase 1).
 
 Exposes the gateway over REST so the AI Operations Center frontend can:
-- ``GET  /api/mcp-gateway/catalog`` — list registered servers and their tools,
-- ``POST /api/mcp-gateway/invoke``   — call a tool (with approval gating),
-- ``POST /api/mcp-gateway/approve``  — approve a pending approval-gated call.
+- ``GET  /api/mcp-gateway/catalog``  list registered servers and their tools,
+- ``POST /api/mcp-gateway/invoke``    call a tool (with approval gating),
+- ``POST /api/mcp-gateway/approve``   approve a pending approval-gated call.
 
 Auth mirrors the rest of the app (``require_api_key_or_admin``).
 """
@@ -22,7 +22,7 @@ from app.services.mcp_gateway import gateway
 router = APIRouter(prefix="/api/mcp-gateway", tags=["mcp-gateway"])
 
 
-# ─── Schemas ─────────────────────────────────────────────────────────────────
+#  Schemas 
 
 
 class InvokeRequest(BaseModel):
@@ -37,7 +37,7 @@ class ApproveRequest(BaseModel):
     request_id: str
 
 
-# ─── Endpoints ──────────────────────────────────────────────────────────────
+#  Endpoints 
 
 
 @router.get("/catalog")

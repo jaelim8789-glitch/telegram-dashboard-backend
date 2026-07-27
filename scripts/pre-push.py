@@ -22,24 +22,24 @@ errors = 0
 
 def run(cmd, label, env=None):
     global errors
-    print(f"🔍 [{label}] ...", flush=True)
+    print(f" [{label}] ...", flush=True)
     result = subprocess.run(
         cmd, shell=True, capture_output=True, text=True, cwd=REPO_ROOT, env={**os.environ, **(env or {})}
     )
     if result.returncode != 0:
-        print(f"❌ [{label}] 실패:")
+        print(f" [{label}] :")
         for line in (result.stdout + result.stderr).split("\n")[-30:]:
             print(f"   {line}")
         errors += 1
         return False
-    print(f"✅ [{label}] 통과")
+    print(f" [{label}] ")
     return True
 
 
 def main():
     global errors
     print("=" * 60)
-    print("🔍 [pre-push] TeleMon Backend 검사")
+    print(" [pre-push] TeleMon Backend ")
     print("=" * 60)
 
     # 1. Import check (no DB needed)
@@ -96,19 +96,19 @@ def main():
     if result.returncode == 0:
         heads = [line for line in result.stdout.strip().split("\n") if line.strip()]
         if len(heads) != 1:
-            print(f"❌ [alembic-heads] 멀티헤드 감지 ({len(heads)}개)")
+            print(f" [alembic-heads]   ({len(heads)})")
             for h in heads:
                 print(f"   - {h.strip()}")
             errors += 1
         else:
-            print(f"✅ [alembic-heads] 단일 head ({heads[0].split()[0]})")
+            print(f" [alembic-heads]  head ({heads[0].split()[0]})")
 
     print("=" * 60)
     if errors > 0:
-        print(f"\n❌ {errors}개 검사 실패 — push가 차단되었습니다.")
+        print(f"\n {errors}    push .")
         sys.exit(1)
     else:
-        print("\n🎉 모든 검사 통과 — push 진행합니다.")
+        print("\n     push .")
 
 
 if __name__ == "__main__":

@@ -25,10 +25,10 @@ async def test_login_wrong_password_returns_401(unauthenticated_client):
 @pytest.mark.asyncio
 async def test_login_wrong_password_with_non_ascii_returns_401_not_500(unauthenticated_client):
     # secrets.compare_digest raises TypeError on non-ASCII str input unless both sides
-    # are encoded to bytes first — a wrong password containing e.g. Korean characters
+    # are encoded to bytes first  a wrong password containing e.g. Korean characters
     # must still cleanly 401, not 500.
     res = await unauthenticated_client.post(
-        "/api/admin/login", json={"username": settings.admin_username, "password": "완전히-틀린-비밀번호"}
+        "/api/admin/login", json={"username": settings.admin_username, "password": "--"}
     )
     assert res.status_code == 401
 

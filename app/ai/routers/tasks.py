@@ -1,4 +1,4 @@
-"""AI Tasks API — manage task queue and view task status."""
+"""AI Tasks API  manage task queue and view task status."""
 
 from __future__ import annotations
 

@@ -24,7 +24,7 @@ async def _make_account(db_session, phone="+821022229999"):
     return await account_crud.create_account(db_session, AccountCreate(phone=phone))
 
 
-async def _make_scheduled_broadcast(db_session, account_id, *, seconds_ago=5, message="예약 발송"):
+async def _make_scheduled_broadcast(db_session, account_id, *, seconds_ago=5, message=" "):
     payload = BroadcastCreate(account_id=account_id, message=message, recipients=["-100999"])
     scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=seconds_ago)
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=scheduled_at)
@@ -43,9 +43,9 @@ async def _make_macro(db_session, account_id, **kwargs):
     return await macro_crud.create_macro(db_session, account_id, ReplyMacroCreate(**defaults))
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Sprint 14 tests (preserved)
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_dispatch_processes_due_broadcast(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_dispatch_ignores_not_yet_due_broadcast(db_session, monkeypatch):
     account = await _make_account(db_session)
-    payload = BroadcastCreate(account_id=account.id, message="아직 안 됨", recipients=["-100999"])
+    payload = BroadcastCreate(account_id=account.id, message="  ", recipients=["-100999"])
     future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
     await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=future)
 
@@ -82,13 +82,13 @@ async def test_dispatch_defers_rate_limited_broadcast_leaving_it_pending(db_sess
     account = await _make_account(db_session)
 
     # An already-sent broadcast for this account within the last minute...
-    already_sent = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=120, message="이미 보냄")
+    already_sent = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=120, message=" ")
     already_sent.status = "sent"
     already_sent.sent_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
     await db_session.commit()
 
     # ...blocks a second, currently-due scheduled broadcast for the same account.
-    blocked = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=5, message="막힌 예약 발송")
+    blocked = await _make_scheduled_broadcast(db_session, account.id, seconds_ago=5, message="  ")
 
     process_mock = AsyncMock(return_value=None)
     monkeypatch.setattr("app.scheduler.scheduler.process_broadcast", process_mock)
@@ -100,9 +100,9 @@ async def test_dispatch_defers_rate_limited_broadcast_leaving_it_pending(db_sess
     assert blocked.status == "pending"  # left alone; the next 30s tick will retry it
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Sprint 22 — Error isolation tests
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# Sprint 22  Error isolation tests
+# 
 
 
 @pytest.mark.asyncio
@@ -198,4 +198,4 @@ async def test_dispatch_clears_running_set_after_failure(db_session, monkeypatch
     assert broadcast.id not in scheduler_module._running_broadcasts
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 

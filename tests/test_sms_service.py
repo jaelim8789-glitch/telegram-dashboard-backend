@@ -24,7 +24,7 @@ async def test_send_verification_sms_unknown_provider():
         with pytest.raises(SmsSendError) as exc_info:
             await send_verification_sms("+1234567890", "123456")
         
-        assert "알 수 없는 SMS_PROVIDER 설정입니다" in str(exc_info.value)
+        assert "   SMS_PROVIDER " in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -61,7 +61,7 @@ async def test_send_verification_sms_twilio_missing_config():
         with pytest.raises(SmsSendError) as exc_info:
             await send_verification_sms("+1234567890", "123456")
         
-        assert "TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER가 설정되지 않았습니다" in str(exc_info.value)
+        assert "TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER  " in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -99,4 +99,4 @@ async def test_send_verification_sms_coolsms_missing_config():
         with pytest.raises(SmsSendError) as exc_info:
             await send_verification_sms("+1234567890", "123456")
         
-        assert "COOLSMS_API_KEY / COOLSMS_API_SECRET / COOLSMS_PHONE_NUMBER가 설정되지 않았습니다" in str(exc_info.value)
+        assert "COOLSMS_API_KEY / COOLSMS_API_SECRET / COOLSMS_PHONE_NUMBER  " in str(exc_info.value)

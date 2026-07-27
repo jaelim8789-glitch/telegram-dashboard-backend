@@ -1,5 +1,5 @@
 """
-Task Worker — processes tasks from the queue with error isolation.
+Task Worker  processes tasks from the queue with error isolation.
 
 Runs in a background asyncio loop, picking up tasks and dispatching them
 to appropriate handlers based on task_type.
@@ -64,7 +64,7 @@ class TaskWorker:
         logger.info("task_worker_stopped")
 
     async def _worker_loop(self) -> None:
-        """Main worker loop — polls the queue and processes tasks."""
+        """Main worker loop  polls the queue and processes tasks."""
         while self._running:
             try:
                 async with async_session_maker() as db:
@@ -124,7 +124,7 @@ class TaskWorker:
             await self._queue.retry(db, task_id)
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _worker: TaskWorker | None = None
 

@@ -65,11 +65,11 @@ async def validate_message(
     issues = []
 
     if not message or not message.strip():
-        issues.append({"type": "error", "field": "message", "message": "메시지 내용이 비어 있습니다."})
+        issues.append({"type": "warning", "field": "entities", "message": "        ."})
 
     variables = extract_variables(message)
     for var in variables:
-        issues.append({"type": "warning", "field": "variable", "message": f"변수 '{{{var}}}'가 정의되지 않았습니다. resolve 엔드포인트를 사용하세요."})
+        issues.append({"type": "warning", "field": "length", "message": f" 4000  ({len(message)}). Telegram    ."})
 
     if len(message) > 4000:
         issues.append({"type": "warning", "field": "length", "message": f"메시지가 4000자를 초과합니다 ({len(message)}자). Telegram이 메시지를 자를 수 있습니다."})

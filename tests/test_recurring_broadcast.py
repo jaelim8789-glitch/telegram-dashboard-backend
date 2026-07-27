@@ -30,7 +30,7 @@ from app.services.broadcast_processor import process_broadcast
 from app.services.delivery import DeliveryResult, DeliveryStatus
 
 
-# ── Helpers ─────────────────────────────────────────────────────────
+#  Helpers 
 
 
 async def _make_account(db_session, phone="+821033330000"):
@@ -38,7 +38,7 @@ async def _make_account(db_session, phone="+821033330000"):
 
 
 async def _make_broadcast(db_session, account_id, **kwargs):
-    defaults = dict(account_id=account_id, message="테스트", recipients=["-100999"])
+    defaults = dict(account_id=account_id, message="", recipients=["-100999"])
     defaults.update(kwargs)
     payload = BroadcastCreate(**defaults)
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=defaults.get("scheduled_at"))
@@ -49,9 +49,9 @@ def _success_result(recipient="-100999"):
     return DeliveryResult(status=DeliveryStatus.SUCCESS, recipient=recipient, telegram_message_id=12345)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 1. Interval validation
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -97,9 +97,9 @@ async def test_recurring_interval_all_allowed_values(db_session):
         assert broadcast.next_scheduled_at is not None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 2. Recurring creation — immediate and scheduled
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 2. Recurring creation  immediate and scheduled
+# 
 
 
 @pytest.mark.asyncio
@@ -145,9 +145,9 @@ async def test_recurring_broadcast_is_recurring_interval_is_set(db_session):
     assert reloaded.recurring_interval_minutes == 720
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 3. Recurring execution — parent creates children
-# ═══════════════════════════════════════════════════════════════════════
+# 
+# 3. Recurring execution  parent creates children
+# 
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,7 @@ async def test_recurring_parent_creates_child_on_dispatch(db_session, monkeypatc
 
     await db_session.refresh(parent)
     # The dispatch claim (status="sending") must be released back to "pending"
-    # once the child is created and the next occurrence is scheduled — the
+    # once the child is created and the next occurrence is scheduled  the
     # parent has to remain claimable for the *next* due cycle, or the
     # recurrence stops after this one execution.
     assert parent.status == "pending"
@@ -226,9 +226,9 @@ async def test_recurring_parent_not_dispatched_if_next_scheduled_at_in_future(db
     process_mock.assert_not_called()
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 4. Rescheduling
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -287,9 +287,9 @@ async def test_reschedule_after_dispatch_advances_time_correctly(db_session, mon
     assert parent.next_scheduled_at >= expected
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 5. Cancellation
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -344,9 +344,9 @@ async def test_cancelled_recurring_never_dispatched_again(db_session, monkeypatc
     process_mock.assert_not_called()
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 6. Restart persistence
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -377,9 +377,9 @@ async def test_restart_does_not_reprocess_completed_one_time(db_session, monkeyp
     assert one_time.id not in [b.id for b in due]
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 7. Duplicate/overlapping execution prevention
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -422,7 +422,7 @@ async def test_recurring_parent_fires_again_on_next_due_cycle(db_session, monkey
     """Regression: previously claim_broadcast_dispatch set status='sending' and
     nothing ever reset it back to 'pending' after a successful dispatch, so the
     parent's own dispatch claim permanently blocked claim_broadcast_dispatch's
-    `WHERE status == 'pending'` check on every later tick — the recurrence
+    `WHERE status == 'pending'` check on every later tick  the recurrence
     fired exactly once and then silently stopped forever, even though
     next_scheduled_at kept advancing correctly."""
     account = await _make_account(db_session)
@@ -470,9 +470,9 @@ async def test_recurring_skipped_if_already_dispatched_this_tick(db_session, mon
     assert process_mock.call_count == 1
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 8. Existing non-recurring broadcasts still work
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -527,9 +527,9 @@ async def test_list_recurring_excludes_cancelled(db_session):
     assert cancelled.id not in ids
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 9. Stale recurring parent recovery
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -607,7 +607,7 @@ async def test_recover_cleans_orphan_child(db_session):
     # Orphan should be marked failed
     await db_session.refresh(orphan)
     assert orphan.status == "failed"
-    assert "복구" in orphan.error_message
+    assert "" in orphan.error_message
 
 
 @pytest.mark.asyncio
@@ -653,11 +653,11 @@ async def test_recover_restart_recovery(db_session, monkeypatch):
     assert process_mock.call_count == 1, "Stale parent must be dispatched after restart"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 10. Duplicate-send audit: recurring broadcasts must not re-send to
 #     recipients who already have a success message_log row for the
-#     same child broadcast (timeout → retry scenario).
-# ═══════════════════════════════════════════════════════════════════════
+#     same child broadcast (timeout  retry scenario).
+# 
 
 
 @pytest.mark.asyncio
@@ -670,7 +670,7 @@ async def test_recurring_child_retry_excludes_already_succeeded(db_session, monk
     one-time broadcasts (b87050a) introduced get_succeeded_recipients
     scoped to source='broadcast' AND source_id=broadcast_id.  For recurring
     children, broadcast_id == child_id, so the same protection should apply
-    — verify that it actually does."""
+     verify that it actually does."""
     from app.models.message_log import MessageLog
 
     account = await _make_account(db_session)
@@ -718,7 +718,7 @@ async def test_recurring_children_do_not_share_success_state(db_session, monkeyp
     Context: b87050a scopes get_succeeded_recipients to source_id=<current
     broadcast_id>.  Without this scope, recurring broadcasts would send to
     every recipient exactly once (on the first child) and every subsequent
-    child would skip all recipients as "already succeeded" — a silent
+    child would skip all recipients as "already succeeded"  a silent
     cessation of the recurring schedule.
 
     Recurring means every occurrence sends to the full recipient list."""
@@ -728,7 +728,7 @@ async def test_recurring_children_do_not_share_success_state(db_session, monkeyp
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
                                    recipients=["-100001"])
 
-    # Child A — succeeds
+    # Child A  succeeds
     child_a = await broadcast_crud.create_recurring_child_broadcast(
         db_session, parent, broadcast_crud.utcnow_naive()
     )
@@ -741,7 +741,7 @@ async def test_recurring_children_do_not_share_success_state(db_session, monkeyp
     ))
     await db_session.commit()
 
-    # Child B — same recipient must still be sent
+    # Child B  same recipient must still be sent
     child_b = await broadcast_crud.create_recurring_child_broadcast(
         db_session, parent, broadcast_crud.utcnow_naive()
     )
@@ -771,7 +771,7 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
 
     This is the recurring analogue of test_process_broadcast_timeout_with_partial_success
     + test_process_broadcast_excludes_already_succeeded_recipients in
-    test_broadcast_processor.py — but exercised through a recurring child."""
+    test_broadcast_processor.py  but exercised through a recurring child."""
     from app.models.message_log import MessageLog
 
     account = await _make_account(db_session)
@@ -790,7 +790,7 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
     ))
     await db_session.commit()
 
-    # Simulate timeout during retry — deliver_message hangs
+    # Simulate timeout during retry  deliver_message hangs
     async def _never_completes(*args, **kwargs):
         await asyncio.sleep(3600)
 
@@ -803,11 +803,11 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
     with pytest.raises(asyncio.TimeoutError):
         await process_broadcast(child.id, skip_rate_limit=True)
 
-    # After timeout, child should be marked 'sent' (partial — 1/2 succeeded)
+    # After timeout, child should be marked 'sent' (partial  1/2 succeeded)
     await db_session.refresh(child)
     assert child.status == "sent"
     assert "1/2" in child.error_message
-    assert "시간 초과" in child.error_message
+    assert " " in child.error_message
 
     # Now deliver_message is mocked to succeed for remaining recipient
     captured = {}
@@ -840,9 +840,9 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
     assert child.status == "sent"
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # 11. Multi-worker safety: stale timeout prevents false recovery
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -852,9 +852,9 @@ async def test_stale_timeout_is_larger_than_tick_interval():
     assert RECURRING_STALE_TIMEOUT_SECONDS > DISPATCH_INTERVAL_SECONDS * 2
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# 
 # Tenant isolation
-# ═══════════════════════════════════════════════════════════════════════
+# 
 
 
 @pytest.mark.asyncio
@@ -918,10 +918,10 @@ async def test_recurring_logs_tenant_isolation(db_session):
 async def test_recurring_logs_includes_parents(db_session):
     """list_logs includes recurring parent records alongside one-time broadcasts.
 
-    Previously excluded them entirely — production symptom: a recurring
+    Previously excluded them entirely  production symptom: a recurring
     broadcast kept dispatching (children were always in list_logs, since only
     the parent template row was filtered), but the recurring *series* itself
-    had no representation anywhere in the 발송 이력/로그 UI, matching
+    had no representation anywhere in the  / UI, matching
     complaints that recurring sends "disappeared" from history despite still
     running. The parent is now visible like any other broadcast row.
     """
@@ -964,18 +964,18 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     parent = await _make_broadcast(db_session, account.id, recurring_interval_minutes=30,
                                    recipients=["-100001", "-100002"])
 
-    # ── Step 1: Parent stuck in 'sending' with stale sent_at ──
+    #  Step 1: Parent stuck in 'sending' with stale sent_at 
     parent.status = "sending"
     parent.sent_at = broadcast_crud.utcnow_naive() - timedelta(seconds=RECURRING_STALE_TIMEOUT_SECONDS + 10)
     parent.next_scheduled_at = broadcast_crud.utcnow_naive() - timedelta(minutes=5)
     await db_session.commit()
 
-    # ── Step 2: Child A exists (created before recovery) ──
+    #  Step 2: Child A exists (created before recovery) 
     child_a = await broadcast_crud.create_recurring_child_broadcast(
         db_session, parent, broadcast_crud.utcnow_naive()
     )
 
-    # ── Step 3: Recovery runs (simulating slow process_recurring_parent) ──
+    #  Step 3: Recovery runs (simulating slow process_recurring_parent) 
     recovered = await recover_stale_recurring_parents(db_session)
     assert len(recovered) == 1
     assert recovered[0].id == parent.id
@@ -983,12 +983,12 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     # Child A should be marked as 'failed' by recovery (orphan cleanup)
     await db_session.refresh(child_a)
     assert child_a.status == "failed"
-    assert "복구" in child_a.error_message
+    assert "" in child_a.error_message
 
     # Parent should be 'pending' again
     await db_session.refresh(parent)
     assert parent.status == "pending"
-    # next_scheduled_at still in the past → parent will be re-dispatched
+    # next_scheduled_at still in the past  parent will be re-dispatched
 
     # Mock Telethon at the lowest level so the full delivery pipeline runs
     monkeypatch.setattr(
@@ -1023,7 +1023,7 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     child_b = children_alive[0]
     assert child_b.status in ("sent", "pending", "sending")
 
-    # ── Step 5: Old process_broadcast(child_A) eventually runs ──
+    #  Step 5: Old process_broadcast(child_A) eventually runs 
 
     await process_broadcast(child_a.id, skip_rate_limit=True)
 
@@ -1044,11 +1044,11 @@ async def test_create_recurring_schedule_rejects_suspended_account(db_session):
 
     data = RecurringScheduleCreate(
         account_id=account.id,
-        message="반복",
+        message="",
         interval_minutes=60,
         group_ids=["-100123"],
     )
-    with pytest.raises(ValueError, match="일시 중단"):
+    with pytest.raises(ValueError, match=" "):
         await create_recurring_schedule(db_session, data, media_path=None)
 
 

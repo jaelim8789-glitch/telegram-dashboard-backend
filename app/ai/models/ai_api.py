@@ -1,5 +1,5 @@
 """
-AI API Models — external API provider configurations and call logs.
+AI API Models  external API provider configurations and call logs.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.database import Base
 
 
 class AiApiProviderConfig(Base):
-    """AI API Provider Config — configuration for external AI API providers."""
+    """AI API Provider Config  configuration for external AI API providers."""
 
     __tablename__ = "ai_api_provider_configs"
 
@@ -38,7 +38,7 @@ class AiApiProviderConfig(Base):
 
 
 class AiApiCallLog(Base):
-    """AI API Call Log — record of every external API call made by the AI platform."""
+    """AI API Call Log  record of every external API call made by the AI platform."""
 
     __tablename__ = "ai_api_call_logs"
 

@@ -1,5 +1,5 @@
 """
-AI Event Bus — in-memory pub/sub for AI platform events.
+AI Event Bus  in-memory pub/sub for AI platform events.
 
 Supports typed event emissions with subscriber filtering, async handlers,
 error isolation, and audit logging.
@@ -37,7 +37,7 @@ class EventBus:
         self._db_subscriptions: dict[str, AiEventSubscription] = {}
         self._running = False
 
-    # ── Event Emission ───────────────────────────────────────────────
+    #  Event Emission 
 
     async def publish(
         self,
@@ -123,7 +123,7 @@ class EventBus:
             except ValueError:
                 pass
 
-    # ── DB-backed subscriptions ──────────────────────────────────────
+    #  DB-backed subscriptions 
 
     async def load_subscriptions(self, db: AsyncSession) -> int:
         """Load active subscriptions from the database."""
@@ -137,7 +137,7 @@ class EventBus:
         logger.info("event_subscriptions_loaded", count=len(subs))
         return len(subs)
 
-    # ── Internal ─────────────────────────────────────────────────────
+    #  Internal 
 
     async def _safe_call(
         self, handler: EventHandler, event_type: str, payload: dict[str, Any]
@@ -181,7 +181,7 @@ class EventBus:
         self._db_subscriptions.clear()
 
 
-# ── Singleton ─────────────────────────────────────────────────────────
+#  Singleton 
 
 _bus: EventBus | None = None
 

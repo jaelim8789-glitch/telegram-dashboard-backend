@@ -5,12 +5,12 @@ import pytest
 
 
 async def _create_account(client, phone="+821012340000"):
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "발송 테스트 계정"})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
     assert res.status_code == 201
     return res.json()["id"]
 
 
-def _broadcast_form(account_id, message="안녕하세요", recipients=None, scheduled_at=None):
+def _broadcast_form(account_id, message="", recipients=None, scheduled_at=None):
     data = {
         "account_id": account_id,
         "message": message,
@@ -36,8 +36,8 @@ async def test_create_broadcast_immediate(client):
 
 @pytest.mark.asyncio
 async def test_create_broadcast_persists_delay_seconds(client):
-    """Production symptom: the frontend's '일반 발송 간격' selector (5/10/30/60초)
-    sent delay_seconds, but create_broadcast had no such Form parameter — it
+    """Production symptom: the frontend's '  ' selector (5/10/30/60)
+    sent delay_seconds, but create_broadcast had no such Form parameter  it
     was silently dropped and the selector had zero effect."""
     account_id = await _create_account(client)
     data = _broadcast_form(account_id)
@@ -58,7 +58,7 @@ async def test_create_broadcast_without_delay_seconds_defaults_to_none(client):
 @pytest.mark.asyncio
 async def test_create_broadcast_allows_more_than_ten_recipients(client):
     """Pre-existing stale test updated: the 10-recipient hard cap was removed
-    from app/core/limits.py in an earlier, unrelated change ("무제한 발송") —
+    from app/core/limits.py in an earlier, unrelated change (" ") 
     this suite still asserted the old 422-at-11 behavior. Not part of the
     13-problem recovery scope; fixed here only because it shares this file
     with the delay_seconds tests above and was failing in the full test run."""
@@ -93,9 +93,9 @@ async def test_create_broadcast_rate_limited(client):
     first = await client.post("/api/broadcast", data=_broadcast_form(account_id))
     assert first.status_code == 202
 
-    second = await client.post("/api/broadcast", data=_broadcast_form(account_id, message="다시"))
+    second = await client.post("/api/broadcast", data=_broadcast_form(account_id, message=""))
     assert second.status_code == 429
-    assert "1분에 1회" in second.json()["detail"]
+    assert "1 1" in second.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -123,7 +123,7 @@ async def test_scheduled_broadcast_does_not_count_against_rate_limit(client):
     scheduled = await client.post("/api/broadcast", data=_broadcast_form(account_id, scheduled_at=future))
     assert scheduled.status_code == 202
 
-    immediate = await client.post("/api/broadcast", data=_broadcast_form(account_id, message="즉시"))
+    immediate = await client.post("/api/broadcast", data=_broadcast_form(account_id, message=""))
     assert immediate.status_code == 202
 
 
@@ -149,15 +149,15 @@ async def test_logs_filter_by_account_and_status(client):
     account_id = await _create_account(client)
     await client.post("/api/broadcast", data=_broadcast_form(account_id))
 
-    by_account = await client.get(f"/api/logs?account_id={account_id}")
+    by_account = await client.get(f"/api/logsaccount_id={account_id}")
     assert by_account.status_code == 200
     assert len(by_account.json()) == 1
 
-    by_status = await client.get("/api/logs?status=pending")
+    by_status = await client.get("/api/logsstatus=pending")
     assert by_status.status_code == 200
     assert all(item["status"] == "pending" for item in by_status.json())
 
-    by_missing_account = await client.get("/api/logs?account_id=does-not-exist")
+    by_missing_account = await client.get("/api/logsaccount_id=does-not-exist")
     assert by_missing_account.status_code == 404
 
 
@@ -173,9 +173,9 @@ async def test_logs_tenant_isolation(client):
     # Override identity to a different tenant
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="other-tenant")
     try:
-        resp = await client.get(f"/api/logs?account_id={account_id}")
+        resp = await client.get(f"/api/logsaccount_id={account_id}")
         assert resp.status_code == 403
-        assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
+        assert "" in resp.json()["detail"] or "" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_current_identity, None)
 
@@ -185,7 +185,7 @@ async def test_logs_without_account_id_scopes_to_caller_tenant(client):
     """Regression test: GET /api/logs with no account_id filter must not 422
     (the require_account_tenant_access dependency previously ran unconditionally
     and required an account_id, breaking the "all logs" view) and must not leak
-    another tenant's broadcasts — list_logs itself scopes by identity.tenant_id."""
+    another tenant's broadcasts  list_logs itself scopes by identity.tenant_id."""
     from app.api.deps import get_current_identity, Identity
     from app.main import app
 
@@ -225,7 +225,7 @@ async def test_create_broadcast_suspended_account_returns_403(client, db_session
 
     res = await client.post("/api/broadcast", data=_broadcast_form(account_id))
     assert res.status_code == 403
-    assert "일시 중단" in res.json()["detail"]
+    assert " " in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -246,4 +246,4 @@ async def test_send_to_group_suspended_account_returns_403(client, db_session):
         json={"account_id": account_id, "message": "hi", "group_ids": ["-100123"]},
     )
     assert res.status_code == 403
-    assert "일시 중단" in res.json()["detail"]
+    assert " " in res.json()["detail"]

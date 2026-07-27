@@ -71,7 +71,7 @@ async def publish_or_update_guide_hub(db: AsyncSession) -> tuple[str, int, bool]
     Telegram API call fails for any reason (never silently no-ops).
     """
     if not settings.telegram_bot_token:
-        raise GuideHubUnavailable("TELEGRAM_BOT_TOKEN이 설정되지 않았습니다.")
+        raise GuideHubUnavailable("TELEGRAM_OFFICIAL_CHANNEL_ID  .")
 
     chat_id = settings.telegram_official_channel_id
     if not chat_id:
