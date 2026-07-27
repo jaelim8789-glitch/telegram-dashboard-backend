@@ -12,8 +12,8 @@ from app.models.tenant import Tenant
 
 logger = get_logger(__name__)
 
-DEFAULT_TIERS: list[tuple[int, str, str]] = [
-    ("0", "0.10", "湲곕낯"),
+DEFAULT_TIERS: list[tuple[str, str, str]] = [
+    ("0", "0.10", "기본"),
     ("5", "0.15", "Pro"),
     ("10", "0.20", "VIP"),
 ]
@@ -67,7 +67,7 @@ async def get_min_payout(db: AsyncSession) -> int:
 
 def _get_tier(referral_count: int, tiers: list[tuple[int, float, str]]) -> tuple[float, str]:
     rate = 0.10
-    label = "湲곕낯"
+    label = "기본"
     for min_refs, tier_rate, tier_label in tiers:
         if referral_count >= min_refs and tier_rate > rate:
             rate = tier_rate
@@ -149,10 +149,10 @@ async def create_commission(
     if referrer and referrer.telegram_chat_id:
         await _send_telegram_notification(
             referrer.telegram_chat_id,
-            f"?럦 ?덈줈??異붿쿇??而ㅻ??섏씠 諛쒖깮?덉뒿?덈떎!\n\n"
-            f"湲덉븸: {commission_amount}??n"
-            f"?섏닔猷뚯쑉: {int(rate * 100)}%\n"
-            f"?곹깭: 吏湲??湲?以?,
+            f"새로운 추천인 커미션이 발생했습니다!\n\n"
+            f"금액: {commission_amount}원\n"
+            f"수수료율: {int(rate * 100)}%\n"
+            f"상태: 지급 대기 중",
         )
 
     return commission
@@ -243,7 +243,7 @@ async def approve_payout(db: AsyncSession, payout_id: str, actor_id: str | None 
     if referrer and referrer.telegram_chat_id:
         await _send_telegram_notification(
             referrer.telegram_chat_id,
-            f"??{payout.amount}?먯씠 ?뺤궛 ?꾨즺?섏뿀?듬땲??\n\n媛먯궗?⑸땲??",
+            f"{payout.amount}원이 정산 완료되었습니다!\n\n감사합니다.",
         )
 
     return True
@@ -268,7 +268,7 @@ async def cancel_commission(db: AsyncSession, commission_id: str, actor_id: str 
     if referrer and referrer.telegram_chat_id:
         await _send_telegram_notification(
             referrer.telegram_chat_id,
-            f"?좑툘 而ㅻ??섏씠 痍⑥냼?섏뿀?듬땲??\n湲덉븸: {commission.commission_amount}??n?ъ쑀: 寃곗젣 痍⑥냼/?섎텋",
+            f"커미션이 취소되었습니다.\n금액: {commission.commission_amount}원\n사유: 결제 취소/환불",
         )
 
     return True
@@ -498,7 +498,7 @@ async def get_admin_code_stats(db: AsyncSession) -> list[dict]:
 def generate_commissions_csv(commissions: list[dict]) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "異붿쿇?퇙D", "異붿쿇?몄쟾?붾쾲??, "異붿쿇?몄쟾?붾쾲??, "寃곗젣?좏삎", "寃곗젣湲덉븸", "?섏닔猷뚯쑉", "?섏닔猷뚭툑??, "?곹깭", "?앹꽦??])
+    writer.writerow(["ID", "추천인ID", "추천인전화번호", "추천대상전화번호", "결제유형", "결제금액", "수수료율", "수수료금액", "상태", "생성일"])
     for c in commissions:
         writer.writerow([c["id"], c["referrer_id"], c["referrer_phone"], c["referred_user_phone"], c["source_type"], c["amount"], c["commission_rate"], c["commission_amount"], c["status"], str(c["created_at"])])
     return output.getvalue()
@@ -507,15 +507,15 @@ def generate_commissions_csv(commissions: list[dict]) -> str:
 def generate_stats_csv(stats: dict) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["吏??, "媛?])
-    writer.writerow(["?꾩껜 異붿쿇????, stats["total_referrers"]])
-    writer.writerow(["?꾩껜 異붿쿇 ??, stats["total_referred"]])
-    writer.writerow(["?湲곗쨷 而ㅻ???嫄댁닔", stats["total_commissions_pending"]])
-    writer.writerow(["吏湲됱셿猷?而ㅻ???嫄댁닔", stats["total_commissions_paid"]])
-    writer.writerow(["?湲곗쨷 而ㅻ???湲덉븸", stats["total_commission_amount_pending"]])
-    writer.writerow(["吏湲됱셿猷?而ㅻ???湲덉븸", stats["total_commission_amount_paid"]])
+    writer.writerow(["지표", "값"])
+    writer.writerow(["전체 추천인 수", stats["total_referrers"]])
+    writer.writerow(["전체 추천 수", stats["total_referred"]])
+    writer.writerow(["대기중 커미션 건수", stats["total_commissions_pending"]])
+    writer.writerow(["지급완료 커미션 건수", stats["total_commissions_paid"]])
+    writer.writerow(["대기중 커미션 금액", stats["total_commission_amount_pending"]])
+    writer.writerow(["지급완료 커미션 금액", stats["total_commission_amount_paid"]])
     writer.writerow([])
-    writer.writerow(["?쇱옄", "媛?낆옄??, "而ㅻ??섍툑??])
+    writer.writerow(["일자", "가입자수", "커미션금액"])
     for d in stats["daily"]:
         writer.writerow([d["date"], d["signups"], d["commissions"]])
     return output.getvalue()

@@ -64,7 +64,7 @@ MAX_GENERATION_RETRIES = 20
 def _generate_code() -> str:
     prefix = random.choice(string.ascii_uppercase + string.digits)
     nums = "".join(random.choices(string.digits, k=4))
-    suffix = random.choice(["蹂?, "鍮?, "??, "遊?, "??, "??, "??, "??, "??, "??])
+    suffix = random.choice(["별", "빛", "달", "봄", "여", "온", "연", "하", "누", "라"])
     return f"{prefix}{nums}{suffix}"
 
 
@@ -89,9 +89,8 @@ async def _get_or_create_referral_code(db: AsyncSession, tenant_id: str) -> Refe
             return ref_code
 
     raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="異붿쿇??肄붾뱶 ?앹꽦???ㅽ뙣?덉뒿?덈떎. ?좎떆 ???ㅼ떆 ?쒕룄?댁＜?몄슂.",
-    )
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,        detail="추천인 코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        )
 
 
 @router.post("/generate", response_model=GenerateReferralCodeResponse)
@@ -102,7 +101,7 @@ async def generate_referral_code(
 ):
     client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "referral_generate", max_attempts=5, window_seconds=60):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="?덈Т 留롮? ?붿껌?낅땲?? ?좎떆 ???ㅼ떆 ?쒕룄?댁＜?몄슂.")
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
 
     ref_code = await _get_or_create_referral_code(db, identity.tenant_id)
     return GenerateReferralCodeResponse(code=ref_code.code, referral_code_id=ref_code.id)
@@ -120,7 +119,7 @@ async def get_my_referral_code(
     if not ref_code:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="異붿쿇??肄붾뱶媛 ?놁뒿?덈떎. 癒쇱? 肄붾뱶瑜??앹꽦?댁＜?몄슂.",
+            detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.",
         )
     return GenerateReferralCodeResponse(code=ref_code.code, referral_code_id=ref_code.id)
 
@@ -137,7 +136,7 @@ async def get_my_referral_link(
     if not ref_code:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="異붿쿇??肄붾뱶媛 ?놁뒿?덈떎. 癒쇱? 肄붾뱶瑜??앹꽦?댁＜?몄슂.",
+            detail="추천인 코드가 없습니다. 먼저 코드를 생성해주세요.",
         )
     link = f"https://t.me/{settings.telegram_bot_username}?start=ref_{ref_code.code}"
     return {"link": link, "code": ref_code.code}
@@ -161,7 +160,7 @@ async def set_my_wallet_address(
     db: AsyncSession = Depends(get_db),
 ):
     await set_wallet_address(db, identity.tenant_id, payload.wallet_address)
-    return {"success": True, "message": "吏媛?二쇱냼媛 ??λ릺?덉뒿?덈떎."}
+    return {"success": True, "message": "지갑 주소가 저장되었습니다."}
 
 
 @router.get("/dashboard", response_model=ReferralDashboardResponse)
@@ -175,7 +174,7 @@ async def get_referral_dashboard(
     ref_code = ref_code_result.scalar_one_or_none()
 
     referred_result = await db.execute(
-        select(Tenant).where(identity.referred_by == (ref_code.id if ref_code else None))
+        select(Tenant).where(Tenant.referred_by == (ref_code.id if ref_code else None))
     )
     referred_tenants = list(referred_result.scalars().all())
 
@@ -260,19 +259,19 @@ async def mark_commission_paid(
     if not commission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="?대떦 而ㅻ??섏쓣 李얠쓣 ???놁뒿?덈떎.",
+            detail="해당 커미션을 찾을 수 없습니다.",
         )
     if commission.status == "paid":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="?대? 吏湲??꾨즺??而ㅻ??섏엯?덈떎.",
+            detail="이미 지급 완료된 커미션입니다.",
         )
     commission.status = "paid"
     await db.commit()
 
     from app.services.referral import log_audit
     await log_audit(db, "commission.mark_paid", actor_id=identity.tenant_id, target_id=commission_id, details=f"Commission {commission_id} marked paid manually")
-    return {"success": True, "message": "而ㅻ??섏씠 吏湲??꾨즺 泥섎━?섏뿀?듬땲??"}
+    return {"success": True, "message": "커미션이 지급 완료 처리되었습니다."}
 
 
 @router.post("/admin/process-payouts", response_model=ProcessPayoutResponse)
@@ -285,7 +284,7 @@ async def admin_process_payouts(
         success=True,
         payouts_created=payouts_created,
         total_amount=total_amount,
-        message=f"{payouts_created}紐낆쓽 異붿쿇?몄뿉 ???吏湲됰??곸씠 ?앹꽦?섏뿀?듬땲?? ?뱀씤 ???ㅼ젣 吏湲됰맗?덈떎." if payouts_created else "吏湲됲븷 而ㅻ??섏씠 ?놁뒿?덈떎.",
+        message=f"{payouts_created}명의 추천인에 대한 지급대상이 생성되었습니다. 승인 후 실제 지급됩니다." if payouts_created else "지급할 커미션이 없습니다.",
     )
 
 
@@ -321,9 +320,9 @@ async def admin_approve_payout(
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="?대떦 吏湲됰??곸쓣 李얠쓣 ???녾굅???대? 泥섎━?섏뿀?듬땲??",
+            detail="해당 지급대상을 찾을 수 없거나 이미 처리되었습니다.",
         )
-    return {"success": True, "message": "吏湲됱씠 ?뱀씤?섏뿀?듬땲?? 愿??而ㅻ??섏씠 吏湲??꾨즺 泥섎━?섏뿀?듬땲??"}
+    return {"success": True, "message": "지급이 승인되었습니다. 관련 커미션이 지급 완료 처리되었습니다."}
 
 
 @router.get("/admin/payouts")
@@ -374,9 +373,15 @@ async def set_telegram_chat_id(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ):
-    Tenant.telegram_chat_id = payload.chat_id
+    tenant = await db.get(Tenant, identity.tenant_id)
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="테넌트를 찾을 수 없습니다.",
+        )
+    tenant.telegram_chat_id = payload.chat_id
     await db.commit()
-    return {"success": True, "message": "?붾젅洹몃옩 ?뚮┝???ㅼ젙?섏뿀?듬땲??"}
+    return {"success": True, "message": "텔레그램 알림이 설정되었습니다."}
 
 
 @router.post("/admin/commissions/{commission_id}/cancel")
@@ -390,9 +395,9 @@ async def admin_cancel_commission(
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="?대떦 而ㅻ??섏쓣 李얠쓣 ???녾굅???대? 痍⑥냼?섏뿀?듬땲??",
+            detail="해당 커미션을 찾을 수 없거나 이미 취소되었습니다.",
         )
-    return {"success": True, "message": "而ㅻ??섏씠 痍⑥냼?섏뿀?듬땲??"}
+    return {"success": True, "message": "커미션이 취소되었습니다."}
 
 
 @router.get("/stats/csv")
@@ -451,14 +456,14 @@ async def change_referral_code(
 ):
     client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "referral_change_code", max_attempts=3, window_seconds=300):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="?덈Т 留롮? ?붿껌?낅땲?? ?좎떆 ???ㅼ떆 ?쒕룄?댁＜?몄슂.")
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
 
     result = await db.execute(
         select(ReferralCode).where(ReferralCode.owner_id == identity.tenant_id)
     )
     ref_code = result.scalar_one_or_none()
     if not ref_code:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="異붿쿇??肄붾뱶媛 ?놁뒿?덈떎.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다.")
 
     existing = await db.execute(
         select(ReferralCode).where(
@@ -467,7 +472,7 @@ async def change_referral_code(
         )
     )
     if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="?대? ?ъ슜 以묒씤 肄붾뱶?낅땲??")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미 사용 중인 코드입니다.")
 
     old_code = ref_code.code
     ref_code.code = payload.new_code
@@ -476,7 +481,7 @@ async def change_referral_code(
     from app.services.referral import log_audit
     await log_audit(db, "code.change", actor_id=identity.tenant_id, target_id=ref_code.id, details=f"Code changed: {old_code} -> {payload.new_code}")
 
-    return {"success": True, "code": payload.new_code, "message": "肄붾뱶媛 蹂寃쎈릺?덉뒿?덈떎."}
+    return {"success": True, "code": payload.new_code, "message": "코드가 변경되었습니다."}
 
 
 @router.get("/my-qr")
@@ -491,7 +496,7 @@ async def get_referral_qr(
     )
     ref_code = result.scalar_one_or_none()
     if not ref_code:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="異붿쿇??肄붾뱶媛 ?놁뒿?덈떎.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="추천인 코드가 없습니다.")
 
     link = f"https://t.me/{settings.telegram_bot_username}?start=ref_{ref_code.code}"
     img = qrcode.make(link)
@@ -538,7 +543,7 @@ async def update_admin_settings(
     from app.services.referral import log_audit
     await log_audit(db, "settings.update", actor_id=identity.tenant_id, details=f"Settings updated: {[s.key for s in payload.settings]}")
 
-    return {"success": True, "message": "?ㅼ젙????λ릺?덉뒿?덈떎."}
+    return {"success": True, "message": "설정이 저장되었습니다."}
 
 
 @router.get("/admin/codes", response_model=AdminCodeStatsResponse)
