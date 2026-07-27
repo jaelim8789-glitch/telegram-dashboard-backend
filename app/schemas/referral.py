@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -15,7 +15,6 @@ class ReferralReferredUser(BaseModel):
     plan: str
     has_paid: bool
     joined_at: datetime | None = None
-    level: int | None = None
 
 
 class ReferralDashboardResponse(BaseModel):
@@ -24,12 +23,6 @@ class ReferralDashboardResponse(BaseModel):
     referred_users: list[ReferralReferredUser] = []
     pending_commission_total: int = 0
     paid_commission_total: int = 0
-    tier_label: str = "기본"
-    tier_rate: float = 0.50
-    distributor_level: int = 1
-    badges: list[str] = []
-    weekly_referrals: int = 0
-    conversion_stats: dict = {}
 
 
 class AdminPendingCommissionItem(BaseModel):
@@ -41,7 +34,6 @@ class AdminPendingCommissionItem(BaseModel):
     amount: int
     commission_rate: float
     commission_amount: int
-    level: int = 1
     created_at: datetime
 
 
@@ -55,8 +47,6 @@ class PayoutRecord(BaseModel):
     referrer_id: str
     referrer_phone: str
     amount: int
-    fee: int = 0
-    payout_type: str = "standard"
     status: str
     paid_at: datetime | None = None
     created_at: datetime
@@ -76,7 +66,6 @@ class LeaderboardEntry(BaseModel):
     referral_count: int
     total_commission_earned: int
     tier: str
-    level: int = 1
 
 
 class LeaderboardResponse(BaseModel):
@@ -107,13 +96,8 @@ class SetWalletRequest(BaseModel):
     wallet_address: str = Field(min_length=10, max_length=100)
 
 
-class SetPayoutMethodRequest(BaseModel):
-    method: Literal["wallet", "stars", "credit"]
-    wallet_address: str | None = None
-
-
 class ChangeCodeRequest(BaseModel):
-    new_code: str = Field(min_length=3, max_length=20, pattern=r"^[A-Za-z0-9가-힣]+$")
+    new_code: str = Field(min_length=3, max_length=20, pattern=r"^[A-Za-z0-9媛-??+$")
 
 
 class CommissionItem(BaseModel):
@@ -123,7 +107,6 @@ class CommissionItem(BaseModel):
     amount: int
     commission_rate: float
     commission_amount: int
-    level: int = 1
     status: str
     created_at: datetime
 
@@ -156,118 +139,3 @@ class AdminCodeStatsItem(BaseModel):
 
 class AdminCodeStatsResponse(BaseModel):
     items: list[AdminCodeStatsItem] = []
-
-
-class RegisterDistributorResponse(BaseModel):
-    success: bool
-    message: str
-    is_distributor: bool
-
-
-class DistributorStatusResponse(BaseModel):
-    is_distributor: bool
-
-
-class DistributorListItem(BaseModel):
-    tenant_id: str
-    phone: str
-    plan: str
-    referral_code: str
-    referral_count: int
-    total_revenue: int
-    total_commission: int
-    total_payout: int
-    commission_rate_override: float | None = None
-    status: str
-    level: int = 1
-    created_at: datetime | None = None
-
-
-class DistributorListResponse(BaseModel):
-    items: list[DistributorListItem] = []
-    total_count: int = 0
-
-
-class SetDistributorRateRequest(BaseModel):
-    rate: float = Field(ge=0.0, le=1.0)
-
-
-class SuspendDistributorRequest(BaseModel):
-    reason: str = Field(max_length=500)
-    suspended: bool = True
-
-
-class RejectPayoutRequest(BaseModel):
-    reason: str = Field(max_length=500)
-
-
-class SettlementAuditItem(BaseModel):
-    id: str
-    action: str
-    actor_id: str | None = None
-    target_id: str | None = None
-    details: str
-    created_at: datetime
-
-
-class SettlementAuditResponse(BaseModel):
-    items: list[SettlementAuditItem] = []
-
-
-class InstantCashoutRequest(BaseModel):
-    amount: int | None = Field(default=None, ge=1000)
-
-
-class InstantCashoutResponse(BaseModel):
-    success: bool
-    payout_id: str | None = None
-    amount: int = 0
-    fee: int = 0
-    net_amount: int = 0
-    message: str
-
-
-class BadgeInfo(BaseModel):
-    badge_key: str
-    earned_at: datetime | None = None
-
-
-class BadgesResponse(BaseModel):
-    badges: list[BadgeInfo] = []
-    all_badges: list[dict] = []
-
-
-class WeeklyMission(BaseModel):
-    key: str
-    label: str
-    current: int
-    target: int
-    reward: str
-    completed: bool
-
-
-class WeeklyMissionsResponse(BaseModel):
-    missions: list[WeeklyMission] = []
-
-
-class SetDistributorMemoRequest(BaseModel):
-    memo: str = Field(max_length=500)
-
-
-class GetDistributorMemoResponse(BaseModel):
-    memo: str
-
-
-class PendingPayoutCountResponse(BaseModel):
-    count: int
-
-
-class SetWebhookRequest(BaseModel):
-    url: str = Field(max_length=500)
-
-
-class ConversionAnalytics(BaseModel):
-    total_clicks: int = 0
-    total_signups: int = 0
-    conversion_rate: float = 0.0
-    daily_clicks: list[dict] = []

@@ -1,4 +1,4 @@
-"""add referral_payouts table
+﻿"""add referral_payouts table
 
 Revision ID: d4e5f6a7b8c9
 Revises: a7b8c9d0e1f2
@@ -13,7 +13,7 @@ from sqlalchemy.engine import reflection
 
 
 revision: str = "d4e5f6a7b8c9"
-down_revision: Union[str, None] = "b3d9f1a2c4e6"
+down_revision: Union[str, None] = "a7b8c9d0e1f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -22,7 +22,7 @@ from app.models.session import UserSession
 from app.models.tenant import Lead, PaymentRecord, Tenant, UsageRecord
 from app.models.token import TokenBalance, TokenTransaction, StreakRecord
 from app.models.user import PhoneVerification, User
-from app.models.referral import ReferralCode, ReferralCommission
+from app.models.referral import ReferralCode, ReferralCommission, ReferralPayout, ReferralConfig, ReferralAuditLog
 
 __all__ = [
     "StyleProfile",
@@ -67,5 +67,8 @@ __all__ = [
     "User",
     "ReferralCode",
     "ReferralCommission",
+    "ReferralPayout",
+    "ReferralConfig",
+    "ReferralAuditLog",
     "BroadcastScheduleEntry",
 ]
