@@ -577,7 +577,7 @@ async def test_referral_rate_limit(client: AsyncClient):
     from app.core.rate_limiter import reset_rate_limits
     reset_rate_limits()
 
-    for _ in range(5):
+    for _ in range(10):
         res = await client.post("/api/referrals/generate", headers={"Authorization": f"Bearer {user_jwt}"})
         assert res.status_code == 200
 

@@ -100,7 +100,7 @@ async def generate_referral_code(
     db: AsyncSession = Depends(get_db),
 ):
     client_ip = get_client_ip(request)
-    if not check_rate_limit(client_ip, "referral_generate", max_attempts=5, window_seconds=60):
+    if not check_rate_limit(client_ip, "referral_generate", max_attempts=10, window_seconds=60):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
 
     ref_code = await _get_or_create_referral_code(db, identity.tenant_id)
@@ -455,7 +455,7 @@ async def change_referral_code(
     db: AsyncSession = Depends(get_db),
 ):
     client_ip = get_client_ip(request)
-    if not check_rate_limit(client_ip, "referral_change_code", max_attempts=3, window_seconds=300):
+    if not check_rate_limit(client_ip, "referral_change_code", max_attempts=5, window_seconds=300):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="너무 많은 요청입니다. 잠시 후 다시 시도해주세요.")
 
     result = await db.execute(

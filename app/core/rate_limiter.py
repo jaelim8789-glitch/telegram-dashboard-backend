@@ -27,7 +27,10 @@ _CLEANUP_INTERVAL_SECONDS = 300.0
 
 
 def _prune(category_key: tuple[str, str], window_seconds: float) -> list[float]:
-    """Return timestamps still within the window, pruning stale entries."""
+    """Return timestamps still within the window, pruning stale entries.
+
+    Caller MUST hold _window_lock.
+    """
     now = time.time()
     cutoff = now - window_seconds
     timestamps = _window.get(category_key, [])
@@ -41,18 +44,21 @@ def _prune(category_key: tuple[str, str], window_seconds: float) -> list[float]:
 
 def _periodic_cleanup() -> None:
     """Remove all entries whose timestamps are older than window_seconds."""
-    now = time.time()
-    keys_to_expire: list[tuple[str, str]] = []
-    for key, timestamps in _window.items():
-        if not timestamps:
-            keys_to_expire.append(key)
-            continue
-        cutoff = now - max(ts for ts in timestamps) - 1.0
-        if timestamps[-1] < cutoff:
-            keys_to_expire.append(key)
-    for key in keys_to_expire:
-        _window.pop(key, None)
-    logger.debug("rate_limiter_cleanup", removed=len(keys_to_expire), remaining=len(_window))
+    with _window_lock:
+        now = time.time()
+        keys_to_expire: list[tuple[str, str]] = []
+        for key, timestamps in list(_window.items()):
+            if not timestamps:
+                keys_to_expire.append(key)
+                continue
+            cutoff = now - max(ts for ts in timestamps) - 1.0
+            if timestamps[-1] < cutoff:
+                keys_to_expire.append(key)
+        for key in keys_to_expire:
+            _window.pop(key, None)
+        removed = len(keys_to_expire)
+        remaining = len(_window)
+    logger.debug("rate_limiter_cleanup", removed=removed, remaining=remaining)
     threading.Timer(_CLEANUP_INTERVAL_SECONDS, _periodic_cleanup).start()
 
 
@@ -67,16 +73,17 @@ def check_rate_limit(
 ) -> bool:
     """Returns True if the request is allowed, False if rate-limited."""
     key = (client_ip, category)
-    active = _prune(key, window_seconds)
-
-    if len(active) >= max_attempts:
-        logger.warning("rate_limit_exceeded", category=category, ip=client_ip)
-        return False
-
     with _window_lock:
+        active = _prune(key, window_seconds)
+
+        if len(active) >= max_attempts:
+            logger.warning("rate_limit_exceeded", category=category, ip=client_ip)
+            return False
+
         if len(_window) >= _MAX_ENTRIES and key not in _window:
             logger.warning("rate_limiter_at_capacity", ip=client_ip, category=category)
             return False
+
         _window.setdefault(key, []).append(time.time())
     return True
 
@@ -84,28 +91,30 @@ def check_rate_limit(
 def get_retry_after_seconds(client_ip: str, category: str, window_seconds: float = 300.0) -> int:
     """Return seconds until the oldest entry in the window expires."""
     key = (client_ip, category)
-    timestamps = _window.get(key, [])
-    if not timestamps:
-        return 0
-    now = time.time()
-    cutoff = now - window_seconds
-    for ts in timestamps:
-        remaining = ts + window_seconds - now
-        if remaining > 0:
-            return int(remaining) + 1
+    with _window_lock:
+        timestamps = _window.get(key, [])
+        if not timestamps:
+            return 0
+        now = time.time()
+        for ts in timestamps:
+            remaining = ts + window_seconds - now
+            if remaining > 0:
+                return int(remaining) + 1
     return 0
 
 
 def reset_rate_limits() -> None:
     """Clear all rate-limit state. Used in tests between cases."""
-    _window.clear()
+    with _window_lock:
+        _window.clear()
 
 
 def reset_rate_limit_for_ip(client_ip: str) -> None:
     """Clear rate-limit state for a specific IP. Used in tests."""
-    keys = [k for k in _window if k[0] == client_ip]
-    for k in keys:
-        _window.pop(k, None)
+    with _window_lock:
+        keys = [k for k in _window if k[0] == client_ip]
+        for k in keys:
+            _window.pop(k, None)
 
 
 def get_client_ip(request: Request) -> str:
