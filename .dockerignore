@@ -8,3 +8,9 @@ __pycache__
 media
 logs
 tests
+.gitignore
+*.md
+docs/
+.github/
+.vscode/
+scripts/
