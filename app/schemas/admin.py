@@ -18,6 +18,15 @@ class AdminMeResponse(BaseModel):
     username: str
 
 
+class AdminSetupRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminSetupResponse(BaseModel):
+    username: str
+
+
 class UserLookupResponse(BaseModel):
     model_config = {"from_attributes": True}
 
