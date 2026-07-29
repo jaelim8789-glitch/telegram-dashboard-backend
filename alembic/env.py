@@ -33,6 +33,10 @@ from app.models import (  # noqa: F401 - ensures models are registered on Base.m
     Tenant,
     UsageRecord,
     User,
+    Document,
+    Chunk,
+    SearchLog,
+    Feedback,
 )
 from app.ai.models import (  # noqa: F401 - ensures AI Platform models are registered on Base.metadata
     AiApiCallLog,

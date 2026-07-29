@@ -1,0 +1,24 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      alembic:
+        specifier: ^0.0.3
+        version: 0.0.3
+
+packages:
+
+  alembic@0.0.3:
+    resolution: {integrity: sha512-hM73PLl2g+SkpQRtfJbsBVz0UQHKTqkklkgZ7fXwVCeRHP8aPuoG4gpoGbr5ZGGy2zZ42qEMOViYjNwxsrCxRA==}
+    cpu: [x64]
+    os: [win32, darwin]
+
+snapshots:
+
+  alembic@0.0.3: {}

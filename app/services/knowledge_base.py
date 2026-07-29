@@ -58,7 +58,7 @@ async def ingest_document(db: AsyncSession, title: str, content: str, collection
     doc = Document(
         title=title, content=content, source_url=source_url,
         collection=collection, permission_groups=permission_groups or [],
-        metadata=metadata or {}, created_by=user_id,
+        extra=metadata or {}, created_by=user_id,
     )
     db.add(doc)
     await db.flush()

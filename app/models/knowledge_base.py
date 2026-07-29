@@ -18,7 +18,7 @@ class Document(Base):
     source_type: Mapped[str] = mapped_column(String(50), default="manual")
     collection: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     permission_groups: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
-    metadata: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    extra: Mapped[dict | None] = mapped_column("extra", JSONB, default=dict)
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     is_published: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))
@@ -37,7 +37,7 @@ class Chunk(Base):
     chunk_type: Mapped[str] = mapped_column(String(50), default="paragraph")
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(nullable=True)  # vector(1536) added via raw SQL / migration
-    metadata: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    extra: Mapped[dict | None] = mapped_column("extra", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

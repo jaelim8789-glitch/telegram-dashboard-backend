@@ -11,7 +11,7 @@ class DocumentCreate(BaseModel):
     source_url: str | None = None
     collection: str = "general"
     permission_groups: list[str] = []
-    metadata: dict = {}
+    extra: dict = {}
 
 
 class DocumentOut(BaseModel):
