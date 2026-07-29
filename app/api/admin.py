@@ -7,7 +7,7 @@ from app.api.deps import get_current_identity, require_admin
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
-from app.core.security import create_access_token, generate_user_api_key, hash_api_key, hash_password, mask_api_key, verify_admin_credentials
+from app.core.security import create_access_token, generate_user_api_key, hash_api_key, hash_password, mask_api_key, verify_admin_credentials, verify_admin_credentials_hash
 from app.core.time import utcnow_naive
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
@@ -23,6 +23,8 @@ from app.schemas.admin import (
     AdminDashboardStatusResponse,
     AdminLoginRequest,
     AdminMeResponse,
+    AdminSetupRequest,
+    AdminSetupResponse,
     AdminTokenResponse,
     AdminSetupRequest,
     AdminSetupResponse,
@@ -85,6 +87,7 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
             detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(retry_after)},
         )
+<<<<<<< HEAD
     if verify_admin_credentials(payload.username, payload.password):
         logger.info("admin_login_success")
         return AdminTokenResponse(access_token=create_access_token())
@@ -121,6 +124,44 @@ async def admin_setup(payload: AdminSetupRequest, db: AsyncSession = Depends(get
     await db.commit()
     logger.info("admin_setup_complete", username=payload.username)
     return AdminSetupResponse()
+||||||| 3819186
+    if not verify_admin_credentials(payload.username, payload.password):
+        logger.warning("admin_login_failed", username=payload.username)
+        raise HTTPException(status_code=400, detail="  .")
+    logger.info("admin_login_success")
+    return AdminTokenResponse(access_token=create_access_token())
+=======
+    ok = verify_admin_credentials(payload.username, payload.password)
+    if not ok:
+        result = await db.execute(select(SystemSetting).where(SystemSetting.key.in_(["admin_db_username", "admin_db_password_hash"])))
+        rows = {row.key: row.value for row in result.scalars().all()}
+        stored_username = rows.get("admin_db_username")
+        stored_password_hash = rows.get("admin_db_password_hash")
+        if stored_username and stored_password_hash:
+            ok = verify_admin_credentials_hash(payload.username, payload.password, stored_username, stored_password_hash)
+    if not ok:
+        logger.warning("admin_login_failed", username=payload.username)
+        raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    logger.info("admin_login_success")
+    return AdminTokenResponse(access_token=create_access_token())
+>>>>>>> origin/master
+
+
+@router.post("/setup", response_model=AdminSetupResponse)
+async def setup_admin(payload: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
+    """One-time creation of a DB-backed admin account, for when ADMIN_USERNAME/
+    ADMIN_PASSWORD env vars aren't set on the host. Fails once an account already
+    exists — use the (future) admin credential-rotation flow to change it after."""
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_db_username"))
+    if result.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="관리자 계정이 이미 설정되어 있습니다.")
+    if not payload.username.strip() or len(payload.password) < 8:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="아이디를 입력하고 비밀번호는 8자 이상으로 설정해주세요.")
+    db.add(SystemSetting(key="admin_db_username", value=payload.username.strip(), description="DB-backed admin login username"))
+    db.add(SystemSetting(key="admin_db_password_hash", value=hash_password(payload.password), description="DB-backed admin login password hash"))
+    await db.commit()
+    logger.info("admin_setup_completed", username=payload.username)
+    return AdminSetupResponse(username=payload.username.strip())
 
 
 @router.get("/me", response_model=AdminMeResponse, dependencies=[Depends(require_admin)])

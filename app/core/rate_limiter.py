@@ -59,7 +59,14 @@ def _periodic_cleanup() -> None:
         removed = len(keys_to_expire)
         remaining = len(_window)
     logger.debug("rate_limiter_cleanup", removed=removed, remaining=remaining)
-    threading.Timer(_CLEANUP_INTERVAL_SECONDS, _periodic_cleanup).start()
+    _schedule_cleanup()
+
+
+def _schedule_cleanup() -> None:
+    """Schedule cleanup without keeping short-lived CLI processes alive."""
+    timer = threading.Timer(_CLEANUP_INTERVAL_SECONDS, _periodic_cleanup)
+    timer.daemon = True
+    timer.start()
 
 
 _periodic_cleanup()

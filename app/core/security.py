@@ -26,9 +26,19 @@ def verify_admin_credentials(username: str, password: str) -> bool:
     # bytes or ASCII-only str (raises TypeError otherwise), so encode first  a wrong
     # password containing non-ASCII characters (e.g. Korean) would otherwise 500 instead
     # of cleanly reporting "invalid credentials".
+    if not settings.admin_username or not settings.admin_password:
+        return False
     return secrets.compare_digest(
         username.encode("utf-8"), settings.admin_username.encode("utf-8")
     ) and secrets.compare_digest(password.encode("utf-8"), settings.admin_password.encode("utf-8"))
+
+
+def verify_admin_credentials_hash(username: str, password: str, stored_username: str, stored_password_hash: str) -> bool:
+    """Same constant-time comparison as verify_admin_credentials, but against a
+    DB-stored username/password-hash pair set up via POST /api/admin/setup."""
+    return secrets.compare_digest(
+        username.encode("utf-8"), stored_username.encode("utf-8")
+    ) and secrets.compare_digest(hash_password(password).encode("utf-8"), stored_password_hash.encode("utf-8"))
 
 
 def create_access_token() -> str:

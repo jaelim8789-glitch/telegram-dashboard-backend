@@ -27,4 +27,7 @@ test-results/
 *.db  
 tsconfig.tsbuildinfo  
 next-env.d.ts  
-telegram-dashboard-backend/  
+telegram-dashboard-backend/
+*.key
+*.p12
+credentials.json
