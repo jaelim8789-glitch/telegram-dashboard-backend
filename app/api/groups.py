@@ -3,12 +3,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import time
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
 from app.schemas.group import GroupRead, GroupListParams, PaginatedGroups, GroupRecoveryInfo
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_folders, list_groups
+from telethon.errors import FloodWaitError
 
 router = APIRouter(prefix="/api/accounts", tags=["groups"])
+logger = get_logger(__name__)
 
 _groups_cache: dict = {}
 _groups_cache_ttl = 60
@@ -57,8 +60,16 @@ async def read_groups(
             _set_cached_groups(account_id, all_groups)
     except AccountNotAuthenticatedError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    except Exception as exc:
+        logger.exception(f"Unexpected error fetching groups for {account_id}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Telegram API 오류가 발생했습니다.")
 
     # Search
     if search:
@@ -126,8 +137,15 @@ async def get_group_discovery_info(
         all_groups = await list_groups(account)
     except AccountNotAuthenticatedError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정이 인증되지 않았습니다.")
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Telegram API 오류가 발생했습니다.")
 
     groups = [g for g in all_groups if g["type"] in ("group", "megagroup")]
     channels = [g for g in all_groups if g["type"] == "channel"]

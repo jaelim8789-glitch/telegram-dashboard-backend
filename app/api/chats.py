@@ -2,12 +2,13 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
 from app.core.logging import get_logger
+from app.crud import account as account_crud
 from app.database import get_db
 from app.schemas.chat_telegram import (
     TelegramDialog, TelegramMessage, SendMessageRequest,
@@ -17,7 +18,8 @@ from app.services.chat_actions import (
     list_dialogs, fetch_messages, send_chat_message, stream_new_messages,
     search_messages, send_typing_indicator, mute_dialog, pin_dialog, delete_dialog,
 )
-from app.crud import account as account_crud
+from app.services.telegram_actions import AccountNotAuthenticatedError
+from telethon.errors import FloodWaitError
 
 router = APIRouter(prefix="/api/chat-telegram", tags=["chat-telegram"])
 logger = get_logger(__name__)
@@ -34,9 +36,21 @@ async def get_dialogs(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
 
-    dialogs = await list_dialogs(account_id, limit=limit)
+    try:
+        dialogs = await list_dialogs(account_id, limit=limit)
+    except AccountNotAuthenticatedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    except Exception as exc:
+        logger.exception(f"Unexpected error fetching dialogs for {account_id}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Telegram API 오류가 발생했습니다.")
+
     return dialogs
 
 
@@ -53,7 +67,7 @@ async def get_messages_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
 
     messages = await fetch_messages(account_id, chat_id, limit=limit, offset_id=offset_id)
     return messages
@@ -71,7 +85,7 @@ async def send_message_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
 
     result = await send_chat_message(
         account_id, chat_id, body.text,
@@ -92,7 +106,7 @@ async def stream_messages_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
 
     return StreamingResponse(
         stream_new_messages(account_id, chat_id),
@@ -117,7 +131,7 @@ async def search_messages_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
     results = await search_messages(account_id, q, chat_id=chat_id, limit=limit)
     return results
 
@@ -133,7 +147,7 @@ async def typing_indicator_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
     typing = body.get("typing", True)
     await send_typing_indicator(account_id, chat_id, typing=typing)
     return {"status": "ok"}
@@ -150,7 +164,7 @@ async def mute_dialog_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
     result = await mute_dialog(account_id, chat_id, mute=body.get("mute", True))
     return result
 
@@ -166,7 +180,7 @@ async def pin_dialog_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
     result = await pin_dialog(account_id, chat_id, pin=body.get("pin", True))
     return result
 
@@ -181,7 +195,7 @@ async def delete_dialog_endpoint(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    require_account_tenant_access(identity, account)
+    await require_account_tenant_access(account_id, db, identity)
     result = await delete_dialog(account_id, chat_id)
     return result
 
