@@ -99,6 +99,7 @@ from app.api.chats import router as chats_router
 from app.api.push_notifications import router as push_router
 from app.api.runtime import router as runtime_router
 from app.api.smart_folders import router as smart_folders_router
+from app.api.knowledge_base import router as knowledge_base_router
 from app.routes.ws import ws_router
 from app.routes.dashboard import dashboard_router
 from app.routes.miniapp_routes import router as miniapp_router
@@ -337,6 +338,7 @@ app.include_router(growth_loop_router, dependencies=_auth_required)
 app.include_router(dashboard_router, dependencies=_auth_required)
 app.include_router(ws_router)
 app.include_router(miniapp_router)
+app.include_router(knowledge_base_router)
 
 
 @app.get("/metrics")

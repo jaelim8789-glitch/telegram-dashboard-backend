@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     # on startup — only the Telegram-auth endpoints fail, with a clear error, until configured.
     telegram_api_id: str = ""
     telegram_api_hash: str = ""
+    # ── Knowledge Base / RAG ──
+    kb_openai_api_key: str = ""
+    kb_openai_base_url: str = "https://api.openai.com/v1"
+    kb_embedding_model: str = "text-embedding-3-small"
+    kb_llm_model: str = "gpt-4o-mini"
+
     # Optional — only needed for the /autoreply remote-control bot (BotFather token).
     # The dashboard's own on/off toggle works without it. This same bot also handles
     # official-channel membership verification for the free-trial signup gate below.
