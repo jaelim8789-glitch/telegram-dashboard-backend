@@ -21,10 +21,10 @@ router = APIRouter(prefix="/api/v1/kb", tags=["knowledge-base"])
 async def search(req: SearchRequest, db: AsyncSession = Depends(get_db),
                  identity: Identity = Depends(get_current_identity)):
     start = time.monotonic()
-    results, result_ids = await kb.search_knowledge_base(db, req.query, req.top_k, req.collection)
+    results, result_ids = await kb.search_knowledge_base(db, identity.tenant_id, req.query, req.top_k, req.collection)
     answer = await kb.generate_answer(req.query, results)
     latency = int((time.monotonic() - start) * 1000)
-    log_id = await kb.log_search(db, req.query, identity, result_ids, latency)
+    log_id = await kb.log_search(db, identity.tenant_id, req.query, identity, result_ids, latency)
     return SearchResponse(answer=answer, results=results, search_log_id=log_id)
 
 
@@ -33,8 +33,9 @@ async def ingest(doc: DocumentCreate, db: AsyncSession = Depends(get_db),
                  identity: Identity = Depends(get_current_identity)):
     if identity.kind not in ("admin", "user"):
         raise HTTPException(403, "관리자 또는 사용자만 문서를 등록할 수 있습니다.")
-    result = await kb.ingest_document(db, title=doc.title, content=doc.content, collection=doc.collection,
-                                      source_url=doc.source_url, permission_groups=doc.permission_groups,
+    result = await kb.ingest_document(db, tenant_id=identity.tenant_id, title=doc.title, content=doc.content,
+                                      collection=doc.collection, source_url=doc.source_url,
+                                      permission_groups=doc.permission_groups,
                                       metadata=doc.metadata, user_id=identity.user.id if identity.user else None)
     return DocumentOut(
         id=result.id, title=result.title, source_url=result.source_url,
@@ -45,8 +46,9 @@ async def ingest(doc: DocumentCreate, db: AsyncSession = Depends(get_db),
 
 
 @router.get("/documents", response_model=list[DocumentOut])
-async def list_documents(collection: str | None = None, db: AsyncSession = Depends(get_db)):
-    stmt = select(Document).order_by(Document.created_at.desc())
+async def list_documents(collection: str | None = None, db: AsyncSession = Depends(get_db),
+                         identity: Identity = Depends(get_current_identity)):
+    stmt = select(Document).where(Document.tenant_id == identity.tenant_id).order_by(Document.created_at.desc())
     if collection:
         stmt = stmt.where(Document.collection == collection)
     result = await db.execute(stmt)
@@ -62,7 +64,7 @@ async def list_documents(collection: str | None = None, db: AsyncSession = Depen
 async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db),
                           identity: Identity = Depends(get_current_identity)):
     doc = await db.get(Document, doc_id)
-    if not doc:
+    if not doc or doc.tenant_id != identity.tenant_id:
         raise HTTPException(404, "Document not found")
     await db.delete(doc)
     await db.commit()

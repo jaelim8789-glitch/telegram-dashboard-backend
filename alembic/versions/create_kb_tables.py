@@ -1,7 +1,7 @@
 """Create Knowledge Base tables (pgvector, documents, chunks, search logs, feedback)
 
 Revision ID: 003_create_kb_tables
-Revises: f8a5d3b2c1e0
+Revises: f7a8b9c0d1e2
 Create Date: 2026-07-30 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "003_create_kb_tables"
-down_revision: Union[str, None] = "f8a5d3b2c1e0"
+down_revision: Union[str, None] = "f7a8b9c0d1e2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -25,6 +25,7 @@ def upgrade() -> None:
     op.create_table(
         "kb_documents",
         sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("tenant_id", sa.String(36), nullable=False, index=True),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("content", sa.Text, nullable=False),
         sa.Column("source_url", sa.String(1000), nullable=True),
@@ -58,6 +59,7 @@ def upgrade() -> None:
     op.create_table(
         "kb_search_logs",
         sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("tenant_id", sa.String(36), nullable=False, index=True),
         sa.Column("query", sa.Text, nullable=False),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("results", postgresql.ARRAY(sa.String), nullable=True),
