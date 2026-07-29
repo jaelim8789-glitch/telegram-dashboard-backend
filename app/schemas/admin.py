@@ -137,3 +137,13 @@ class AdminAuditLogRead(BaseModel):
 
 class AdminAuditLogListResponse(BaseModel):
     items: list[AdminAuditLogRead]
+
+
+class AdminSetupRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=50)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class AdminSetupResponse(BaseModel):
+    ok: bool = True
+    message: str = "관리자 계정이 생성되었습니다."
