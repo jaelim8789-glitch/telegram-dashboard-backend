@@ -90,10 +90,13 @@ async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, to
                                 collection: str | None = None) -> tuple[list[SearchResult], list[str]]:
     """Hybrid search: vector cosine + keyword (FTS) + RRF fusion. Scoped to the caller's tenant."""
     query_embedding = (await embed_texts([query]))[0]
+    # asyncpg can't bind a Python list against a ::vector cast target directly —
+    # it needs the pgvector text literal format ("[0.1,0.2,...]").
+    query_embedding_literal = str(query_embedding)
 
     vector_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
-               1 - (c.embedding <=> :query_emb::vector) AS score
+               1 - (c.embedding <=> (:query_emb)::vector) AS score
         FROM kb_chunks c
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
@@ -102,7 +105,7 @@ async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, to
         ORDER BY score DESC
         LIMIT :limit
     """)
-    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding, tenant_id=tenant_id, collection=collection, limit=50)
+    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding_literal, tenant_id=tenant_id, collection=collection, limit=50)
 
     fts_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
