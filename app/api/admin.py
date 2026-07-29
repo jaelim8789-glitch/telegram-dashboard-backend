@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-import secrets
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,8 +25,6 @@ from app.schemas.admin import (
     AdminSetupRequest,
     AdminSetupResponse,
     AdminTokenResponse,
-    AdminSetupRequest,
-    AdminSetupResponse,
     GuideHubPublishResponse,
     ManualIssueRequest,
     ManualIssueResponse,
@@ -87,50 +84,6 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
             detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-<<<<<<< HEAD
-    if verify_admin_credentials(payload.username, payload.password):
-        logger.info("admin_login_success")
-        return AdminTokenResponse(access_token=create_access_token())
-    # Fallback: check DB-based admin credentials (system_settings)
-    user_result = await db.execute(
-        select(SystemSetting).where(SystemSetting.key == "admin_username")
-    )
-    pass_result = await db.execute(
-        select(SystemSetting).where(SystemSetting.key == "admin_password_hash")
-    )
-    db_user = user_result.scalar_one_or_none()
-    db_pass = pass_result.scalar_one_or_none()
-    if db_user and db_pass:
-        if secrets.compare_digest(
-            payload.username.encode("utf-8"), db_user.value.encode("utf-8")
-        ) and secrets.compare_digest(
-            hash_password(payload.password).encode("utf-8"), db_pass.value.encode("utf-8")
-        ):
-            logger.info("admin_login_success_db")
-            return AdminTokenResponse(access_token=create_access_token())
-    logger.warning("admin_login_failed", username=payload.username)
-    raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
-
-
-@router.post("/setup", response_model=AdminSetupResponse, status_code=status.HTTP_201_CREATED)
-async def admin_setup(payload: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(
-        select(SystemSetting).where(SystemSetting.key == "admin_username")
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="관리자 계정이 이미 설정되었습니다.")
-    db.add(SystemSetting(key="admin_username", value=payload.username, description="Admin login username (DB)"))
-    db.add(SystemSetting(key="admin_password_hash", value=hash_password(payload.password), description="Admin login password hash (DB)"))
-    await db.commit()
-    logger.info("admin_setup_complete", username=payload.username)
-    return AdminSetupResponse()
-||||||| 3819186
-    if not verify_admin_credentials(payload.username, payload.password):
-        logger.warning("admin_login_failed", username=payload.username)
-        raise HTTPException(status_code=400, detail="  .")
-    logger.info("admin_login_success")
-    return AdminTokenResponse(access_token=create_access_token())
-=======
     ok = verify_admin_credentials(payload.username, payload.password)
     if not ok:
         result = await db.execute(select(SystemSetting).where(SystemSetting.key.in_(["admin_db_username", "admin_db_password_hash"])))
@@ -144,7 +97,6 @@ async def admin_setup(payload: AdminSetupRequest, db: AsyncSession = Depends(get
         raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
     logger.info("admin_login_success")
     return AdminTokenResponse(access_token=create_access_token())
->>>>>>> origin/master
 
 
 @router.post("/setup", response_model=AdminSetupResponse)
@@ -161,7 +113,7 @@ async def setup_admin(payload: AdminSetupRequest, db: AsyncSession = Depends(get
     db.add(SystemSetting(key="admin_db_password_hash", value=hash_password(payload.password), description="DB-backed admin login password hash"))
     await db.commit()
     logger.info("admin_setup_completed", username=payload.username)
-    return AdminSetupResponse(username=payload.username.strip())
+    return AdminSetupResponse()
 
 
 @router.get("/me", response_model=AdminMeResponse, dependencies=[Depends(require_admin)])
