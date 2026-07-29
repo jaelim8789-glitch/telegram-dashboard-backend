@@ -101,7 +101,7 @@ async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, to
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
           AND d.tenant_id = :tenant_id
-          AND (:collection IS NULL OR d.collection = :collection)
+          AND ((:collection)::text IS NULL OR d.collection = (:collection)::text)
         ORDER BY score DESC
         LIMIT :limit
     """)
@@ -115,7 +115,7 @@ async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, to
         WHERE d.is_published = true
           AND d.tenant_id = :tenant_id
           AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :query)
-          AND (:collection IS NULL OR d.collection = :collection)
+          AND ((:collection)::text IS NULL OR d.collection = (:collection)::text)
         ORDER BY score DESC
         LIMIT :limit
     """)
