@@ -15,6 +15,7 @@ from telethon.tl.types import (
 from app.core.logging import get_logger
 from app.database import async_session_maker
 from app.crud import account as account_crud
+from telethon.errors import AuthKeyUnregisteredError
 from app.services.telegram_actions import get_authorized_client, AccountNotAuthenticatedError
 
 logger = get_logger(__name__)
@@ -118,15 +119,24 @@ async def list_dialogs(account_id: str, limit: int = 100) -> list[dict]:
         if account is None:
             raise ValueError("Account not found")
     client = await get_authorized_client(account)
-    me = await client.get_me()
-    my_user_id = me.id if me else None
+    try:
+        me = await client.get_me()
+        my_user_id = me.id if me else None
 
-    dialogs = []
-    async for dialog in client.iter_dialogs(limit=limit):
-        d = _dialog_to_dict(dialog)
-        if d:
-            dialogs.append(d)
-    return dialogs
+        dialogs = []
+        async for dialog in client.iter_dialogs(limit=limit):
+            d = _dialog_to_dict(dialog)
+            if d:
+                dialogs.append(d)
+        return dialogs
+    except AuthKeyUnregisteredError as exc:
+        # Session connected fine but Telegram has since revoked it (remote
+        # logout, "terminate this session" from another device, etc.) — only
+        # surfaces once an actual RPC call runs, so get_authorized_client's
+        # own SessionInvalidError guard never catches it.
+        raise AccountNotAuthenticatedError(
+            "텔레그램 세션이 만료되었습니다(다른 기기에서 로그아웃되었을 수 있음). 계정을 다시 인증해주세요."
+        ) from exc
 
 
 async def fetch_messages(
