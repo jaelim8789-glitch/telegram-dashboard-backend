@@ -433,3 +433,17 @@ async def health():
             "checks": {k: ("ok" if v is True else ("skipped" if v is None else "failed")) for k, v in checks.items()},
         },
     )
+
+
+# The module docstring has claimed ProxyHeadersMiddleware was in place, but it
+# was never actually wired up -- every request behind nginx/Cloudflare showed
+# up with request.client.host equal to nginx's own container IP, the same for
+# every real visitor. Anything keyed by client IP (the free-api-key/telegram
+# verification rate limiter, most visibly) was effectively rate-limiting all
+# users combined instead of each one individually. Wrapping the exported ASGI
+# app here (uvicorn imports this `app` symbol) makes request.client.host
+# resolve from X-Forwarded-For, trusting all hosts since nginx is the only
+# thing that can reach uvicorn directly (not internet-exposed itself).
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware  # noqa: E402
+
+app = ProxyHeadersMiddleware(app, trusted_hosts="*")
