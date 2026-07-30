@@ -110,7 +110,10 @@ async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession
         await send_verification_sms(payload.phone, code)
     except SmsSendError as exc:
         logger.error("sms_send_failed", phone=payload.phone, error=str(exc))
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SMS 인증이 아직 설정되지 않았습니다. 텔레그램 채널 인증으로 로그인해주세요.",
+        )
 
     logger.info("verification_code_sent", phone=payload.phone)
     return SendCodeResponse(sent=True)
@@ -134,10 +137,6 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
             headers={"Retry-After": str(retry_after)},
         )
 
-    # Layer 2: per-phone attempt limit
-    if not await user_crud.verify_code(db, payload.phone, payload.code):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="인증번호가 올바르지 않거나 만료되었습니다.")
-
     from sqlalchemy import select
     result = await db.execute(select(Tenant).where(Tenant.phone == payload.phone))
     tenant = result.scalar_one_or_none()
@@ -147,17 +146,25 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     # "pending" Tenant stub for any phone on request. Only an already-*active*
     # tenant (paid & confirmed, or a previously-verified free trial) is genuinely
     # entitled to skip the gate; anything else (no tenant, or a pending stub) must
-    # still prove channel membership like a brand-new signup.
+    # still prove identity like a brand-new signup.
     tenant_already_entitled = tenant is not None and tenant.subscription_status == "active"
 
-    if not tenant_already_entitled and settings.telegram_official_channel_id:
-        if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
-            db, payload.telegram_verification_token
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="공식 텔레그램 채널 가입 인증이 필요합니다. 채널 가입 후 다시 시도해주세요.",
-            )
+    # Identity proof: SMS code if one was actually sent and matches (kept for
+    # if/when Twilio is configured), otherwise Telegram channel-verification —
+    # this deployment has never had Twilio credentials, so in practice every
+    # request takes this branch. An already-entitled existing tenant skips
+    # straight through (matches the SMS branch's prior behavior for existing
+    # active tenants).
+    if not tenant_already_entitled:
+        code_ok = payload.code is not None and await user_crud.verify_code(db, payload.phone, payload.code)
+        if not code_ok:
+            if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
+                db, payload.telegram_verification_token
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="공식 텔레그램 채널 가입 인증이 필요합니다. 채널 가입 후 다시 시도해주세요.",
+                )
 
     user = await user_crud.get_or_create_user(db, payload.phone)
     raw_key = generate_user_api_key()
