@@ -4,11 +4,11 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity, get_db
-from app.models.knowledge_base import Document, Feedback
+from app.models.knowledge_base import Document, Feedback, SearchLog
 from app.schemas.knowledge_base import (DocumentCreate, DocumentOut, FeedbackCreate,
                                          SearchRequest, SearchResponse, SearchResult)
 from app.services import knowledge_base as kb
@@ -79,3 +79,32 @@ async def submit_feedback(fb: FeedbackCreate, db: AsyncSession = Depends(get_db)
     db.add(entry)
     await db.commit()
     return {"status": "ok"}
+
+
+@router.get("/admin/stats")
+async def kb_stats(db: AsyncSession = Depends(get_db),
+                   identity: Identity = Depends(get_current_identity)):
+    if identity.kind not in ("admin",):
+        raise HTTPException(403, "관리자만 조회할 수 있습니다.")
+
+    total_docs = await db.scalar(select(func.count(Document.id)))
+    total_searches = await db.scalar(select(func.count(SearchLog.id)))
+    avg_latency = await db.scalar(select(func.avg(SearchLog.latency_ms)))
+    recent_searches = await db.execute(
+        select(SearchLog.query, func.count(SearchLog.id).label("cnt"))
+        .where(SearchLog.created_at >= func.now() - text("interval '7 days'"))
+        .group_by(SearchLog.query)
+        .order_by(text("cnt DESC"))
+        .limit(10)
+    )
+    top_queries = [{"query": r[0], "count": r[1]} for r in recent_searches.all()]
+
+    return {
+        "total_documents": total_docs or 0,
+        "total_searches": total_searches or 0,
+        "avg_latency_ms": round(avg_latency or 0, 1),
+        "top_queries_last_7d": top_queries,
+        "collections": list(dict.fromkeys(r[0] for r in await db.execute(
+            select(Document.collection).distinct()
+        ).all())),
+    }
