@@ -177,7 +177,7 @@ async def call_llm_for_tenant(
     much larger free user base. Falls back to DeepSeek if Ollama fails, so a
     free user still gets a real answer instead of a dead end (at the cost of
     the DeepSeek call that routing was meant to avoid, but only on failure)."""
-    if tenant_plan == "free":
+    if settings.ollama_enabled and tenant_plan == "free":
         reply, tokens, _ = await call_ollama(messages, model=None)
         if reply is not None:
             return reply, tokens, None
