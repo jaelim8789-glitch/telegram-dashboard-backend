@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import Identity, get_current_identity, get_current_tenant_id, require_account_tenant_access, require_admin
 from app.database import get_db
 from app.core.logging import get_logger
+from app.models.tenant import Tenant
 from app.models.ai import (
     AiChatLog,
     AiReplyAssistantLog,
@@ -35,6 +36,7 @@ from app.models.ai import (
 )
 from app.services.ai_core_service import (
     call_deepseek,
+    call_llm_for_tenant,
     store_memory,
     search_memory,
     check_ai_quota,
@@ -224,8 +226,11 @@ async def ai_chat(
         messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": payload.message})
 
-    # Call DeepSeek
-    reply, tokens_used, _ = await call_deepseek(messages)
+    # Free-plan tenants route to the local Ollama model instead of DeepSeek
+    # (falls back to DeepSeek automatically if Ollama is unreachable).
+    tenant_plan_row = await db.execute(select(Tenant.plan).where(Tenant.id == tenant_id))
+    tenant_plan = tenant_plan_row.scalar_one_or_none() or "free"
+    reply, tokens_used, _ = await call_llm_for_tenant(tenant_plan, messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
