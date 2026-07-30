@@ -67,6 +67,9 @@ services:
     volumes:
       - media_data:/app/media
       - bot_data:/app/data
+    networks:
+      - default
+      - internal
 
   frontend:
     image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-frontend:${TAG:-latest}
@@ -140,6 +143,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - internal
 
   # ─── Redis (caching + task queue) ──────────────────────
   redis:
