@@ -87,7 +87,7 @@ async def _fetch_groups(account_id: str, db: AsyncSession) -> list[dict]:
     """Fetch all groups/channels for an account with error handling."""
     account = await account_crud.get_account(db, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
     try:
         return await list_groups(account)
     except AccountNotAuthenticatedError as exc:

@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 async def _get_account_or_404(account_id: str, db: AsyncSession) -> Account:
     account = await account_crud.get_account(db, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="   .")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정을 찾을 수 없습니다.")
     return account
 
 

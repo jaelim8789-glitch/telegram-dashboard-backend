@@ -30,7 +30,7 @@ async def get_current_identity(
     """Returns a fully-resolved Identity including tenant_id."""
     identity = await _resolve_identity(x_api_key, authorization, x_session_token, db)
     if identity is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인증이 필요합니다.")
     return identity
 
 
