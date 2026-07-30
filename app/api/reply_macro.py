@@ -150,6 +150,38 @@ async def execute_random_reply_endpoint(
     return result
 
 
+@router.delete("/{macro_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_macro_endpoint(
+    account_id: str,
+    macro_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """답장매크로 삭제."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_macro(db, macro_id)
+    if macro is None or macro.account_id != account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="답장매크로를 찾을 수 없습니다.")
+    await macro_crud.delete_macro(db, macro)
+
+
+@router.get("/{macro_id}/logs", response_model=list[ReplyMacroLogRead])
+async def read_macro_logs(
+    account_id: str,
+    macro_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """이 매크로의 발송 로그 조회."""
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+    macro = await macro_crud.get_macro(db, macro_id)
+    if macro is None or macro.account_id != account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="답장매크로를 찾을 수 없습니다.")
+    return await macro_crud.list_logs(db, account_id, macro_id=macro_id)
+
+
 @router.get("/{macro_id}/used-targets")
 async def read_used_targets(
     account_id: str,

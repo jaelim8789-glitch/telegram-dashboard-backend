@@ -16,10 +16,12 @@ class ReplyMacroRead(BaseModel):
     id: str
     account_id: str
     name: str
+    is_active: bool
     target_chats: list[str]
     message_content: str
     media_path: str | None
     used_targets: list[dict] = []
+    last_sent_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
