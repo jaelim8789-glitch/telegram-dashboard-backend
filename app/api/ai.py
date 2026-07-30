@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Identity, get_current_identity, require_account_tenant_access, require_admin
+from app.api.deps import Identity, get_current_identity, get_current_tenant_id, require_account_tenant_access, require_admin
 from app.database import get_db
 from app.core.logging import get_logger
 from app.models.ai import (
@@ -182,11 +182,10 @@ class AiAdminLogResponse(BaseModel):
 @router.post("/chat", response_model=AiChatResponse)
 async def ai_chat(
     payload: AiChatRequest,
-    identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> AiChatResponse:
     """AI Chat  Graphiti   ,   ."""
-    tenant_id = identity.tenant_id
     session_id = payload.session_id or str(uuid.uuid4())
 
     # Check quota
@@ -283,14 +282,14 @@ async def ai_chat(
 @router.get("/chat/history/{session_id}", response_model=AiChatHistoryResponse)
 async def get_chat_history(
     session_id: str,
-    identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> AiChatHistoryResponse:
     """Get chat history for a specific session."""
     result = await db.execute(
         select(AiChatLog)
         .where(
-            AiChatLog.tenant_id == identity.tenant_id,
+            AiChatLog.tenant_id == tenant_id,
             AiChatLog.session_id == session_id,
         )
         .order_by(AiChatLog.created_at.asc())
@@ -314,7 +313,7 @@ async def get_chat_history(
 @router.get("/chat/sessions", response_model=list[dict])
 async def list_chat_sessions(
     limit: int = Query(default=20, ge=1, le=100),
-    identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """List all chat sessions for the current tenant."""
@@ -325,7 +324,7 @@ async def list_chat_sessions(
             func.max(AiChatLog.created_at).label("last_message"),
             func.count(AiChatLog.id).label("message_count"),
         )
-        .where(AiChatLog.tenant_id == identity.tenant_id)
+        .where(AiChatLog.tenant_id == tenant_id)
         .group_by(AiChatLog.session_id)
         .order_by(desc("last_message"))
         .limit(limit)
