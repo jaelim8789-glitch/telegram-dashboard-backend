@@ -125,6 +125,45 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
 
   # ═══════════════════════════════════════════
+  # 3a. Auto-deploy on master push
+  # ═══════════════════════════════════════════
+  deploy-auto:
+    needs: [backend-docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH (auto, master push)
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/telemon/backend
+            docker compose pull backend
+            docker compose up -d --no-deps backend
+            echo "✅ Auto-deploy complete"
+
+      - name: Smoke test
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Auto-deploy smoke test passed"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "❌ Auto-deploy smoke test failed"
+            exit 1
+
+  # ═══════════════════════════════════════════
   # 3b. Deploy to production (manual — pull only)
   # ═══════════════════════════════════════════
   deploy-production:
