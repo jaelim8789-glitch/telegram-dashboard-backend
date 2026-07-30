@@ -34,6 +34,11 @@ from app.models.ai import (
     AiUsageRecord,
     AiPlanLimit,
 )
+from app.services.ai_credit_service import (
+    check_and_deduct_credits,
+    get_remaining_credits,
+    reset_credits,
+)
 from app.services.ai_core_service import (
     call_deepseek,
     call_llm_for_tenant,
@@ -65,6 +70,7 @@ class AiChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description=" ")
     session_id: str | None = Field(default=None, description="  ID (  )")
     use_memory: bool = Field(default=True, description="Graphiti    ")
+    is_sensitive: bool = Field(default=False, description="민감 콘텐츠 여부 (크레딧 2배)")
 
 
 class AiChatResponse(BaseModel):
@@ -72,6 +78,7 @@ class AiChatResponse(BaseModel):
     session_id: str
     tokens_used: int = 0
     memory_context: str = ""
+    remaining_credits: int = 0
 
 
 class AiChatHistoryItem(BaseModel):
@@ -190,7 +197,20 @@ async def ai_chat(
     """AI Chat  Graphiti   ,   ."""
     session_id = payload.session_id or str(uuid.uuid4())
 
-    # Check quota
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테넌트를 찾을 수 없습니다.")
+
+    # Credit check (server-enforced -- the actual gate; frontend only displays it)
+    credit_ok, remaining_credits = await check_and_deduct_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
+    if not credit_ok:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"AI 크레딧이 부족합니다. (남은 크레딧: {remaining_credits})",
+        )
+
+    # Check quota (legacy plan-limit enforcement, kept alongside credits)
     allowed, reason = await check_ai_quota(db, tenant_id, FEATURE_CHAT)
     if not allowed:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
@@ -281,6 +301,7 @@ async def ai_chat(
         session_id=session_id,
         tokens_used=tokens_used,
         memory_context=memory_context[:500] if memory_context else "",
+        remaining_credits=remaining_credits,
     )
 
 
@@ -727,6 +748,41 @@ async def get_ai_usage(
     """Get AI usage summary for the current tenant."""
     summary = await get_ai_usage_summary(db, identity.tenant_id, days=days)
     return AiUsageSummaryResponse(**summary)
+
+
+@router.get("/credits")
+async def get_ai_credits(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get current AI credit balance for the tenant."""
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+    remaining = await get_remaining_credits(tenant)
+    return {
+        "remaining_credits": remaining,
+        "reset_tokens": tenant.ai_credits_reset_tokens,
+        "plan": tenant.plan,
+        "last_refill_at": tenant.ai_last_refill_at.isoformat() if tenant.ai_last_refill_at else None,
+    }
+
+
+@router.post("/credits/reset")
+async def reset_ai_credits(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Use one reset token to refill Pro credits to 100,000."""
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+    ok, remaining = await reset_credits(tenant, db)
+    if not ok:
+        raise HTTPException(status_code=400, detail="남은 초기화권이 없거나 Pro 플랜이 아닙니다.")
+    return {"remaining_credits": remaining, "reset_tokens": tenant.ai_credits_reset_tokens}
 
 
 @router.get("/plan-limits", response_model=list[AiPlanLimitResponse])
