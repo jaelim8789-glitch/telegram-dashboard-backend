@@ -1036,5 +1036,5 @@ async def stop_bot() -> None:
     _application = None
     logger.info("telegram_bot_stopped")
 
-    from app.cache import delete as cache_delete
-    await cache_delete("singleton_lock:telegram_bot_polling")
+    from app.cache import release_singleton_lock
+    await release_singleton_lock("telegram_bot_polling")
