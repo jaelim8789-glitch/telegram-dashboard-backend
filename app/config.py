@@ -123,6 +123,11 @@ class Settings(BaseSettings):
     # allows 11434/tcp only from the docker subnet (not internet-exposed).
     ollama_base_url: str = "http://172.18.0.1:11434"
     ollama_model: str = "huihui_ai/qwen2.5-abliterate:1.5b"
+    # Off for now: longer prompts on this VPS's CPU-only inference exceed the
+    # call_ollama timeout often enough that free users were silently paying
+    # the Ollama-timeout latency before falling back to DeepSeek anyway. Flip
+    # true once timeout/hardware tradeoffs are revisited.
+    ollama_enabled: bool = False
     ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
     # How many past turns (user+assistant pairs) to include as context for DeepSeek.
     ai_chat_history_turns: int = 10
