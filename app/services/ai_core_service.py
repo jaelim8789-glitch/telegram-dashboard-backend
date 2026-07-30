@@ -127,6 +127,63 @@ async def call_deepseek(
         return None, 0, None
 
 
+# ─── Local LLM (Ollama) call — free-plan tenants ──────────────────────────
+
+
+async def call_ollama(
+    messages: list[dict],
+    model: str | None = None,
+) -> tuple[str | None, int, list[dict] | None]:
+    """Call the local Ollama server and return (reply_text, tokens_used, tool_calls).
+
+    Same return shape as call_deepseek so callers can treat them
+    interchangeably. tool_calls is always None -- the local model isn't
+    wired up for tool-calling. Returns (None, 0, None) on any failure so a
+    down/unreachable Ollama degrades the same way a missing DeepSeek key
+    does, instead of crashing the request.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{settings.ollama_base_url}/api/chat",
+                json={
+                    "model": model or settings.ollama_model,
+                    "messages": messages,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data.get("message", {}).get("content", "") or ""
+            tokens = data.get("eval_count", 0) + data.get("prompt_eval_count", 0)
+            return content, tokens, None
+    except httpx.TimeoutException:
+        logger.error("ai_ollama_timeout")
+        return None, 0, None
+    except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        logger.error("ai_ollama_call_failed", error=str(exc))
+        return None, 0, None
+
+
+async def call_llm_for_tenant(
+    tenant_plan: str,
+    messages: list[dict],
+    max_tokens: int = _MAX_TOKENS,
+    model: str | None = None,
+    tools: list[dict] | None = None,
+) -> tuple[str | None, int, list[dict] | None]:
+    """Routes to the local Ollama model for free-plan tenants, DeepSeek for
+    everyone else (pro/team) -- keeps DeepSeek's per-message API cost off the
+    much larger free user base. Falls back to DeepSeek if Ollama fails, so a
+    free user still gets a real answer instead of a dead end (at the cost of
+    the DeepSeek call that routing was meant to avoid, but only on failure)."""
+    if tenant_plan == "free":
+        reply, tokens, _ = await call_ollama(messages, model=None)
+        if reply is not None:
+            return reply, tokens, None
+        logger.warning("ollama_failed_falling_back_to_deepseek")
+    return await call_deepseek(messages, max_tokens=max_tokens, model=model, tools=tools)
+
 
 async def _call_deepseek_stream(
     messages: list[dict],
