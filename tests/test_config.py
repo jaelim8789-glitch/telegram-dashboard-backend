@@ -113,9 +113,12 @@ def test_development_allows_insecure_defaults():
     s = _settings(
         "postgresql+asyncpg://u:p@h/db",
         environment="development",
+        admin_username="test-admin",
+        admin_password="test-password-insecure",
+        admin_jwt_secret="change-me-in-production",
     )
-    assert s.admin_username == "sksk2929"
-    assert s.admin_password == "ysjr0508"
+    assert s.admin_username == "test-admin"
+    assert s.admin_password == "test-password-insecure"
     assert s.admin_jwt_secret == "change-me-in-production"
 
 
