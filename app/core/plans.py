@@ -6,7 +6,7 @@ imports from here.  No duplicated PLAN_PRICES_USDT / PLAN_LIMITS dicts.
 
 from typing import Literal
 
-PlanId = Literal["free", "pro", "team"]
+PlanId = Literal["free", "pro"]
 BillingInterval = Literal["monthly", "quarterly"]
 
 PlanDef = dict
@@ -76,42 +76,6 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "Delivery analytics",
             "Priority support",
         ],
-    },
-    "team": {
-        "name": "Team",
-        "description": "$199/quarter  20 accounts  unlimited macros  AI credits 300K/mo",
-        "trial_days": 0,
-        "prices_usdt": {
-            "quarterly": 199,
-        },
-        "limits": {
-            "max_accounts": 20,
-            "max_auto_reply_rules": 250,
-            "max_reply_macros": 999999,  # Unlimited
-            "monthly_message_limit": 200000,
-            "monthly_auto_reply_limit": 200000,
-            "monthly_ai_chat_limit": 300000,  # Credits
-            "monthly_ai_credits": 300000,
-            "ai_reset_tokens": 10,
-            "cooldown_minimum_minutes": 0,
-            "can_broadcast": True,
-            "can_schedule": True,
-            "can_attach_images": True,
-            "can_export_data": True,
-        },
-        "features": [
-            "20 accounts",
-            "250 auto-reply rules",
-            "Unlimited reply macros",
-            "200,000 messages/month",
-            "300,000 AI credits/month",
-            "10 AI credit resets/month",
-            "Message broadcast & scheduling",
-            "Image attachments",
-            "Delivery analytics",
-            "Priority support",
-        ],
-    },
 }
 
 
