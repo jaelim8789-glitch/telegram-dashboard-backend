@@ -98,9 +98,8 @@ async def _get_watermark_ad() -> str:
         return _watermark_ad_cache
 
     default = (
-        "\n\n━━━━━━━━━━━━━━━━━━\n"
-        "🤖 AI가 자동으로 답변했습니다. 무료 AI 직원 받기\n\n"
-        " https://telemon.online/signupref={ref_code}"
+        "\n\n---\n"
+        "Powered by TeleMon · telemon.online/?ref={ref_code}"
     )
     try:
         async with async_session_maker() as session:
@@ -134,11 +133,16 @@ async def _get_tenant_ref_code(db: AsyncSession, tenant_id: str) -> str | None:
 
 
 async def _personalize_watermark(base: str, ref_code: str | None) -> str:
-    """Replace {ref_code} placeholder in the watermark template."""
+    """Replace {ref_code} placeholder in the watermark template.
+
+    Drops the trailing '?ref=' entirely when there's no code, rather than
+    leaving a dangling empty query param.
+    """
     if not base:
         return ""
-    code = ref_code or ""
-    return base.replace("{ref_code}", code)
+    if ref_code:
+        return base.replace("{ref_code}", ref_code)
+    return base.replace("/?ref={ref_code}", "").replace("{ref_code}", "")
 
 # Per-recipient send timeout. Without this, a single Telethon call that hangs
 # (dead connection, DC migration stall, etc.) silently consumes the *entire*
