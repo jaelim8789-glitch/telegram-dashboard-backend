@@ -284,6 +284,11 @@ async def stream_new_messages(
         client = await get_authorized_client(account)
         me = await client.get_me()
         my_user_id = me.id if me else None
+        # Telethon only caches an entity once it's seen it via get_dialogs()/messages —
+        # a freshly-authenticated session hasn't cached every private-chat peer yet, so
+        # get_messages(chat_id, ...) below can raise "Could not find the input entity"
+        # for a chat_id it has genuinely never resolved. Warm the cache once up front.
+        await client.get_dialogs(limit=200)
     except Exception as e:
         yield f"event: error\ndata: {str(e)}\n\n"
         return
@@ -301,6 +306,17 @@ async def stream_new_messages(
             await asyncio.sleep(3)
         except asyncio.CancelledError:
             break
+        except ValueError as e:
+            # "Could not find the input entity" — the up-front get_dialogs() warm-up
+            # can still miss an entity that's dropped out of the session's in-memory
+            # cache on a long-lived stream. Re-resolve once and keep going instead of
+            # logging + surfacing the same error to the client every 5s forever.
+            try:
+                await client.get_entity(chat_id)
+            except Exception:
+                logger.warning("chat_stream_error", chat_id=chat_id, error=str(e))
+                yield f"event: error\ndata: {str(e)}\n\n"
+                await asyncio.sleep(5)
         except Exception as e:
             logger.warning("chat_stream_error", chat_id=chat_id, error=str(e))
             yield f"event: error\ndata: {str(e)}\n\n"
