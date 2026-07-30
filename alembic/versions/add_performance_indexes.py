@@ -32,9 +32,6 @@ def upgrade() -> None:
         # Search logs: admin stats queries by date
         op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_search_logs_created ON kb_search_logs(created_at DESC)")
 
-        # Account health: per-account lookups
-        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_account_health_account ON account_health(account_id)")
-
         # Message logs: filtering by status and date
         op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_status ON message_logs(status)")
         op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_created ON message_logs(created_at DESC)")
@@ -48,6 +45,5 @@ def downgrade() -> None:
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_chunks_doc_id")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_chunks_created")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_search_logs_created")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_account_health_account")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_message_logs_status")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_message_logs_created")
