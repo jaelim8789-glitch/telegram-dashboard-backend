@@ -38,6 +38,11 @@ class Tenant(Base):
     # Extra AI Chat credits purchased with Telegram Stars, spent once the monthly
     # plan quota (monthly_ai_chat_limit) is exhausted.
     ai_chat_credit_balance: Mapped[int] = mapped_column(Integer, default=0)
+
+    # AI credit system (replaces monthly_ai_chat_limit counting)
+    ai_credits_remaining: Mapped[int] = mapped_column(Integer, default=0)
+    ai_credits_reset_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    ai_last_refill_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     
     # Billing
     stripe_customer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -1,8 +1,10 @@
 """Telegram Chat API — Nicegram-style chat in dashboard."""
 
+import asyncio
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,52 @@ from telethon.errors import FloodWaitError
 
 router = APIRouter(prefix="/api/chat-telegram", tags=["chat-telegram"])
 logger = get_logger(__name__)
+
+# In-memory WebSocket clients per account: account_id → set of WebSocket
+chat_ws_clients: dict[str, set[WebSocket]] = {}
+
+
+@router.websocket("/ws")
+async def chat_websocket(
+    websocket: WebSocket,
+    account_id: str = Query(...),
+):
+    await websocket.accept()
+    if account_id not in chat_ws_clients:
+        chat_ws_clients[account_id] = set()
+    chat_ws_clients[account_id].add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            if msg.get("type") == "typing":
+                for client in chat_ws_clients.get(account_id, set()):
+                    if client != websocket:
+                        try:
+                            await client.send_json(msg)
+                        except WebSocketDisconnect:
+                            chat_ws_clients[account_id].discard(client)
+    except WebSocketDisconnect:
+        chat_ws_clients[account_id].discard(websocket)
+        if not chat_ws_clients[account_id]:
+            del chat_ws_clients[account_id]
+
+
+async def broadcast_dialog_update(account_id: str):
+    """Push a dialog_update event to all connected clients for an account."""
+    if account_id not in chat_ws_clients:
+        return
+    payload = json.dumps({"type": "dialog_update"})
+    dead: list[WebSocket] = []
+    for client in chat_ws_clients[account_id]:
+        try:
+            await client.send_text(payload)
+        except WebSocketDisconnect:
+            dead.append(client)
+    for client in dead:
+        chat_ws_clients[account_id].discard(client)
+    if not chat_ws_clients[account_id]:
+        del chat_ws_clients[account_id]
 
 
 @router.get("/accounts/{account_id}/dialogs", response_model=list[TelegramDialog])

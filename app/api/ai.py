@@ -65,6 +65,7 @@ class AiChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description=" ")
     session_id: str | None = Field(default=None, description="  ID (  )")
     use_memory: bool = Field(default=True, description="Graphiti    ")
+    is_sensitive: bool = Field(default=False, description=" ")
 
 
 class AiChatResponse(BaseModel):
@@ -72,6 +73,7 @@ class AiChatResponse(BaseModel):
     session_id: str
     tokens_used: int = 0
     memory_context: str = ""
+    remaining_credits: int = 0
 
 
 class AiChatHistoryItem(BaseModel):
@@ -190,7 +192,22 @@ async def ai_chat(
     """AI Chat  Graphiti   ,   ."""
     session_id = payload.session_id or str(uuid.uuid4())
 
-    # Check quota
+    # Load tenant for credit check
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
+
+    # Credit check (server-enforced)
+    from app.services.ai_credit_service import check_and_deduct_credits
+    ok, remaining = await check_and_deduct_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"AI   . ( /: {remaining})",
+        )
+
+    # Check quota (legacy plan-limit enforcement)
     allowed, reason = await check_ai_quota(db, tenant_id, FEATURE_CHAT)
     if not allowed:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
@@ -281,6 +298,7 @@ async def ai_chat(
         session_id=session_id,
         tokens_used=tokens_used,
         memory_context=memory_context[:500] if memory_context else "",
+        remaining_credits=remaining,
     )
 
 
@@ -729,6 +747,43 @@ async def get_ai_usage(
     return AiUsageSummaryResponse(**summary)
 
 
+@router.get("/credits")
+async def get_ai_credits(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get current AI credit balance for the tenant."""
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    from app.services.ai_credit_service import get_remaining_credits
+    remaining = await get_remaining_credits(tenant)
+    return {
+        "remaining_credits": remaining,
+        "reset_tokens": tenant.ai_credits_reset_tokens,
+        "plan": tenant.plan,
+        "last_refill_at": tenant.ai_last_refill_at.isoformat() if tenant.ai_last_refill_at else None,
+    }
+
+
+@router.post("/credits/reset")
+async def reset_ai_credits(
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Use one reset token to refill Pro credits to 100,000."""
+    tenant_row = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
+    tenant = tenant_row.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    from app.services.ai_credit_service import reset_credits
+    ok, remaining = await reset_credits(tenant, db)
+    if not ok:
+        raise HTTPException(status_code=400, detail="No reset tokens remaining or not a Pro plan.")
+    return {"remaining_credits": remaining, "reset_tokens": tenant.ai_credits_reset_tokens}
+
+
 @router.get("/plan-limits", response_model=list[AiPlanLimitResponse])
 async def get_plan_limits(
     identity: Identity = Depends(get_current_identity),
@@ -999,26 +1054,16 @@ async def admin_seed_plan_limits(
 ) -> dict:
     """Admin: Seed default AI plan limits for all plans."""
     default_limits = [
-        # Free plan
+        # Free plan — 5h/10 AI chat refill (tracked on frontend)
         {"plan": "free", "feature": "chat", "max_requests_per_day": 10, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "reply_assistant", "max_requests_per_day": 20, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "broadcast_assistant", "max_requests_per_day": 5, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "operations_report", "max_requests_per_day": 2, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
-        # Starter plan
-        {"plan": "starter", "feature": "chat", "max_requests_per_day": 50, "max_tokens_per_day": 25000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "reply_assistant", "max_requests_per_day": 100, "max_tokens_per_day": 50000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "broadcast_assistant", "max_requests_per_day": 30, "max_tokens_per_day": 30000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "operations_report", "max_requests_per_day": 10, "max_tokens_per_day": 50000, "max_credits_per_month": 0, "is_enabled": True},
-        # Pro plan
-        {"plan": "pro", "feature": "chat", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 100, "max_tokens_per_day": 100000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 0, "is_enabled": True},
-        # Enterprise plan
-        {"plan": "enterprise", "feature": "chat", "max_requests_per_day": 1000, "max_tokens_per_day": 500000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "reply_assistant", "max_requests_per_day": 2000, "max_tokens_per_day": 1000000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "broadcast_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 500000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "operations_report", "max_requests_per_day": 200, "max_tokens_per_day": 1000000, "max_credits_per_month": 0, "is_enabled": True},
+        # Pro plan — $99/month, 100K AI credits
+        {"plan": "pro", "feature": "chat", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 100000, "is_enabled": True},
     ]
 
     created = 0
