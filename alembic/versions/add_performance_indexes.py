@@ -15,33 +15,39 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Broadcasts: most queries filter by status and created_at
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_status ON broadcasts(status)")
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_account_id ON broadcasts(account_id)")
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_created_at ON broadcasts(created_at DESC)")
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block, but
+    # alembic wraps every migration in one by default -- autocommit_block()
+    # is alembic's supported escape hatch for exactly this (each statement
+    # inside commits immediately, outside any transaction).
+    with op.get_context().autocommit_block():
+        # Broadcasts: most queries filter by status and created_at
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_status ON broadcasts(status)")
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_account_id ON broadcasts(account_id)")
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_broadcasts_created_at ON broadcasts(created_at DESC)")
 
-    # KB chunks: embedding search and document lookups
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_chunks_doc_id ON kb_chunks(document_id)")
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_chunks_created ON kb_chunks(created_at DESC)")
+        # KB chunks: embedding search and document lookups
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_chunks_doc_id ON kb_chunks(document_id)")
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_chunks_created ON kb_chunks(created_at DESC)")
 
-    # Search logs: admin stats queries by date
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_search_logs_created ON kb_search_logs(created_at DESC)")
+        # Search logs: admin stats queries by date
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kb_search_logs_created ON kb_search_logs(created_at DESC)")
 
-    # Account health: per-account lookups
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_account_health_account ON account_health(account_id)")
+        # Account health: per-account lookups
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_account_health_account ON account_health(account_id)")
 
-    # Message logs: filtering by status and date
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_status ON message_logs(status)")
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_created ON message_logs(created_at DESC)")
+        # Message logs: filtering by status and date
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_status ON message_logs(status)")
+        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_message_logs_created ON message_logs(created_at DESC)")
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS idx_broadcasts_status")
-    op.execute("DROP INDEX IF EXISTS idx_broadcasts_account_id")
-    op.execute("DROP INDEX IF EXISTS idx_broadcasts_created_at")
-    op.execute("DROP INDEX IF EXISTS idx_kb_chunks_doc_id")
-    op.execute("DROP INDEX IF EXISTS idx_kb_chunks_created")
-    op.execute("DROP INDEX IF EXISTS idx_kb_search_logs_created")
-    op.execute("DROP INDEX IF EXISTS idx_account_health_account")
-    op.execute("DROP INDEX IF EXISTS idx_message_logs_status")
-    op.execute("DROP INDEX IF EXISTS idx_message_logs_created")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_broadcasts_status")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_broadcasts_account_id")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_broadcasts_created_at")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_chunks_doc_id")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_chunks_created")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kb_search_logs_created")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_account_health_account")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_message_logs_status")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_message_logs_created")
