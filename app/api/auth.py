@@ -219,6 +219,7 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
         raw_token, _ = await session_crud.create_session(
             db, user_id=user.id, tenant_id=tenant_id,
         )
+        await db.commit()
         logger.info("user_login_success", user_id=user.id)
         return LoginWithApiKeyResponse(
             access_token=create_user_access_token(user.id),
@@ -231,6 +232,7 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
         raw_token, _ = await session_crud.create_session(
             db, api_key_id=key_record.id, tenant_id=key_record.tenant_id,
         )
+        await db.commit()
         logger.info("api_key_login_success", api_key_id=key_record.id)
         return LoginWithApiKeyResponse(
             access_token=create_user_access_token(key_record.id),
@@ -309,6 +311,7 @@ async def telegram_login(
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant.id,
     )
+    await db.commit()
 
     logger.info("telegram_login_success", user_id=user.id, telegram_id=payload.id)
     return TelegramLoginResponse(
