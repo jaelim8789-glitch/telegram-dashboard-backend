@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
+
+    # Local LLM (Ollama) for free-plan tenants -- avoids per-message DeepSeek
+    # cost for the (much larger) free user base; pro/team tenants still get
+    # DeepSeek. 172.18.0.1 is the docker bridge gateway on this VPS, reachable
+    # since Ollama's systemd unit was switched to OLLAMA_HOST=0.0.0.0 and ufw
+    # allows 11434/tcp only from the docker subnet (not internet-exposed).
+    ollama_base_url: str = "http://172.18.0.1:11434"
+    ollama_model: str = "huihui_ai/qwen2.5-abliterate:1.5b"
     ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
     # How many past turns (user+assistant pairs) to include as context for DeepSeek.
     ai_chat_history_turns: int = 10
