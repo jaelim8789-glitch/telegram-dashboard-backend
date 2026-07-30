@@ -999,26 +999,21 @@ async def admin_seed_plan_limits(
 ) -> dict:
     """Admin: Seed default AI plan limits for all plans."""
     default_limits = [
-        # Free plan
+        # Free plan — 5h/10 AI chat refill (tracked on frontend)
         {"plan": "free", "feature": "chat", "max_requests_per_day": 10, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "reply_assistant", "max_requests_per_day": 20, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "broadcast_assistant", "max_requests_per_day": 5, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "operations_report", "max_requests_per_day": 2, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
-        # Starter plan
-        {"plan": "starter", "feature": "chat", "max_requests_per_day": 50, "max_tokens_per_day": 25000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "reply_assistant", "max_requests_per_day": 100, "max_tokens_per_day": 50000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "broadcast_assistant", "max_requests_per_day": 30, "max_tokens_per_day": 30000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "starter", "feature": "operations_report", "max_requests_per_day": 10, "max_tokens_per_day": 50000, "max_credits_per_month": 0, "is_enabled": True},
-        # Pro plan
-        {"plan": "pro", "feature": "chat", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 100, "max_tokens_per_day": 100000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 0, "is_enabled": True},
-        # Enterprise plan
-        {"plan": "enterprise", "feature": "chat", "max_requests_per_day": 1000, "max_tokens_per_day": 500000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "reply_assistant", "max_requests_per_day": 2000, "max_tokens_per_day": 1000000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "broadcast_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 500000, "max_credits_per_month": 0, "is_enabled": True},
-        {"plan": "enterprise", "feature": "operations_report", "max_requests_per_day": 200, "max_tokens_per_day": 1000000, "max_credits_per_month": 0, "is_enabled": True},
+        # Pro plan — $99/month, 100K AI credits
+        {"plan": "pro", "feature": "chat", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 100000, "is_enabled": True},
+        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 100000, "is_enabled": True},
+        # Team plan — $199/quarter, 300K AI credits
+        {"plan": "team", "feature": "chat", "max_requests_per_day": 1500, "max_tokens_per_day": 750000, "max_credits_per_month": 300000, "is_enabled": True},
+        {"plan": "team", "feature": "reply_assistant", "max_requests_per_day": 1500, "max_tokens_per_day": 750000, "max_credits_per_month": 300000, "is_enabled": True},
+        {"plan": "team", "feature": "broadcast_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 300000, "is_enabled": True},
+        {"plan": "team", "feature": "operations_report", "max_requests_per_day": 200, "max_tokens_per_day": 500000, "max_credits_per_month": 300000, "is_enabled": True},
     ]
 
     created = 0

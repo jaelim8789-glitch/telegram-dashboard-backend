@@ -14,8 +14,8 @@ PlanDef = dict
 PLAN_CATALOG: dict[PlanId, PlanDef] = {
     "free": {
         "name": "Free",
-        "description": "Starter plan with a free trial period",
-        "trial_days": 3,
+        "description": "1 account  AI chat 10/5h  basic messaging",
+        "trial_days": 0,
         "prices_usdt": {
             "monthly": 0,
         },
@@ -25,8 +25,8 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "max_reply_macros": 1,
             "monthly_message_limit": 100,
             "monthly_auto_reply_limit": 100,
-            # Placeholder  adjust once real usage data is in from the first deploy.
-            "monthly_ai_chat_limit": 20,
+            "monthly_ai_chat_limit": 0,  # Replaced by 5h/10 refill on frontend
+            "monthly_ai_credits": 0,
             "cooldown_minimum_minutes": 60,
             "can_broadcast": False,
             "can_schedule": False,
@@ -34,26 +34,30 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "can_export_data": False,
         },
         "features": [
-            "3 accounts",  #    
+            "1 account",
             "3 auto-reply rules",
-            "100 replies/month",
-            "60 min cooldown",
+            "1 reply macro",
+            "100 messages/month",
+            "AI chat 10 per 5h refill",
+            "Basic analytics",
         ],
     },
     "pro": {
         "name": "Pro",
-        "description": "$100/month  10 accounts",
+        "description": "$99/month  10 accounts  unlimited macros  AI credits 100K/mo",
         "trial_days": 0,
         "prices_usdt": {
-            "monthly": 100,
+            "monthly": 99,
         },
         "limits": {
             "max_accounts": 10,
             "max_auto_reply_rules": 100,
-            "max_reply_macros": 50,
+            "max_reply_macros": 999999,  # Unlimited
             "monthly_message_limit": 50000,
             "monthly_auto_reply_limit": 50000,
-            "monthly_ai_chat_limit": 1000,
+            "monthly_ai_chat_limit": 100000,  # Credits
+            "monthly_ai_credits": 100000,
+            "ai_reset_tokens": 3,
             "cooldown_minimum_minutes": 0,
             "can_broadcast": True,
             "can_schedule": True,
@@ -63,8 +67,10 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
         "features": [
             "10 accounts",
             "100 auto-reply rules",
-            "50 reply macros",
-            "50,000 replies/month",
+            "Unlimited reply macros",
+            "50,000 messages/month",
+            "100,000 AI credits/month",
+            "3 AI credit resets/month",
             "Message broadcast & scheduling",
             "Image attachments",
             "Delivery analytics",
@@ -73,7 +79,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
     },
     "team": {
         "name": "Team",
-        "description": "$199/quarter  20 accounts",
+        "description": "$199/quarter  20 accounts  unlimited macros  AI credits 300K/mo",
         "trial_days": 0,
         "prices_usdt": {
             "quarterly": 199,
@@ -81,10 +87,12 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
         "limits": {
             "max_accounts": 20,
             "max_auto_reply_rules": 250,
-            "max_reply_macros": 100,
+            "max_reply_macros": 999999,  # Unlimited
             "monthly_message_limit": 200000,
             "monthly_auto_reply_limit": 200000,
-            "monthly_ai_chat_limit": 3000,
+            "monthly_ai_chat_limit": 300000,  # Credits
+            "monthly_ai_credits": 300000,
+            "ai_reset_tokens": 10,
             "cooldown_minimum_minutes": 0,
             "can_broadcast": True,
             "can_schedule": True,
@@ -94,8 +102,10 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
         "features": [
             "20 accounts",
             "250 auto-reply rules",
-            "100 reply macros",
-            "200,000 replies/month",
+            "Unlimited reply macros",
+            "200,000 messages/month",
+            "300,000 AI credits/month",
+            "10 AI credit resets/month",
             "Message broadcast & scheduling",
             "Image attachments",
             "Delivery analytics",
