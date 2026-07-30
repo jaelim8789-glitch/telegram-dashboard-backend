@@ -14,7 +14,11 @@ class SendCodeResponse(BaseModel):
 
 class VerifyCodeRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=50)
-    code: str = Field(min_length=1, max_length=10)
+    # SMS OTP is optional: Twilio was never configured in this deployment, so
+    # login/signup identify the phone via Telegram channel verification
+    # instead (telegram_verification_token). code stays supported for when/if
+    # SMS is ever wired up -- at least one of the two must be present.
+    code: str | None = Field(default=None, max_length=10)
     telegram_verification_token: str | None = None
     referral_code: str | None = Field(default=None, max_length=30)
 
