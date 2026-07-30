@@ -110,6 +110,7 @@ from app.ai.scheduler.service import get_ai_scheduler_service
 from app.ai.event_bus.bus import get_event_bus
 from app.ai.plugin.manager import get_plugin_manager
 from app.database import engine
+from app.cache import acquire_singleton_lock
 
 configure_logging()
 logger = get_logger(__name__)
@@ -134,19 +135,34 @@ async def lifespan(app: FastAPI):
 
     #  Redis cache (optional  initialized lazily by app.cache) 
 
-    #  Scheduler 
-    try:
-        start_scheduler()
-        logger.info("scheduler_started")
-    except Exception as exc:
-        logger.error("scheduler_startup_failed", error=str(exc))
+    #  Scheduler
+    # uvicorn --workers N runs this lifespan in every worker. APScheduler's interval
+    # jobs (dispatch_due_broadcasts, check_usdt_payments, ...) fire the underlying
+    # function directly on a timer rather than pulling from a shared, lockable queue,
+    # so N workers each running this scheduler means every job actually executes N
+    # times per tick — duplicate sends, duplicate payment processing. Only the worker
+    # that wins the singleton lock starts it.
+    if await acquire_singleton_lock("scheduler"):
+        try:
+            start_scheduler()
+            logger.info("scheduler_started")
+        except Exception as exc:
+            logger.error("scheduler_startup_failed", error=str(exc))
+    else:
+        logger.info("scheduler_skipped", reason="another_worker_running")
 
-    #  Auto-reply listeners 
-    try:
-        await attach_all_active_listeners()
-        logger.info("auto_reply_listeners_attached")
-    except Exception as exc:
-        logger.error("auto_reply_listeners_startup_failed", error=str(exc))
+    #  Auto-reply listeners
+    # Same duplication risk: each worker would attach its own Telethon event handler
+    # to the same account sessions, so a single incoming message triggers the
+    # auto-reply flow once per worker.
+    if await acquire_singleton_lock("auto_reply_listeners"):
+        try:
+            await attach_all_active_listeners()
+            logger.info("auto_reply_listeners_attached")
+        except Exception as exc:
+            logger.error("auto_reply_listeners_startup_failed", error=str(exc))
+    else:
+        logger.info("auto_reply_listeners_skipped", reason="another_worker_running")
 
     #  Telegram bot (optional) 
     try:
@@ -168,12 +184,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("ai_task_worker_startup_failed", error=str(exc))
 
-    try:
-        scheduler = get_ai_scheduler_service()
-        scheduler.start()
-        logger.info("ai_scheduler_started")
-    except Exception as exc:
-        logger.error("ai_scheduler_startup_failed", error=str(exc))
+    # Same per-worker duplication risk as the main scheduler above.
+    if await acquire_singleton_lock("ai_scheduler"):
+        try:
+            scheduler = get_ai_scheduler_service()
+            scheduler.start()
+            logger.info("ai_scheduler_started")
+        except Exception as exc:
+            logger.error("ai_scheduler_startup_failed", error=str(exc))
+    else:
+        logger.info("ai_scheduler_skipped", reason="another_worker_running")
 
     try:
         manager = get_plugin_manager()

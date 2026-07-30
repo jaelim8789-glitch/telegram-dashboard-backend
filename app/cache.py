@@ -81,6 +81,28 @@ async def delete(key: str) -> bool:
         return False
 
 
+async def acquire_singleton_lock(name: str, ttl: int = 30) -> bool:
+    """True if this process won the right to run a per-container singleton
+    (a background scheduler, a poller, ...) under `uvicorn --workers N`, where
+    every worker's startup hook runs independently. Only the first worker to
+    call this for a given name gets True; the rest get False and should skip
+    starting that singleton entirely rather than run N duplicate copies of it.
+
+    Degrades to True (i.e. "go ahead and start it") when Redis is unavailable,
+    matching this module's existing graceful-degradation behavior — falling
+    back to the old un-guarded, occasionally-duplicated behavior beats not
+    starting the singleton at all.
+    """
+    r = await _get_redis()
+    if r is None:
+        return True
+    try:
+        return bool(await r.set(f"singleton_lock:{name}", os.getpid(), nx=True, ex=ttl))
+    except Exception as e:
+        logger.warning("redis_lock_failed", name=name, error=str(e))
+        return True
+
+
 async def get_or_set(key: str, factory: Callable[[], Any], ttl: int = 300) -> Any:
     """Get from cache or call factory, cache result, return it."""
     cached = await get(key)

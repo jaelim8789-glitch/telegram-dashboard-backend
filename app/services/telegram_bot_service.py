@@ -1,5 +1,3 @@
-import os
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MenuButtonWebApp, Update, WebAppInfo
 from telegram.ext import (
     Application,
@@ -920,15 +918,12 @@ async def start_bot() -> None:
     # only allows one active getUpdates poller per bot token, so without a lock every
     # worker after the first fails with "Conflict: terminated by other getUpdates
     # request" and the two keep kicking each other off in a loop. Only the worker that
-    # wins this Redis NX lock actually starts polling; the rest skip it — the bot
-    # doesn't need to run per-worker, it's a single logical process either way.
-    from app.cache import _get_redis
-    redis = await _get_redis()
-    if redis is not None:
-        acquired = await redis.set("telegram_bot_polling_lock", os.getpid(), nx=True, ex=30)
-        if not acquired:
-            logger.info("telegram_bot_skipped", reason="another_worker_polling")
-            return
+    # wins this lock actually starts polling; the rest skip it — the bot doesn't need
+    # to run per-worker, it's a single logical process either way.
+    from app.cache import acquire_singleton_lock
+    if not await acquire_singleton_lock("telegram_bot_polling"):
+        logger.info("telegram_bot_skipped", reason="another_worker_polling")
+        return
 
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.add_handler(CommandHandler("autoreply", autoreply_command))
@@ -1041,7 +1036,5 @@ async def stop_bot() -> None:
     _application = None
     logger.info("telegram_bot_stopped")
 
-    from app.cache import _get_redis
-    redis = await _get_redis()
-    if redis is not None:
-        await redis.delete("telegram_bot_polling_lock")
+    from app.cache import delete as cache_delete
+    await cache_delete("singleton_lock:telegram_bot_polling")
