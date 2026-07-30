@@ -66,7 +66,7 @@ class TelethonClientPool:
             client = self._clients.get(account_id)
             if client is None:
                 api_id, api_hash = settings.telegram_credentials
-                client = TelegramClient(StringSession(session_string), api_id, api_hash)
+                client = TelegramClient(StringSession(session_string), api_id, api_hash, flood_sleep_threshold=0)
                 self._clients[account_id] = client
             connect_check_start = datetime.now(timezone.utc)
             is_connected = client.is_connected()

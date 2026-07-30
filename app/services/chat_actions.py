@@ -298,7 +298,7 @@ async def stream_new_messages(
         # a freshly-authenticated session hasn't cached every private-chat peer yet, so
         # get_messages(chat_id, ...) below can raise "Could not find the input entity"
         # for a chat_id it has genuinely never resolved. Warm the cache once up front.
-        await client.get_dialogs(limit=200)
+        await client.get_dialogs(limit=50)
     except Exception as e:
         yield f"event: error\ndata: {str(e)}\n\n"
         return
@@ -313,7 +313,7 @@ async def stream_new_messages(
                 if m and m["id"] > last_id:
                     yield f"event: message\ndata: {json.dumps(m)}\n\n"
                     last_id = m["id"]
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
         except asyncio.CancelledError:
             break
         except ValueError as e:
