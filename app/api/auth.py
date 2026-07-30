@@ -187,7 +187,7 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
         db.add(tenant)
         await db.flush()
 
-        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id, is_active=True)
+        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id)
         db.add(code)
 
         if referred_by:
@@ -296,7 +296,7 @@ async def telegram_login(
         db.add(tenant)
         await db.flush()
 
-        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id, is_active=True)
+        code = ReferralCode(code=tenant.referral_code, owner_id=tenant.id)
         db.add(code)
 
         if referred_by:
