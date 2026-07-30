@@ -28,7 +28,7 @@ class GraphitiAIMemoryProvider(AIMemoryProvider):
             except Exception:
                 self._enabled = False
 
-    def _run_async(self, coro):
+    def _run_async(self, coro, timeout: float = 15.0):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -44,9 +44,17 @@ class GraphitiAIMemoryProvider(AIMemoryProvider):
                 except Exception as e:
                     exc = e
 
-            t = threading.Thread(target=_target)
+            # daemon=True + a bounded join: an unreachable/hung Graphiti
+            # server must not be able to block this event loop's thread
+            # forever. Without the timeout, every request handling AI chat
+            # (search_memory/store_memory call in here) freezes the whole
+            # FastAPI process for every tenant, not just the caller, until
+            # Graphiti responds -- this was the "AI 대화 무한로딩" report.
+            t = threading.Thread(target=_target, daemon=True)
             t.start()
-            t.join()
+            t.join(timeout=timeout)
+            if t.is_alive():
+                raise TimeoutError(f"Graphiti call did not complete within {timeout}s")
             if exc is not None:
                 raise exc
             return result

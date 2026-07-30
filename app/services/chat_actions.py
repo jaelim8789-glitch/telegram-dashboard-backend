@@ -303,7 +303,15 @@ async def stream_new_messages(
         yield f"event: error\ndata: {str(e)}\n\n"
         return
 
-    last_id = 0  # will be set from initial fetch
+    # Prime last_id from whatever already exists instead of starting at 0 --
+    # otherwise every fresh connection (e.g. opening a room the client already
+    # has via the initial REST fetch) replays the last 5 messages as if they
+    # were brand new, right before the real polling loop starts below.
+    try:
+        initial_messages = await client.get_messages(chat_id, limit=5)
+        last_id = max((m.id for m in initial_messages), default=0)
+    except Exception:
+        last_id = 0
 
     while True:
         try:
