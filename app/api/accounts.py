@@ -190,6 +190,11 @@ async def create_account(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
+    if identity.kind != "admin" and identity.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="테넌트 정보가 없습니다. 로그아웃 후 다시 로그인해주세요.",
+        )
     await require_account_capacity(db, identity)
     try:
         account_data = payload.model_dump()
