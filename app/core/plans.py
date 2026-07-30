@@ -76,6 +76,7 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
             "Delivery analytics",
             "Priority support",
         ],
+    },
 }
 
 
