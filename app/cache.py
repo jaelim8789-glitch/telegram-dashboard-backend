@@ -12,6 +12,7 @@ Usage:
 
 Degrades gracefully when Redis is unavailable  falls back to direct DB read.
 """
+import asyncio
 import json
 import os
 from functools import wraps
@@ -81,12 +82,27 @@ async def delete(key: str) -> bool:
         return False
 
 
+_singleton_renewal_tasks: dict[str, "asyncio.Task"] = {}
+
+
 async def acquire_singleton_lock(name: str, ttl: int = 30) -> bool:
     """True if this process won the right to run a per-container singleton
     (a background scheduler, a poller, ...) under `uvicorn --workers N`, where
     every worker's startup hook runs independently. Only the first worker to
     call this for a given name gets True; the rest get False and should skip
     starting that singleton entirely rather than run N duplicate copies of it.
+
+    The caller holds this lock for the process's entire lifetime (it's never
+    re-acquired), so a winning call also starts a background task that renews
+    the key every ttl/3 seconds. Without renewal, the key — needed with a
+    short TTL so a crashed/killed holder's lock expires promptly — would also
+    expire under a *still-running* holder (e.g. mid rolling-deploy, where the
+    old and new containers briefly overlap), letting the new worker acquire
+    the same singleton and run a duplicate poller/scheduler alongside it. For
+    telegram_bot_polling specifically this is what produced the recurring
+    "Conflict: terminated by other getUpdates request" log spam; for
+    scheduler/auto_reply_listeners/ai_scheduler the same gap risks duplicate
+    sends instead of just noise.
 
     Degrades to True (i.e. "go ahead and start it") when Redis is unavailable,
     matching this module's existing graceful-degradation behavior — falling
@@ -97,10 +113,40 @@ async def acquire_singleton_lock(name: str, ttl: int = 30) -> bool:
     if r is None:
         return True
     try:
-        return bool(await r.set(f"singleton_lock:{name}", os.getpid(), nx=True, ex=ttl))
+        acquired = bool(await r.set(f"singleton_lock:{name}", os.getpid(), nx=True, ex=ttl))
     except Exception as e:
         logger.warning("redis_lock_failed", name=name, error=str(e))
         return True
+    if acquired:
+        _start_singleton_lock_renewal(name, ttl)
+    return acquired
+
+
+def _start_singleton_lock_renewal(name: str, ttl: int) -> None:
+    async def _renew_loop() -> None:
+        interval = max(1, ttl // 3)
+        while True:
+            await asyncio.sleep(interval)
+            r = await _get_redis()
+            if r is None:
+                continue
+            try:
+                await r.expire(f"singleton_lock:{name}", ttl)
+            except Exception as e:
+                logger.warning("redis_lock_renew_failed", name=name, error=str(e))
+
+    _singleton_renewal_tasks[name] = asyncio.create_task(_renew_loop())
+
+
+async def release_singleton_lock(name: str) -> None:
+    """Pair with acquire_singleton_lock for a clean shutdown: stops the
+    renewal task and deletes the key immediately, instead of leaving it to
+    expire on its own (and the task running forever re-touching a key that
+    still exists past this process's intended lifetime)."""
+    task = _singleton_renewal_tasks.pop(name, None)
+    if task is not None:
+        task.cancel()
+    await delete(f"singleton_lock:{name}")
 
 
 async def get_or_set(key: str, factory: Callable[[], Any], ttl: int = 300) -> Any:
@@ -129,6 +175,3 @@ def cached(ttl: int = 300):
             return await get_or_set(cache_key, lambda: fn(*args, **kwargs), ttl=ttl)
         return wrapper
     return decorator
-
-
-import asyncio
