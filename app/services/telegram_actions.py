@@ -1,7 +1,7 @@
 import asyncio
 
 from telethon import TelegramClient, utils
-from telethon.errors import FloodWaitError
+from telethon.errors import AuthKeyUnregisteredError, FloodWaitError
 from telethon.tl import functions
 from telethon.tl.types import Channel, Chat, DialogFilter
 
@@ -42,18 +42,28 @@ def _classify_entity(entity) -> str | None:
 async def list_groups(account: Account) -> list[dict]:
     client = await get_authorized_client(account)
     groups: list[dict] = []
-    async for dialog in client.iter_dialogs():
-        group_type = _classify_entity(dialog.entity)
-        if group_type is None:
-            continue  # skip 1:1 conversations — only groups/channels are valid broadcast targets
-        groups.append(
-            {
-                "id": str(dialog.id),
-                "title": dialog.name or "(제목 없음)",
-                "type": group_type,
-                "participants_count": getattr(dialog.entity, "participants_count", None),
-            }
-        )
+    try:
+        async for dialog in client.iter_dialogs():
+            group_type = _classify_entity(dialog.entity)
+            if group_type is None:
+                continue  # skip 1:1 conversations — only groups/channels are valid broadcast targets
+            groups.append(
+                {
+                    "id": str(dialog.id),
+                    "title": dialog.name or "(제목 없음)",
+                    "type": group_type,
+                    "participants_count": getattr(dialog.entity, "participants_count", None),
+                }
+            )
+    except AuthKeyUnregisteredError as exc:
+        # The connection pool handed back a client that connected fine, but
+        # Telegram has since revoked this session (remote logout, "terminate
+        # this session" from another device, etc.) — only surfaces once an
+        # actual RPC call is made, so get_authorized_client's own
+        # SessionInvalidError guard never catches it.
+        raise AccountNotAuthenticatedError(
+            "텔레그램 세션이 만료되었습니다(다른 기기에서 로그아웃되었을 수 있음). 계정을 다시 인증해주세요."
+        ) from exc
     return groups
 
 
