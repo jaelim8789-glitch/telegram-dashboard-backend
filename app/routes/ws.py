@@ -6,6 +6,36 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 ws_router = APIRouter()
 
+# In-memory chat WebSocket connections: account_id → set of WebSocket clients
+chat_clients: dict[str, set[WebSocket]] = {}
+
+
+@ws_router.websocket("/ws/chat")
+async def chat_websocket(
+    websocket: WebSocket,
+    account_id: str = Query(...),
+):
+    await websocket.accept()
+    if account_id not in chat_clients:
+        chat_clients[account_id] = set()
+    chat_clients[account_id].add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            # Broadcast typing/read receipts to other clients of same account
+            if msg.get("type") == "typing":
+                for client in chat_clients.get(account_id, set()):
+                    if client != websocket:
+                        try:
+                            await client.send_json(msg)
+                        except WebSocketDisconnect:
+                            chat_clients[account_id].discard(client)
+    except WebSocketDisconnect:
+        chat_clients[account_id].discard(websocket)
+        if not chat_clients[account_id]:
+            del chat_clients[account_id]
+
 
 @ws_router.websocket("/ws/dashboard")
 async def dashboard_websocket(
