@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
+from app.models.tenant import Tenant
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_broadcast_capacity, require_linked_api_key
 from app.config import settings
 from app.core.logging import get_logger
@@ -36,6 +37,7 @@ from app.services.broadcast_distribution import (
 from app.services.broadcast_processor import process_broadcast
 from app.services.failure_intel import classify_failure
 from app.services.media import save_broadcast_media
+from app.services.delivery import FREE_PLANS, _get_watermark_ad, _get_tenant_ref_code, _personalize_watermark
 
 logger = get_logger(__name__)
 
@@ -59,6 +61,28 @@ def _to_naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+@router.get("/watermark-preview")
+async def get_watermark_preview(
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """The watermark admin.py exposes was admin-only, so tenants had no way to see
+    what actually gets appended to their message before sending — delivery.py
+    applies it silently to free-plan sends. Mirrors that exact logic (same
+    watermark text, same ref-code personalization) so the Send tab's
+    confirmation step can show it before the user hits send."""
+    if not identity.tenant_id:
+        return {"enabled": False, "text": ""}
+    plan_row = await db.execute(select(Tenant.plan).where(Tenant.id == identity.tenant_id))
+    plan = plan_row.scalar_one_or_none() or "free"
+    if plan not in FREE_PLANS:
+        return {"enabled": False, "text": ""}
+    watermark = await _get_watermark_ad()
+    ref_code = await _get_tenant_ref_code(db, identity.tenant_id)
+    personalized = await _personalize_watermark(watermark, ref_code)
+    return {"enabled": True, "text": personalized}
 
 
 @router.post("", response_model=BroadcastRead, status_code=status.HTTP_202_ACCEPTED)
