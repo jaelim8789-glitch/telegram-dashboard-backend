@@ -187,30 +187,37 @@ class AiAdminLogResponse(BaseModel):
 async def ai_chat(
     payload: AiChatRequest,
     tenant_id: str = Depends(get_current_tenant_id),
+    identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AiChatResponse:
     """AI Chat  Graphiti   ,   ."""
     session_id = payload.session_id or str(uuid.uuid4())
 
-    # Load tenant for credit check
-    tenant_row = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant = tenant_row.scalar_one_or_none()
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테넌트를 찾을 수 없습니다.")
+    # Admin bypass: unlimited credits, skip all quota checks
+    is_admin = identity.kind == "admin"
 
-    # Credit check (server-enforced)
-    from app.services.ai_credit_service import check_and_deduct_credits
-    ok, remaining = await check_and_deduct_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
-    if not ok:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"AI 크레딧이 부족합니다. (남은 크레딧: {remaining})",
-        )
+    if not is_admin:
+        # Load tenant for credit check
+        tenant_row = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+        tenant = tenant_row.scalar_one_or_none()
+        if tenant is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테넌트를 찾을 수 없습니다.")
 
-    # Check quota (legacy plan-limit enforcement)
-    allowed, reason = await check_ai_quota(db, tenant_id, FEATURE_CHAT)
-    if not allowed:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
+        # Credit check (server-enforced)
+        from app.services.ai_credit_service import check_and_deduct_credits
+        ok, remaining = await check_and_deduct_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"AI 크레딧이 부족합니다. (남은 크레딧: {remaining})",
+            )
+
+        # Check quota (legacy plan-limit enforcement)
+        allowed, reason = await check_ai_quota(db, tenant_id, FEATURE_CHAT)
+        if not allowed:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
+    else:
+        remaining = 999999
 
     # Build context from memory
     memory_context = ""
