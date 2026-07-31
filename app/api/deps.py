@@ -55,13 +55,31 @@ async def get_current_tenant_id(
 
     if identity.kind == "admin":
         # Admin logged in via /admin/login — no tenant attached.
-        # Find or create a default tenant so AI and account features work.
+        # Find or create an admin-scoped tenant so AI and account features work
+        # with unlimited credits.
         from app.models.tenant import Tenant
-        result = await db.execute(select(Tenant).order_by(Tenant.created_at).limit(1))
-        tenant = result.scalar_one_or_none()
-        if tenant is not None:
-            return tenant.id
-        # Auto-create a default tenant for this admin
+
+        # 1. Look for an existing admin tenant (plan="admin")
+        result = await db.execute(
+            select(Tenant).where(Tenant.plan == "admin").order_by(Tenant.created_at).limit(1)
+        )
+        admin_tenant = result.scalar_one_or_none()
+        if admin_tenant is not None:
+            return admin_tenant.id
+
+        # 2. Also upgrade any auto-created tenant (phone starts with "+1000")
+        #    to plan="admin" — these were created by this code for admin users.
+        result = await db.execute(
+            select(Tenant).where(Tenant.phone.like("+1000%")).limit(1)
+        )
+        auto_tenant = result.scalar_one_or_none()
+        if auto_tenant is not None:
+            auto_tenant.plan = "admin"
+            await db.commit()
+            logger.info("upgraded_tenant_to_admin", tenant_id=auto_tenant.id)
+            return auto_tenant.id
+
+        # 3. No admin tenant found — create a new one
         import secrets as _secrets
         new_tenant = Tenant(
             phone=f"+1000{_secrets.token_hex(4)}",
