@@ -41,10 +41,10 @@ class UserLookupResponse(BaseModel):
 class ManualIssueRequest(BaseModel):
     user_identifier: str = Field(min_length=1, max_length=50, description="Phone number or tg_<telegram_user_id>")
     memo: str | None = Field(None, max_length=500)
-    # Admin-issued keys default to the "team" plan (effectively unlimited) rather
+    # Admin-issued keys default to the "max" plan (the top tier) rather
     # than inheriting whatever plan the tenant signed up under  an admin handing
     # out a key manually is presumed to want it unrestricted unless told otherwise.
-    plan: str | None = Field(None, description="Plan to apply to the tenant (free/pro/team). Defaults to team.")
+    plan: str | None = Field(None, description="Plan to apply to the tenant (free/pro/max). Defaults to max.")
 
 
 class ManualIssueResponse(BaseModel):
@@ -96,7 +96,7 @@ class AdminDashboardStatusResponse(BaseModel):
 
 
 class AdminUserBillingUpdateRequest(BaseModel):
-    plan: Literal["free", "pro", "team"] | None = None
+    plan: Literal["free", "pro", "max"] | None = None
     subscription_status: Literal["active", "inactive", "pending", "past_due", "canceled"] | None = None
     # Absolute timestamp override (optional).
     trial_expires_at: datetime | None = None

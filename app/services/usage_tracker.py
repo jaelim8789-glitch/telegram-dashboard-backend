@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.core.plans import get_plan_limits, validate_plan_id
+from app.core.plans import PLAN_CATALOG, get_plan_limits, validate_plan_id
 from app.core.time import utcnow_naive
 from app.database import async_session_maker
 from app.models.tenant import Tenant, UsageRecord
@@ -70,11 +70,7 @@ async def check_usage_limit(db: AsyncSession, tenant: Tenant, action: str, incre
 
 # ─── Tenant Plan Limits ───────────────────────────────────────────────
 
-PLAN_LIMITS = {
-    "free": get_plan_limits("free"),
-    "pro": get_plan_limits("pro"),
-    "team": get_plan_limits("team"),
-}
+PLAN_LIMITS = {plan_id: get_plan_limits(plan_id) for plan_id in PLAN_CATALOG}
 
 
 async def apply_plan_limits(db: AsyncSession, tenant: Tenant, plan: str) -> Tenant:
@@ -122,7 +118,7 @@ async def add_stars_credit(tenant_id: str, stars_amount: int) -> dict:
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if not tenant:
-            return {"success": False, "error": "Stars  ."}
+            return {"success": False, "error": "Stars를 지급할 테넌트를 찾을 수 없습니다."}
 
         tenant.stars_balance = (tenant.stars_balance or 0) + stars_amount
         await db.commit()
