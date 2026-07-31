@@ -61,6 +61,11 @@ async def check_and_deduct_credits(
     is_sensitive: bool = False,
 ) -> tuple[bool, int]:
     """Check if tenant has enough credits, deduct if yes.  Returns (ok, remaining)."""
+
+    # Admin accounts have unlimited credits.
+    if tenant.plan == "admin":
+        return True, 999999
+
     if tenant.plan == "free":
         _refill_if_needed(tenant)
         available = tenant.ai_credits_remaining
@@ -80,6 +85,8 @@ async def check_and_deduct_credits(
 
 async def get_remaining_credits(tenant: Tenant) -> int:
     """Return current remaining credits (with free refill check)."""
+    if tenant.plan == "admin":
+        return 999999
     if tenant.plan == "free":
         _refill_if_needed(tenant)
     return tenant.ai_credits_remaining

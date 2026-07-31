@@ -65,7 +65,7 @@ async def get_current_tenant_id(
         import secrets as _secrets
         new_tenant = Tenant(
             phone=f"+1000{_secrets.token_hex(4)}",
-            plan="free",
+            plan="admin",
             subscription_status="active",
         )
         db.add(new_tenant)
