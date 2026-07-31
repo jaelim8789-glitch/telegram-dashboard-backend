@@ -6,12 +6,15 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.core.security import decode_access_token, decode_user_access_token
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
 from app.crud import user as user_crud
 from app.database import get_db
 from app.models.user import User
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -36,18 +39,45 @@ async def get_current_identity(
 
 async def get_current_tenant_id(
     identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
 ) -> str:
     """FastAPI dependency that extracts the current tenant_id from the auth context.
-    
+
     Returns the tenant_id string. Raises 401 if not authenticated.
     Used by AI Platform routers and other tenant-scoped endpoints.
+
+    For admin users without a tenant_id, automatically resolves the first
+    available tenant (or creates one) so that AI features and account
+    linking work without requiring a separate user login.
     """
-    if identity.tenant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="테넌트 정보가 없습니다. API 키 또는 세션으로 인증해주세요.",
+    if identity.tenant_id is not None:
+        return identity.tenant_id
+
+    if identity.kind == "admin":
+        # Admin logged in via /admin/login — no tenant attached.
+        # Find or create a default tenant so AI and account features work.
+        from app.models.tenant import Tenant
+        result = await db.execute(select(Tenant).order_by(Tenant.created_at).limit(1))
+        tenant = result.scalar_one_or_none()
+        if tenant is not None:
+            return tenant.id
+        # Auto-create a default tenant for this admin
+        import secrets as _secrets
+        new_tenant = Tenant(
+            phone=f"+1000{_secrets.token_hex(4)}",
+            plan="free",
+            subscription_status="active",
         )
-    return identity.tenant_id
+        db.add(new_tenant)
+        await db.commit()
+        await db.refresh(new_tenant)
+        logger.info("auto_created_tenant_for_admin", tenant_id=new_tenant.id)
+        return new_tenant.id
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="테넌트 정보가 없습니다. API 키 또는 세션으로 인증해주세요.",
+    )
 
 
 async def require_admin(authorization: str | None = Header(default=None)) -> None:
