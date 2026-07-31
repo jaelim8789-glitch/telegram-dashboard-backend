@@ -58,6 +58,24 @@ _DEAD_SESSION_ERRORS = (
 _DEAD_SESSION_DETAIL = "인증 세션이 만료되었습니다. 처음부터(인증번호 요청) 다시 시도해주세요."
 
 
+_SENT_CODE_TYPE_TO_CHANNEL = {
+    "SentCodeTypeApp": "telegram_app",
+    "SentCodeTypeSms": "sms",
+    "SentCodeTypeCall": "call",
+    "SentCodeTypeFlashCall": "flash_call",
+    "SentCodeTypeMissedCall": "flash_call",
+}
+
+
+def _sent_code_channel(sent) -> str | None:
+    """Telethon's SentCode.type tells us whether the code went to the Telegram
+    app, an SMS, or a phone call -- without this the UI can only guess, which
+    is how 'the code never arrived' reports turn out to mean 'it arrived by
+    SMS and the user only checked the Telegram app'."""
+    type_name = type(sent.type).__name__ if getattr(sent, "type", None) is not None else None
+    return _SENT_CODE_TYPE_TO_CHANNEL.get(type_name)
+
+
 async def _recover_from_dead_session(account_id: str, db: AsyncSession, account: Account) -> None:
     """Self-heal so the next attempt starts clean instead of reusing a poisoned
     in-memory client or a stale session string."""
@@ -83,9 +101,27 @@ async def send_code(
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
+    # flood_sleep_threshold=0 (see telethon_pool.py) makes Telethon raise
+    # FloodWaitError immediately instead of silently sleeping through short
+    # waits itself -- that's what fixed the 30s chat-action delay, but it
+    # means a routine few-second flood wait during send-code now fails
+    # outright instead of the client quietly absorbing it. Auto-retry once
+    # for short waits so the user still gets their code; only surface a
+    # 429 for waits long enough that blocking the request would be worse.
+    _SHORT_FLOOD_WAIT_THRESHOLD_SECONDS = 10
+
+    async def _request_code():
+        return await asyncio.wait_for(client.send_code_request(account.phone), timeout=30)
+
     try:
-        # Add timeout wrapper to avoid hanging on slow Telegram SMS delivery
-        sent = await asyncio.wait_for(client.send_code_request(account.phone), timeout=30)
+        try:
+            sent = await _request_code()
+        except FloodWaitError as exc:
+            if exc.seconds > _SHORT_FLOOD_WAIT_THRESHOLD_SECONDS:
+                raise
+            logger.info("send_code_short_flood_wait_retry", account_id=account.id, seconds=exc.seconds)
+            await asyncio.sleep(exc.seconds)
+            sent = await _request_code()
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -115,8 +151,9 @@ async def send_code(
     await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
 
     pool.set_pending_auth(account.id, sent.phone_code_hash)
-    logger.info("verification_code_sent", account_id=account.id)
-    return SendCodeResponse(sent=True)
+    channel = _sent_code_channel(sent)
+    logger.info("verification_code_sent", account_id=account.id, channel=channel)
+    return SendCodeResponse(sent=True, channel=channel)
 
 
 @router.post("/{account_id}/verify-code", response_model=AuthStepResult)
