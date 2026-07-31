@@ -406,17 +406,18 @@ async def health():
         checks["redis"] = False
         all_ok = False
 
-    # 3. Telegram session pool probe (one active session = pool alive)
+    # 3. Telegram session pool probe -- informational only. Zero connected
+    # accounts is a normal state (fresh restart, no accounts linked yet) and
+    # must not flip the container's Docker healthcheck to unhealthy/503,
+    # which previously caused permanent restart-loop-adjacent "unhealthy"
+    # status even while the API itself served every request correctly.
     try:
         from app.services.telethon_pool import pool as _tg_pool
         pool_size = len(_tg_pool._clients) if hasattr(_tg_pool, "_clients") else 0
         checks["telegram_sessions"] = pool_size > 0
-        if pool_size == 0:
-            all_ok = False
     except Exception as exc:
         logger.warning("health_check_telegram_sessions_failed", error=str(exc))
         checks["telegram_sessions"] = False
-        all_ok = False
 
     if all_ok:
         return {
