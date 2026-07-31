@@ -128,7 +128,7 @@ async def self_reset_send_code(
         requested_by_identity=identity.kind,
         requested_by_tenant=identity.tenant_id,
     )
-    return SelfResetResult(reset=True, detail="      .  .")
+    return SelfResetResult(reset=True, detail="인증번호가 전송되었습니다. Telegram 앱 또는 SMS를 확인해주세요.")
 
 
 @router.post("/verify-code", response_model=SelfResetResult)

@@ -237,7 +237,7 @@ async def start_growth_loop(
 ):
     """자율 성장 루프 시작 — 목표 설정 후 백그라운드에서 자동 실행"""
     if not body.goal.strip():
-        raise HTTPException(status_code=404, detail="    ")
+        raise HTTPException(status_code=404, detail="목표를 입력해주세요")
 
     # Generate initial strategy via LLM
     strategy_resp = await call_deepseek(

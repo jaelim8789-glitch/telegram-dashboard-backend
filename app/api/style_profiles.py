@@ -56,7 +56,7 @@ async def create_style_profile(
             detail="해당 텔레그램 계정이 인증되지 않았습니다. 계정 설정에서 다시 로그인해주세요.",
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="      .")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="스타일 프로필 생성 권한이 없습니다.")
 
 
 @router.get("", response_model=list[StyleProfileRead])

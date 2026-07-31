@@ -479,12 +479,12 @@ async def one_click_action(
                 "finding": reply[:1000],
             })
         else:
-            details.append({"step": "reply_audit", "status": "failed", "finding": " "})
+            details.append({"step": "reply_audit", "status": "failed", "finding": "AI 응답을 받지 못했습니다."})
             all_ok = False
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"   : {payload.action}",
+            detail=f"지원하지 않는 action입니다: {payload.action}",
         )
 
     elapsed = int((time.monotonic() - start_time) * 1000)
@@ -646,7 +646,7 @@ async def smart_send_time(
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="   .    .",
+            detail="AI 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요.",
         )
 
     try:
