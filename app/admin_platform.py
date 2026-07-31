@@ -34,7 +34,7 @@ class Role(str, Enum):
 class Plan(str, Enum):
     FREE = "free"
     PRO = "pro"
-    TEAM = "team"
+    MAX = "max"
     LIFETIME = "lifetime"
 
 
@@ -121,7 +121,7 @@ PLANS: dict[str, PlanDefinition] = {
     ),
     Plan.PRO: PlanDefinition(
         name="Pro",
-        max_accounts=10,
+        max_accounts=3,
         max_groups_per_account=500,
         daily_send_limit=5000,
         daily_auto_reply_limit=2500,
@@ -132,17 +132,17 @@ PLANS: dict[str, PlanDefinition] = {
             Feature.CUSTOM_TEMPLATES, Feature.ANALYTICS, Feature.AUDIT_LOG,
             Feature.HEALING_ENGINE, Feature.PRIORITY_SUPPORT,
         },
-        price_monthly_cents=9999,
-        price_yearly_cents=99990,
+        price_monthly_cents=3000,
+        price_yearly_cents=30000,
         api_rate_limit=120,
         priority_support=True,
         audit_log_retention_days=30,
         daily_limit=1000,
         feature_flags={"can_export": True, "can_webhook": True, "bulk_operations": True},
     ),
-    Plan.TEAM: PlanDefinition(
-        name="Team",
-        max_accounts=50,
+    Plan.MAX: PlanDefinition(
+        name="Max",
+        max_accounts=10,
         max_groups_per_account=2000,
         daily_send_limit=50000,
         daily_auto_reply_limit=25000,
@@ -154,8 +154,8 @@ PLANS: dict[str, PlanDefinition] = {
             Feature.HEALING_ENGINE, Feature.PRIORITY_SUPPORT,
             Feature.TEAM_MEMBERS,
         },
-        price_monthly_cents=29999,
-        price_yearly_cents=299990,
+        price_monthly_cents=9900,
+        price_yearly_cents=99000,
         api_rate_limit=300,
         priority_support=True,
         audit_log_retention_days=60,
@@ -191,7 +191,8 @@ PLANS: dict[str, PlanDefinition] = {
 _PLAN_ALIASES: dict[str, str] = {
     "starter": "pro",
     "professional": "pro",
-    "enterprise": "team",
+    "enterprise": "max",
+    "team": "max",
     "premium": "pro",
 }
 

@@ -34,42 +34,42 @@ router = APIRouter(prefix="/api/stars", tags=["stars-payments"])
 
 STAR_PRODUCTS: dict[str, dict[str, Any]] = {
     "pro_monthly": {
-        "title": "Pro  ",
-        "description": " 10 \n  5,000 \n AI \n  ",
-        "star_amount": 1500,        #  15,000
+        "title": "Pro 월간 구독",
+        "description": "계정 3개 · 월 15,000건 발송 · AI 크레딧 50,000/월",
+        "star_amount": 450,
         "plan": Plan.PRO,
         "period_days": 30,
         "label": "Pro",
     },
     "pro_yearly": {
-        "title": "Pro   (20% )",
-        "description": " 10 \n  5,000 \n AI \n  \n  12,000  (20% )",
-        "star_amount": 12000,       #  120,000 ( 10,000)
+        "title": "Pro 연간 구독 (20% 할인)",
+        "description": "계정 3개 · 월 15,000건 발송 · AI 크레딧 50,000/월 · 연간 결제 시 20% 할인",
+        "star_amount": 3600,
         "plan": Plan.PRO,
         "period_days": 365,
-        "label": "Pro ",
+        "label": "Pro 연간",
     },
-    "team_monthly": {
-        "title": "Team  ",
-        "description": " 50 \n  50,000 \n  AI \n  \n  ",
-        "star_amount": 4500,        #  45,000
-        "plan": Plan.TEAM,
+    "max_monthly": {
+        "title": "Max 월간 구독",
+        "description": "계정 10개 · 월 50,000건 발송 · AI 크레딧 200,000/월",
+        "star_amount": 1500,
+        "plan": Plan.MAX,
         "period_days": 30,
-        "label": "Team",
+        "label": "Max",
     },
     "ai_boost_1000": {
-        "title": "AI Boost  1,000 ",
-        "description": "AI   1,000 (  )",
-        "star_amount": 300,         #  3,000
-        "plan": None,               #   
+        "title": "AI Boost 크레딧 1,000",
+        "description": "AI 크레딧 1,000개 추가 (플랜과 무관하게 즉시 충전)",
+        "star_amount": 300,
+        "plan": None,
         "period_days": None,
         "ai_calls": 1000,
         "label": "AI Boost",
     },
     "ai_boost_5000": {
-        "title": "AI Boost  5,000  (20% )",
-        "description": "AI   5,000 (  , 20% )",
-        "star_amount": 1200,        #  12,000
+        "title": "AI Boost 크레딧 5,000 (20% 할인)",
+        "description": "AI 크레딧 5,000개 추가 (플랜과 무관하게 즉시 충전, 20% 할인)",
+        "star_amount": 1200,
         "plan": None,
         "period_days": None,
         "ai_calls": 5000,

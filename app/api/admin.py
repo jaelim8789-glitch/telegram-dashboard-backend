@@ -359,11 +359,11 @@ async def manual_issue_key(
             detail="해당 사용자의 테넌트(구독)를 찾을 수 없습니다. 먼저 회원가입을 완료해주세요.",
         )
 
-    # 3b. Admin-issued keys default to "team" (effectively unlimited) rather than
+    # 3b. Admin-issued keys default to "max" (the top tier) rather than
     # silently inheriting whatever plan the tenant signed up under — an admin
     # can still pick a specific plan via payload.plan when that's the intent.
     try:
-        await apply_plan_limits(db, tenant, payload.plan or "team")
+        await apply_plan_limits(db, tenant, payload.plan or "max")
     except ValueError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="알 수 없는 플랜입니다.")
 
