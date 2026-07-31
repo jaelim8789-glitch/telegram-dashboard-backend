@@ -184,6 +184,21 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _reject_insecure_production_defaults(self) -> "Settings":
         env = self.environment.strip().lower()
+
+        # In production, the default JWT secret must be replaced — it lets
+        # anyone forge valid tokens.
+        if self.admin_jwt_secret == _JWT_DEFAULT:
+            if env in _PRODUCTION_ENVIRONMENTS:
+                raise ValueError(
+                    "ADMIN_JWT_SECRET is set to the insecure default. "
+                    "Generate a random secret (e.g. python -c \"import secrets; print(secrets.token_hex(32))\") "
+                    "and set it in your .env file."
+                )
+            # In dev/staging, auto-generate a random secret per startup so
+            # tokens are short-lived and not predictable.
+            import secrets as _secrets
+            self.admin_jwt_secret = f"dev-{_secrets.token_hex(24)}"
+
         if env not in _PRODUCTION_ENVIRONMENTS:
             return self
 
@@ -192,9 +207,6 @@ class Settings(BaseSettings):
         for field in ("admin_username", "admin_password"):
             if not getattr(self, field):
                 findings.append(field)
-
-        if self.admin_jwt_secret == _JWT_DEFAULT:
-            findings.append("admin_jwt_secret")
 
         # In production, debug must be explicitly set to false.
         # The class default is True, which would expose /docs, /redoc, and

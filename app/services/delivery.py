@@ -193,7 +193,7 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     Never exposes raw exception details, session data, or secrets to clients.
     """
     if isinstance(exc, FloodWaitError):
-        return DeliveryStatus.PERMANENT_FAILURE, "    ."
+        return DeliveryStatus.FLOOD_WAIT, f"텔레그램 쓰로틀링: {exc.seconds}초 대기 후 재시도"
 
     if isinstance(exc, (UserDeactivatedBanError, PhoneNumberBannedError)):
         return DeliveryStatus.BANNED, "계정이 텔레그램에서 차단되었습니다."

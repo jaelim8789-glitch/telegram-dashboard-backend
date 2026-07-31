@@ -15,7 +15,7 @@ from telethon.tl.types import (
 from app.core.logging import get_logger
 from app.database import async_session_maker
 from app.crud import account as account_crud
-from telethon.errors import AuthKeyUnregisteredError
+from telethon.errors import AuthKeyUnregisteredError, FloodWaitError
 from app.services.telegram_actions import get_authorized_client, AccountNotAuthenticatedError
 
 logger = get_logger(__name__)
@@ -193,11 +193,13 @@ async def send_chat_message(
     client = await get_authorized_client(account)
 
     kwargs = {"comment_to": chat_id} if chat_id < 0 and abs(chat_id) > 10**12 else {}
-    if media_path:
-        sent = await client.send_file(chat_id, media_path, caption=text, reply_to=reply_to_msg_id or None)
-    else:
-        sent = await client.send_message(chat_id, text, reply_to=reply_to_msg_id or None)
-
+    try:
+        if media_path:
+            sent = await client.send_file(chat_id, media_path, caption=text, reply_to=reply_to_msg_id or None)
+        else:
+            sent = await client.send_message(chat_id, text, reply_to=reply_to_msg_id or None)
+    except FloodWaitError as exc:
+        raise ValueError(f"텔레그램 쓰로틀링: {exc.seconds}초 후 다시 시도해주세요.")
     msg_id = sent.id if hasattr(sent, "id") else 0
     return {"message_id": msg_id, "status": "sent"}
 
@@ -357,23 +359,29 @@ async def search_messages(
             raise ValueError("Account not found")
 
     client = await get_authorized_client(account)
-    me = await client.get_me()
+    try:
+        me = await client.get_me()
+    except FloodWaitError as exc:
+        raise ValueError(f"텔레그램 쓰로틀링: {exc.seconds}초 후 다시 시도해주세요.")
     my_user_id = me.id if me else None
 
     results = []
-    async for msg in client.iter_messages(limit=limit, search=query):
-        m = _message_to_dict(msg, my_user_id)
-        if m:
-            peer_id = _peer_id(msg.peer_id)
-            try:
-                entity = await client.get_entity(msg.peer_id)
-                chat_title = entity.title if hasattr(entity, 'title') and entity.title else (
-                    f"{entity.first_name or ''} {entity.last_name or ''}".strip() if isinstance(entity, User) else str(getattr(entity, 'id', ''))
-                )
-            except:
-                chat_title = str(peer_id) if peer_id else "Unknown"
-            m["chat_id"] = peer_id
-            m["chat_title"] = chat_title
-            results.append(m)
+    try:
+        async for msg in client.iter_messages(limit=limit, search=query):
+            m = _message_to_dict(msg, my_user_id)
+            if m:
+                peer_id = _peer_id(msg.peer_id)
+                try:
+                    entity = await client.get_entity(msg.peer_id)
+                    chat_title = entity.title if hasattr(entity, 'title') and entity.title else (
+                        f"{entity.first_name or ''} {entity.last_name or ''}".strip() if isinstance(entity, User) else str(getattr(entity, 'id', ''))
+                    )
+                except Exception:
+                    chat_title = str(peer_id) if peer_id else "Unknown"
+                m["chat_id"] = peer_id
+                m["chat_title"] = chat_title
+                results.append(m)
+    except FloodWaitError as exc:
+        raise ValueError(f"텔레그램 쓰로틀링: {exc.seconds}초 후 다시 시도해주세요.")
 
     return results

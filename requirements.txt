@@ -1,5 +1,6 @@
 fastapi>=0.115,<0.116
 uvicorn[standard]>=0.32,<0.33
+bcrypt>=4.0,<5.1
 sqlalchemy[asyncio]>=2.0,<2.1
 asyncpg>=0.30,<0.31
 pgvector>=0.3,<0.4

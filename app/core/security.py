@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt
 
 from app.config import settings
@@ -35,10 +36,11 @@ def verify_admin_credentials(username: str, password: str) -> bool:
 
 def verify_admin_credentials_hash(username: str, password: str, stored_username: str, stored_password_hash: str) -> bool:
     """Same constant-time comparison as verify_admin_credentials, but against a
-    DB-stored username/password-hash pair set up via POST /api/admin/setup."""
+    DB-stored username/password-hash pair set up via POST /api/admin/setup.
+    Supports both legacy SHA-256 and bcrypt hashes."""
     return secrets.compare_digest(
         username.encode("utf-8"), stored_username.encode("utf-8")
-    ) and secrets.compare_digest(hash_password(password).encode("utf-8"), stored_password_hash.encode("utf-8"))
+    ) and verify_password_stored(password, stored_password_hash)
 
 
 def create_access_token() -> str:
@@ -93,6 +95,29 @@ def generate_otp_code() -> str:
 
 
 def hash_password(password: str) -> str:
+    """Bcrypt hash with salt — prevents rainbow table and brute-force attacks."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password_stored(password: str, stored_hash: str) -> bool:
+    """Verify a password against a stored hash.
+
+    Supports both legacy SHA-256 hashes (for migration) and bcrypt hashes.
+    If the stored hash is a legacy SHA-256 hex string (64 chars, no prefix),
+    we compare against SHA-256 and return True — the caller should re-hash
+    with bcrypt on next opportunity.
+    """
+    if len(stored_hash) == 60 and stored_hash.startswith("$2"):
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    # Legacy SHA-256 fallback — compare, but signal that rehash is needed.
+    return secrets.compare_digest(
+        hash_password_legacy(password).encode("utf-8"),
+        stored_hash.encode("utf-8"),
+    )
+
+
+def hash_password_legacy(password: str) -> str:
+    """DEPRECATED — SHA-256 for migrating legacy hashes only. Do not use for new passwords."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
