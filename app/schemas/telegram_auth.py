@@ -5,7 +5,10 @@ from app.schemas.account import AccountStatus
 
 class SendCodeResponse(BaseModel):
     sent: bool
-    channel: str | None = None  # "telegram_app" | "sms" | "call" | "flash_call" | None (unknown)
+    # "telegram_app" | "sms" | "call" | "flash_call" | None (unknown)
+    channel: str | None = None
+    # Server-generated hint so clients don't have to re-map channel codes.
+    delivery_hint: str | None = None
 
 
 class VerifyCodeRequest(BaseModel):

@@ -111,7 +111,7 @@ async def send_code(
     _SHORT_FLOOD_WAIT_THRESHOLD_SECONDS = 10
 
     async def _request_code():
-        return await asyncio.wait_for(client.send_code_request(account.phone), timeout=30)
+        return await asyncio.wait_for(client.send_code_request(account.phone), timeout=45)
 
     try:
         try:
@@ -132,7 +132,7 @@ async def send_code(
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도하세요.",
+            detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도해주세요.",
         )
     except UserDeactivatedBanError:
         await account_crud.set_auth_state(db, account, status="banned")
@@ -151,9 +151,12 @@ async def send_code(
     await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
 
     pool.set_pending_auth(account.id, sent.phone_code_hash)
+
+    # Delivery channel — Telegram picks this; the UI must tell the user where
+    # to look (SMS vs Telegram app) or they'll think the code never arrived.
     channel = _sent_code_channel(sent)
     logger.info("verification_code_sent", account_id=account.id, channel=channel)
-    return SendCodeResponse(sent=True, channel=channel)
+    return SendCodeResponse(sent=True, channel=channel, delivery_hint=_delivery_hint(channel))
 
 
 @router.post("/{account_id}/verify-code", response_model=AuthStepResult)
@@ -289,3 +292,15 @@ async def get_status(
         account = await account_crud.set_auth_state(db, account, status=new_status, touch_activity=authorized)
 
     return AuthStepResult(status=account.status)
+
+
+def _delivery_hint(channel: str | None) -> str | None:
+    if channel == "sms":
+        return "인증번호가 SMS 문자 메시지로 전송되었습니다. 휴대폰 문자를 확인하세요."
+    if channel == "telegram_app":
+        return "인증번호가 Telegram 앱 내 'Telegram' 서비스 메시지로 전송되었습니다. Telegram 앱을 확인하세요."
+    if channel == "call":
+        return "인증번호가 자동 전화로 안내됩니다. 걸려오는 전화를 받으세요."
+    if channel == "flash_call":
+        return "전화가 걸려오면 마지막 2자리로 인증합니다. 전화를 받으세요."
+    return None
