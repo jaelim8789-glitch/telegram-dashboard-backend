@@ -196,7 +196,7 @@ async def ai_chat(
     tenant_row = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = tenant_row.scalar_one_or_none()
     if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="   .")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테넌트를 찾을 수 없습니다.")
 
     # Credit check (server-enforced)
     from app.services.ai_credit_service import check_and_deduct_credits
@@ -204,7 +204,7 @@ async def ai_chat(
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"AI   . ( /: {remaining})",
+            detail=f"AI 크레딧이 부족합니다. (남은 크레딧: {remaining})",
         )
 
     # Check quota (legacy plan-limit enforcement)

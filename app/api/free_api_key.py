@@ -83,7 +83,7 @@ async def issue(
 
     row = await verification_crud.get_verification(db, payload.token)
     if row is None:
-        raise HTTPException(status_code=409, detail="    .")
+        raise HTTPException(status_code=409, detail="유효하지 않은 인증 요청입니다.")
 
     if row.status != "verified":
         if row.telegram_user_id is None:
