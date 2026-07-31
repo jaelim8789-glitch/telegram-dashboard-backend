@@ -1059,11 +1059,16 @@ async def admin_seed_plan_limits(
         {"plan": "free", "feature": "reply_assistant", "max_requests_per_day": 20, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "broadcast_assistant", "max_requests_per_day": 5, "max_tokens_per_day": 5000, "max_credits_per_month": 0, "is_enabled": True},
         {"plan": "free", "feature": "operations_report", "max_requests_per_day": 2, "max_tokens_per_day": 10000, "max_credits_per_month": 0, "is_enabled": True},
-        # Pro plan — $99/month, 100K AI credits
-        {"plan": "pro", "feature": "chat", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
-        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 100000, "is_enabled": True},
-        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 100000, "is_enabled": True},
-        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 100000, "is_enabled": True},
+        # Pro plan — $30/month, 3 accounts, 50K AI credits
+        {"plan": "pro", "feature": "chat", "max_requests_per_day": 250, "max_tokens_per_day": 125000, "max_credits_per_month": 50000, "is_enabled": True},
+        {"plan": "pro", "feature": "reply_assistant", "max_requests_per_day": 250, "max_tokens_per_day": 125000, "max_credits_per_month": 50000, "is_enabled": True},
+        {"plan": "pro", "feature": "broadcast_assistant", "max_requests_per_day": 100, "max_tokens_per_day": 50000, "max_credits_per_month": 50000, "is_enabled": True},
+        {"plan": "pro", "feature": "operations_report", "max_requests_per_day": 25, "max_tokens_per_day": 100000, "max_credits_per_month": 50000, "is_enabled": True},
+        # Max plan — $99/month, 10 accounts, 200K AI credits
+        {"plan": "max", "feature": "chat", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 200000, "is_enabled": True},
+        {"plan": "max", "feature": "reply_assistant", "max_requests_per_day": 500, "max_tokens_per_day": 250000, "max_credits_per_month": 200000, "is_enabled": True},
+        {"plan": "max", "feature": "broadcast_assistant", "max_requests_per_day": 200, "max_tokens_per_day": 100000, "max_credits_per_month": 200000, "is_enabled": True},
+        {"plan": "max", "feature": "operations_report", "max_requests_per_day": 50, "max_tokens_per_day": 200000, "max_credits_per_month": 200000, "is_enabled": True},
     ]
 
     created = 0
