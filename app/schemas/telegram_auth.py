@@ -5,6 +5,7 @@ from app.schemas.account import AccountStatus
 
 class SendCodeResponse(BaseModel):
     sent: bool
+    channel: str | None = None  # "telegram_app" | "sms" | "call" | "flash_call" | None (unknown)
 
 
 class VerifyCodeRequest(BaseModel):
