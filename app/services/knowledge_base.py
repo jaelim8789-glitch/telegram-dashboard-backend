@@ -52,11 +52,11 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         return [d["embedding"] for d in data["data"]]
 
 
-async def ingest_document(db: AsyncSession, tenant_id: str, title: str, content: str, collection: str = "general",
+async def ingest_document(db: AsyncSession, title: str, content: str, collection: str = "general",
                           source_url: str | None = None, permission_groups: list[str] | None = None,
                           metadata: dict | None = None, user_id: str | None = None) -> Document:
     doc = Document(
-        tenant_id=tenant_id, title=title, content=content, source_url=source_url,
+        title=title, content=content, source_url=source_url,
         collection=collection, permission_groups=permission_groups or [],
         extra=metadata or {}, created_by=user_id,
     )
@@ -86,26 +86,22 @@ async def ingest_document(db: AsyncSession, tenant_id: str, title: str, content:
 # ── Search ────────────────────────────────────────────────────
 
 
-async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, top_k: int = 5,
+async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
                                 collection: str | None = None) -> tuple[list[SearchResult], list[str]]:
-    """Hybrid search: vector cosine + keyword (FTS) + RRF fusion. Scoped to the caller's tenant."""
+    """Hybrid search: vector cosine + keyword (FTS) + RRF fusion."""
     query_embedding = (await embed_texts([query]))[0]
-    # asyncpg can't bind a Python list against a ::vector cast target directly —
-    # it needs the pgvector text literal format ("[0.1,0.2,...]").
-    query_embedding_literal = str(query_embedding)
 
     vector_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
-               1 - (c.embedding <=> (:query_emb)::vector) AS score
+               1 - (c.embedding <=> :query_emb::vector) AS score
         FROM kb_chunks c
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
-          AND d.tenant_id = :tenant_id
-          AND ((:collection)::text IS NULL OR d.collection = (:collection)::text)
+          AND (:collection IS NULL OR d.collection = :collection)
         ORDER BY score DESC
         LIMIT :limit
     """)
-    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding_literal, tenant_id=tenant_id, collection=collection, limit=50)
+    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding, collection=collection, limit=50)
 
     fts_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
@@ -113,13 +109,12 @@ async def search_knowledge_base(db: AsyncSession, tenant_id: str, query: str, to
         FROM kb_chunks c
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
-          AND d.tenant_id = :tenant_id
           AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :query)
-          AND ((:collection)::text IS NULL OR d.collection = (:collection)::text)
+          AND (:collection IS NULL OR d.collection = :collection)
         ORDER BY score DESC
         LIMIT :limit
     """)
-    rows_f = await _fetch_rows(db, fts_sql, query=query, tenant_id=tenant_id, collection=collection, limit=50)
+    rows_f = await _fetch_rows(db, fts_sql, query=query, collection=collection, limit=50)
 
     # RRF fusion
     fused = _rrf_fusion(rows_v, rows_f, top_k)
@@ -175,7 +170,7 @@ Answer:"""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{settings.kb_openai_base_url}/chat/completions",
+                f"{settings.OPENAI_BASE_URL}/chat/completions",
                 json={
                     "model": settings.kb_llm_model,
                     "messages": [{"role": "user", "content": prompt}],
@@ -193,10 +188,10 @@ Answer:"""
 {chr(10).join(f'• {r.document_title}: {r.content[:200]}...' for r in results[:3])}"""
 
 
-async def log_search(db: AsyncSession, tenant_id: str, query: str, identity: object | None,
+async def log_search(db: AsyncSession, query: str, identity: object | None,
                      result_ids: list[str], latency_ms: int) -> str:
     user_id = identity.user.id if identity and hasattr(identity, "user") and identity.user else None
-    log = SearchLog(tenant_id=tenant_id, query=query, user_id=user_id, results=result_ids, latency_ms=latency_ms)
+    log = SearchLog(query=query, user_id=user_id, results=result_ids, latency_ms=latency_ms)
     db.add(log)
     await db.commit()
     await db.refresh(log)

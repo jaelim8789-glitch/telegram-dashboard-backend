@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+import secrets
 from sqlalchemy import case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,8 @@ from app.schemas.admin import (
     AdminSetupRequest,
     AdminSetupResponse,
     AdminTokenResponse,
+    AdminSetupRequest,
+    AdminSetupResponse,
     GuideHubPublishResponse,
     ManualIssueRequest,
     ManualIssueResponse,
@@ -85,23 +88,32 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
             detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(retry_after)},
         )
-    ok = verify_admin_credentials(payload.username, payload.password)
-    if not ok:
-        result = await db.execute(select(SystemSetting).where(SystemSetting.key.in_(["admin_db_username", "admin_db_password_hash"])))
-        rows = {row.key: row.value for row in result.scalars().all()}
-        stored_username = rows.get("admin_db_username")
-        stored_password_hash = rows.get("admin_db_password_hash")
-        if stored_username and stored_password_hash:
-            ok = verify_admin_credentials_hash(payload.username, payload.password, stored_username, stored_password_hash)
-    if not ok:
-        logger.warning("admin_login_failed", username=payload.username)
-        raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
-    logger.info("admin_login_success")
-    return AdminTokenResponse(access_token=create_access_token())
+    if verify_admin_credentials(payload.username, payload.password):
+        logger.info("admin_login_success")
+        return AdminTokenResponse(access_token=create_access_token())
+    # Fallback: check DB-based admin credentials (system_settings)
+    user_result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "admin_username")
+    )
+    pass_result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "admin_password_hash")
+    )
+    db_user = user_result.scalar_one_or_none()
+    db_pass = pass_result.scalar_one_or_none()
+    if db_user and db_pass:
+        if secrets.compare_digest(
+            payload.username.encode("utf-8"), db_user.value.encode("utf-8")
+        ) and secrets.compare_digest(
+            hash_password(payload.password).encode("utf-8"), db_pass.value.encode("utf-8")
+        ):
+            logger.info("admin_login_success_db")
+            return AdminTokenResponse(access_token=create_access_token())
+    logger.warning("admin_login_failed", username=payload.username)
+    raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
 
-@router.post("/setup", response_model=AdminSetupResponse)
-async def setup_admin(payload: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/setup", response_model=AdminSetupResponse, status_code=status.HTTP_201_CREATED)
+async def admin_setup(payload: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
     """One-time creation of a DB-backed admin account, for when ADMIN_USERNAME/
     ADMIN_PASSWORD env vars aren't set on the host. Fails once an account already
     exists — use the (future) admin credential-rotation flow to change it after."""

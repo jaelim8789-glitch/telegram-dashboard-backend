@@ -4,7 +4,6 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity, get_db
@@ -19,12 +18,12 @@ router = APIRouter(prefix="/api/v1/kb", tags=["knowledge-base"])
 
 @router.post("/search")
 async def search(req: SearchRequest, db: AsyncSession = Depends(get_db),
-                 identity: Identity = Depends(get_current_identity)):
+                 _identity: Identity | None = Depends(get_current_identity)):
     start = time.monotonic()
     results, result_ids = await kb.search_knowledge_base(db, req.query, req.top_k, req.collection)
     answer = await kb.generate_answer(req.query, results)
     latency = int((time.monotonic() - start) * 1000)
-    log_id = await kb.log_search(db, req.query, identity, result_ids, latency)
+    log_id = await kb.log_search(db, req.query, _identity.user.id if _identity and _identity.user else None, result_ids, latency)
     return SearchResponse(answer=answer, results=results, search_log_id=log_id)
 
 
@@ -70,9 +69,9 @@ async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db),
 
 @router.post("/feedback")
 async def submit_feedback(fb: FeedbackCreate, db: AsyncSession = Depends(get_db),
-                          identity: Identity = Depends(get_current_identity)):
+                          identity: Identity | None = Depends(get_current_identity)):
     entry = Feedback(search_log_id=fb.search_log_id,
-                     user_id=identity.user.id if identity.user else None,
+                     user_id=identity.user.id if identity and identity.user else None,
                      rating=fb.rating, comment=fb.comment)
     db.add(entry)
     await db.commit()
