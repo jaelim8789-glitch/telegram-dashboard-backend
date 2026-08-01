@@ -171,6 +171,10 @@ async def verify_code(
 
     pending = pool.get_pending_auth(account.id)
     if pending is None:
+        # Redis recovery is async — give it one chance before failing
+        await asyncio.sleep(0.3)
+        pending = pool.get_pending_auth(account.id)
+    if pending is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="먼저 인증번호를 요청해주세요 (send-code).",

@@ -10,6 +10,7 @@ from app.config import settings
 from app.core.logging import get_logger
 
 _flood_wait_until: dict[str, float] = {}
+REDIS_PENDING_AUTH_TTL = 300  # 5 minutes
 
 
 def is_account_flood_limited(account_id: str) -> tuple[bool, float]:
@@ -164,13 +165,59 @@ class TelethonClientPool:
         return self._clients.get(account_id)
 
     def set_pending_auth(self, account_id: str, phone_code_hash: str) -> None:
+        """Store phone_code_hash in memory AND Redis for restart resilience."""
         self._pending_auth[account_id] = PendingAuth(phone_code_hash=phone_code_hash)
+        try:
+            asyncio.get_event_loop().create_task(
+                self._backup_pending_auth(account_id, phone_code_hash)
+            )
+        except Exception:
+            pass
+
+    async def _backup_pending_auth(self, account_id: str, phone_code_hash: str) -> None:
+        try:
+            from app.cache import set as cache_set
+            await cache_set(f"pending_auth:{account_id}", phone_code_hash, ttl=REDIS_PENDING_AUTH_TTL)
+        except Exception:
+            pass
 
     def get_pending_auth(self, account_id: str) -> PendingAuth | None:
-        return self._pending_auth.get(account_id)
+        """Get from memory first; if missing, try Redis recovery."""
+        result = self._pending_auth.get(account_id)
+        if result is not None:
+            return result
+        # Memory miss — schedule async Redis recovery for next lookup
+        if account_id not in self._pending_auth:
+            try:
+                asyncio.get_event_loop().create_task(self._recover_pending_auth(account_id))
+            except Exception:
+                pass
+        return None
+
+    async def _recover_pending_auth(self, account_id: str) -> None:
+        """Recover pending_auth from Redis after server restart."""
+        try:
+            from app.cache import get as cache_get
+            phone_code_hash = await cache_get(f"pending_auth:{account_id}")
+            if phone_code_hash:
+                self._pending_auth[account_id] = PendingAuth(phone_code_hash=phone_code_hash)
+        except Exception:
+            pass
 
     def clear_pending_auth(self, account_id: str) -> None:
+        """Clear from both memory and Redis."""
         self._pending_auth.pop(account_id, None)
+        try:
+            asyncio.get_event_loop().create_task(self._clear_redis_pending_auth(account_id))
+        except Exception:
+            pass
+
+    async def _clear_redis_pending_auth(self, account_id: str) -> None:
+        try:
+            from app.cache import delete as cache_delete
+            await cache_delete(f"pending_auth:{account_id}")
+        except Exception:
+            pass
 
     async def disconnect(self, account_id: str) -> None:
         client = self._clients.pop(account_id, None)
