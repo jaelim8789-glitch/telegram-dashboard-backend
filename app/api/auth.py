@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 from datetime import timedelta
 
