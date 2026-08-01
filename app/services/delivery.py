@@ -461,7 +461,7 @@ async def _deliver_with_retry(
                 status=status,
                 success=is_success,
                 telegram_message_id=msg_id,
-                error_message=f"  : {remaining:.0f}  ",
+                error_message=safe_error,
                 attempt_count=attempt,
                 message_content=message,
                 started_at=started_at,

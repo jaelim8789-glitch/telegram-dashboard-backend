@@ -449,4 +449,4 @@ async def health():
 # thing that can reach uvicorn directly (not internet-exposed itself).
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware  # noqa: E402
 
-app = ProxyHeadersMiddleware(app, trusted_hosts="*")
+app = ProxyHeadersMiddleware(app, trusted_hosts="*")  # safe: only reachable via internal nginx/Cloudflare

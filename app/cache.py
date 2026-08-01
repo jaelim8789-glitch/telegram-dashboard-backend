@@ -23,7 +23,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
-_CACHE_ENABLED = bool(os.environ.get("REDIS_URL")) or True  # enable if redis service is present
+_CACHE_ENABLED = bool(os.environ.get("REDIS_URL"))
 
 _redis_pool = None
 

@@ -512,7 +512,6 @@ async def check_telegram(
     return {
         "linked": True,
         "telegram_id": telegram_id,
-        "phone": user.phone,
         "plan": tenant.plan if tenant else None,
         "subscription_status": tenant.subscription_status if tenant else None,
     }

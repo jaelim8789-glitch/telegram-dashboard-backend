@@ -22,7 +22,10 @@ async def chat_websocket(
     try:
         while True:
             data = await websocket.receive_text()
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                continue
             # Broadcast typing/read receipts to other clients of same account
             if msg.get("type") == "typing":
                 for client in chat_clients.get(account_id, set()):

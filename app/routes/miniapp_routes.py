@@ -33,5 +33,5 @@ async def miniapp_pixel_offices():
             result = await db.execute(text("SELECT id, name, status FROM pixel_offices LIMIT 3"))
             rows = result.fetchall()
             return [{"id": r[0], "name": r[1], "status": r[2]} for r in rows]
-    except:
+    except Exception:
         return []

@@ -36,14 +36,35 @@ async def tool_echo(**kwargs: Any) -> dict[str, Any]:
 
 async def tool_calculate(**kwargs: Any) -> dict[str, Any]:
     """Perform a basic calculation."""
+    import ast
+    import operator as _operator
+
     expression = kwargs.get("expression", "")
     try:
-        # Safe evaluation  only allow basic math
-        allowed_names = {
-            "abs": abs, "round": round, "min": min, "max": max,
-            "sum": sum, "int": int, "float": float, "str": str,
+        _SAFE_OPS = {
+            ast.Add: _operator.add,
+            ast.Sub: _operator.sub,
+            ast.Mult: _operator.mul,
+            ast.Div: _operator.truediv,
+            ast.Mod: _operator.mod,
+            ast.Pow: _operator.pow,
+            ast.USub: _operator.neg,
+            ast.UAdd: _operator.pos,
         }
-        result = eval(expression, {"__builtins__": {}}, allowed_names)
+
+        def _safe_eval(node: ast.AST) -> float:
+            if isinstance(node, ast.Expression):
+                return _safe_eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return node.value
+            if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+                return _SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+                return _SAFE_OPS[type(node.op)](_safe_eval(node.operand))
+            raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+
+        tree = ast.parse(expression, mode="eval")
+        result = _safe_eval(tree)
         return {"expression": expression, "result": result}
     except Exception as exc:
         return {"expression": expression, "error": str(exc)}

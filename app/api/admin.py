@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, require_admin
@@ -40,6 +40,7 @@ from app.schemas.api_key import APIKeyCreated, APIKeyCreateRequest, APIKeyRead
 from app.schemas.user import UserApiKeyReissued, UserRead, UserToggleRequest
 from app.models.message_log import MessageLog
 from app.models.referral import ReferralCommission, ReferralPayout
+from app.models.telegram_verification import TelegramChannelVerification
 from app.models.tenant import PaymentRecord, StarsPaymentRecord, Tenant
 from app.models.token import TokenBalance, TokenTransaction
 from datetime import timedelta
@@ -723,36 +724,6 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
             func.sum(case((MessageLog.success.is_(False), 1), else_=0)).label("failed"),
         ).where(MessageLog.created_at >= since)
     )
-
-
-@router.get("/audit-logs", response_model=AdminAuditLogListResponse, dependencies=[Depends(require_admin)])
-async def list_admin_audit_logs(
-    limit: int = Query(default=50, ge=1, le=200),
-    action: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    query = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit)
-    if action:
-        query = query.where(AdminAuditLog.action == action)
-    result = await db.execute(query)
-    rows = result.scalars().all()
-    return AdminAuditLogListResponse(
-        items=[
-            AdminAuditLogRead(
-                id=row.id,
-                admin_username=row.admin_username,
-                action=row.action,
-                target_type=row.target_type,
-                target_id=row.target_id,
-                target_phone=row.target_phone,
-                detail=row.detail,
-                memo=row.memo,
-                result=row.result,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
-    )
     row = result.one_or_none()
     recent_total = row.total or 0 if row else 0
     recent_failed = row.failed or 0 if row else 0
@@ -784,6 +755,36 @@ async def list_admin_audit_logs(
             recent_failed=recent_failed,
             failure_rate=failure_rate,
         ),
+    )
+
+
+@router.get("/audit-logs", response_model=AdminAuditLogListResponse, dependencies=[Depends(require_admin)])
+async def list_admin_audit_logs(
+    limit: int = Query(default=50, ge=1, le=200),
+    action: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit)
+    if action:
+        query = query.where(AdminAuditLog.action == action)
+    result = await db.execute(query)
+    rows = result.scalars().all()
+    return AdminAuditLogListResponse(
+        items=[
+            AdminAuditLogRead(
+                id=row.id,
+                admin_username=row.admin_username,
+                action=row.action,
+                target_type=row.target_type,
+                target_id=row.target_id,
+                target_phone=row.target_phone,
+                detail=row.detail,
+                memo=row.memo,
+                result=row.result,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
     )
 
 
