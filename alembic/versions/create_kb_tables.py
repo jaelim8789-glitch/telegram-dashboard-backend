@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "003_create_kb_tables"
-down_revision: Union[str, None] = "f8a5d3b2c1e0"
+down_revision: Union[str, None] = "006_add_ai_credits"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
