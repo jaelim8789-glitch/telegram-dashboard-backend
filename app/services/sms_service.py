@@ -23,17 +23,60 @@ async def send_verification_sms(phone: str, code: str) -> None:
         # `docker compose logs` / the terminal during local development or testing.
         logger.info("sms_code_console", phone=phone, code=code)
         return
+    if provider == "telegram_bot":
+        await _send_via_telegram_bot(phone, code)
+        return
     if provider == "twilio":
         await _send_via_twilio(phone, code)
         return
     if provider == "coolsms":
         await _send_via_coolsms(phone, code)
         return
-    raise SmsSendError(f"알 수 없는 SMS_PROVIDER 설정입니다: {provider!r} (console, twilio, coolsms 중 하나여야 합니다)")
+    raise SmsSendError(f"알 수 없는 SMS_PROVIDER 설정입니다: {provider!r} (console, telegram_bot, twilio, coolsms 중 하나여야 합니다)")
 
 
 def _message_text(code: str) -> str:
     return f"[Telegram Dashboard] 인증번호: {code} (5분 이내 입력)"
+
+
+async def _send_via_telegram_bot(phone: str, code: str) -> None:
+    """Send verification code via Telegram Bot DM to the phone number's linked user."""
+    if not settings.telegram_bot_token:
+        raise SmsSendError("TELEGRAM_BOT_TOKEN이 설정되지 않았습니다.")
+
+    # Look up the user's telegram_id by phone
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.database import async_session_maker
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(User.telegram_id).where(User.phone == phone, User.telegram_id.isnot(None))
+        )
+        row = result.scalar_one_or_none()
+
+    if row is None:
+        # No linked Telegram account — fall back to console logging
+        logger.info("telegram_bot_no_link", phone=phone, code=code)
+        return
+
+    telegram_id = int(row)
+    text = _message_text(code)
+
+    # Send DM via Telegram Bot API
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+    payload = {"chat_id": telegram_id, "text": text, "parse_mode": "HTML"}
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.warning("telegram_bot_dm_failed", phone=phone, status=response.status_code, body=response.text[:200])
+                raise SmsSendError(f"텔레그램 봇 DM 발송 실패 ({response.status_code})")
+        except httpx.HTTPError as exc:
+            raise SmsSendError(f"텔레그램 봇 DM 발송 실패: {exc}") from exc
+
+    logger.info("telegram_bot_dm_sent", phone=phone, telegram_id=telegram_id)
 
 
 async def _send_via_twilio(phone: str, code: str) -> None:
