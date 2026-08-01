@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import random
 from datetime import datetime, timezone
@@ -22,6 +23,53 @@ def _get_macro_lock(macro_id: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _macro_locks[macro_id] = lock
     return lock
+
+
+async def _build_candidate_pool(
+    messages,
+    *,
+    chat_id: str,
+    used_pairs: set[tuple[str, str]],
+    self_id: str | None = None,
+) -> list[tuple[str, object]]:
+    candidates: list[tuple[str, object]] = []
+    seen_users_in_chat: set[str] = set()
+    for msg in messages:
+        if getattr(msg, "out", False):
+            continue
+
+        text = getattr(msg, "text", "")
+        if text is None or not str(text).strip():
+            continue
+
+        try:
+            sender = msg.get_sender()
+            if inspect.isawaitable(sender):
+                sender = await sender
+        except Exception:
+            continue
+
+        if sender is None:
+            continue
+
+        uid = str(getattr(sender, "id", ""))
+        if not uid:
+            continue
+        if self_id and uid == self_id:
+            continue
+        if getattr(sender, "bot", False):
+            continue
+        if getattr(sender, "is_self", False):
+            continue
+        if (chat_id, uid) in used_pairs:
+            continue
+        if uid in seen_users_in_chat:
+            continue
+
+        seen_users_in_chat.add(uid)
+        candidates.append((uid, msg))
+
+    return candidates
 
 
 async def execute_random_reply(macro_id: str) -> dict:
@@ -77,6 +125,13 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
         if not target_chats:
             return {"status": "skipped", "reason": "no_groups"}
 
+    self_id = None
+    try:
+        self_user = await client.get_me()
+        self_id = str(getattr(self_user, "id", "")) if self_user else None
+    except Exception as exc:
+        logger.debug("random_reply_get_me_failed", macro_id=macro_id, error=str(exc))
+
     results = []
     async with async_session_maker() as db:
         macro = await macro_crud.get_macro(db, macro_id)
@@ -93,28 +148,22 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
                 results.append({"chat_id": chat_id, "user_id": None, "status": "failed", "error": str(exc)})
                 continue
 
-            candidates = []
-            seen_users_in_chat = set()
-            for msg in messages:
-                if msg.out:
-                    continue
-                try:
-                    sender = await msg.get_sender()
-                except Exception as exc:
-                    logger.debug("random_reply_get_sender_failed", macro_id=macro_id, chat_id=chat_id, error=str(exc))
-                    continue
-                if sender is None:
-                    continue
-                uid = str(sender.id)
-                if (chat_id, uid) in used_set:
-                    continue
-                if uid in seen_users_in_chat:
-                    continue
-                seen_users_in_chat.add(uid)
-                candidates.append((uid, msg))
+            candidates = await _build_candidate_pool(
+                messages,
+                chat_id=chat_id,
+                used_pairs=used_set,
+                self_id=self_id,
+            )
 
             if not candidates:
-                logger.info("random_reply: no candidates in %s (all used)", chat_id)
+                logger.info(
+                    "random_reply_no_candidates",
+                    macro_id=macro_id,
+                    chat_id=chat_id,
+                    reason="filtered_or_used",
+                    used_count=len(used_set),
+                )
+                results.append({"chat_id": chat_id, "user_id": None, "status": "skipped", "reason": "no_candidates"})
                 continue
 
             chosen_uid, chosen_msg = random.choice(candidates)
@@ -151,6 +200,15 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
                 )
                 if is_success:
                     await macro_crud.add_used_target(db, macro, chat_id, chosen_uid)
+                    used_set.add((chat_id, chosen_uid))
+                else:
+                    logger.warning(
+                        "random_reply_delivery_failed",
+                        macro_id=macro_id,
+                        chat_id=chat_id,
+                        user_id=chosen_uid,
+                        error=dr.error_message,
+                    )
                 results.append({
                     "chat_id": chat_id,
                     "user_id": chosen_uid,
