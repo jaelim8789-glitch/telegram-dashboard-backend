@@ -117,7 +117,21 @@ async def create_macro(
 
     media_path = None
     if file is not None and file.filename:
-        media_path = await save_broadcast_media(file)
+        try:
+            media_path = await save_broadcast_media(file)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "reply_macro_attachment_save_failed",
+                account_id=account_id,
+                filename=getattr(file, "filename", None),
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="첨부파일 저장 중 오류가 발생했습니다.",
+            ) from exc
 
     macro = await macro_crud.create_macro(
         db,
