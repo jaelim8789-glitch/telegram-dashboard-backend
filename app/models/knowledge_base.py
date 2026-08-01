@@ -36,7 +36,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     chunk_type: Mapped[str] = mapped_column(String(50), default="paragraph")
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(nullable=True)  # vector(1536) added via raw SQL / migration
+    embedding: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     extra: Mapped[dict | None] = mapped_column("extra", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))
 
