@@ -84,6 +84,11 @@ class AuditAction(str, Enum):
 
 @dataclass
 class PlanDefinition:
+    """DEPRECATED: Use app.core.plans.PLAN_CATALOG as the single source of truth.
+    
+    This legacy class is kept for backward compatibility with bot routers that
+    import from here. All new code should import from app.core.plans instead.
+    """
     name: str
     max_accounts: int
     max_groups_per_account: int
@@ -100,6 +105,8 @@ class PlanDefinition:
     feature_flags: dict[str, bool] = field(default_factory=dict)
 
 
+# DEPRECATED: Use app.core.plans.PLAN_CATALOG instead.
+# This dict is kept for backward compatibility with legacy bot routers.
 PLANS: dict[str, PlanDefinition] = {
     Plan.FREE: PlanDefinition(
         name="Free",
