@@ -20,6 +20,15 @@ _EXTENSION_BY_CONTENT_TYPE = {
 }
 
 
+def infer_media_type(filename: str) -> str:
+    lower = (filename or "").lower()
+    if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+        return "photo"
+    if lower.endswith((".mp4", ".mov", ".mkv", ".avi", ".webm")):
+        return "video"
+    return "document"
+
+
 async def save_broadcast_media(upload: UploadFile) -> str:
     if upload.content_type not in ALLOWED_MEDIA_CONTENT_TYPES:
         raise HTTPException(

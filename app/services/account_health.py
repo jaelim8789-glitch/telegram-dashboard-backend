@@ -159,7 +159,10 @@ async def get_account_health(
         elif latest and latest.success:
             status_val = "healthy"
         elif has_session:
-            status_val = "unknown"
+            if account.status == "active":
+                status_val = "healthy"
+            else:
+                status_val = "unknown"
         else:
             status_val = "not_configured"
 
