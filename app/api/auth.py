@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import hmac
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import timedelta
@@ -714,3 +716,196 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
         access_token=create_user_access_token(user.id),
         session_token=raw_token,
     )
+
+
+# ── Unified Telegram login: public endpoints (no auth required) ──────────
+
+class PrepareAccountRequest(BaseModel):
+    phone: str
+
+class PrepareAccountResponse(BaseModel):
+    account_id: str
+    channel: str | None = None
+    delivery_hint: str | None = None
+
+class VerifyTelegramCodeRequest(BaseModel):
+    account_id: str
+    code: str
+
+class VerifyTelegramCodeResponse(BaseModel):
+    status: str
+    requires_2fa: bool = False
+
+class VerifyTelegram2FARequest(BaseModel):
+    account_id: str
+    password: str
+
+
+@router.post("/prepare-account", response_model=PrepareAccountResponse)
+async def prepare_account(payload: PrepareAccountRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: create an Account + send MTProto code. No auth required.
+
+    This is step 1 of the unified login flow.
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.models.account import Account
+    from app.core.crypto import encrypt_session
+
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "prepare_account", max_attempts=10, window_seconds=300):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="요청이 너무 많습니다.")
+
+    phone = payload.phone.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="전화번호가 필요합니다.")
+
+    # Find existing pending account or create new one
+    result = await db.execute(
+        select(Account).where(Account.phone == phone)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing and existing.status == "active":
+        # Already fully registered — just return the id
+        return PrepareAccountResponse(account_id=existing.id)
+
+    if existing:
+        account = existing
+    else:
+        # Create a temporary account without a tenant
+        account = Account(
+            phone=phone,
+            name=f"Telegram ({phone})",
+            status="pending_auth",
+        )
+        db.add(account)
+        await db.flush()
+
+    # Get Telethon credentials
+    api_id, api_hash = settings.telegram_credentials
+
+    # Create a fresh client and send code
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+
+    session_string = ""
+    if account.session_data:
+        from app.core.crypto import decrypt_session
+        session_string = decrypt_session(account.session_data)
+
+    client = TelegramClient(StringSession(session_string), api_id, api_hash, flood_sleep_threshold=0)
+
+    try:
+        await client.connect()
+        sent = await asyncio.wait_for(client.send_code_request(phone), timeout=45)
+
+        # Store the phone_code_hash in pool for later verification
+        pool.set_pending_auth(account.id, sent.phone_code_hash)
+
+        # Save session snapshot
+        new_session = client.session.save()
+        account.session_data = encrypt_session(new_session)
+        await db.commit()
+
+        channel = "telegram"
+        delivery_hint = "Telegram 앱을 확인하세요"
+        return PrepareAccountResponse(
+            account_id=account.id,
+            channel=channel,
+            delivery_hint=delivery_hint,
+        )
+    except Exception as exc:
+        await client.disconnect()
+        logger.error("prepare_account_error", phone=phone, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"인증번호 발송 실패: {str(exc)}")
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+@router.post("/verify-telegram-code", response_model=VerifyTelegramCodeResponse)
+async def verify_telegram_code(payload: VerifyTelegramCodeRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: verify the MTProto code. No auth required.
+
+    This is step 2 of the unified login flow.
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.core.crypto import decrypt_session, encrypt_session
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+
+    pending = pool.get_pending_auth(account.id)
+    if pending is None:
+        raise HTTPException(status_code=400, detail="먼저 인증번호를 요청해주세요.")
+
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    api_id, api_hash = settings.telegram_credentials
+    client = TelegramClient(StringSession(session_string), api_id, api_hash, flood_sleep_threshold=0)
+
+    try:
+        await client.connect()
+        await client.sign_in(phone=account.phone, code=payload.code, phone_code_hash=pending.phone_code_hash)
+
+        # Success — save session and activate
+        new_session = client.session.save()
+        account = await account_crud.set_auth_state(
+            db, account, status="active", session_data=encrypt_session(new_session)
+        )
+        pool.clear_pending_auth(account.id)
+
+        return VerifyTelegramCodeResponse(status="active", requires_2fa=False)
+    except Exception as exc:
+        error_str = str(exc)
+        if "two" in error_str.lower() or "password" in error_str.lower() or "SessionPasswordNeededError" in error_str:
+            return VerifyTelegramCodeResponse(status="needs_2fa", requires_2fa=True)
+        logger.error("verify_telegram_code_error", account_id=account.id, error=error_str)
+        raise HTTPException(status_code=400, detail=f"인증 실패: {error_str}")
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+@router.post("/verify-telegram-2fa")
+async def verify_telegram_2fa(payload: VerifyTelegram2FARequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: verify 2FA password. No auth required.
+
+    This is step 3 (optional) of the unified login flow.
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.core.crypto import decrypt_session, encrypt_session
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    api_id, api_hash = settings.telegram_credentials
+    client = TelegramClient(StringSession(session_string), api_id, api_hash, flood_sleep_threshold=0)
+
+    try:
+        await client.connect()
+        await client.sign_in(password=payload.password)
+
+        new_session = client.session.save()
+        account = await account_crud.set_auth_state(
+            db, account, status="active", session_data=encrypt_session(new_session)
+        )
+
+        return {"status": "active"}
+    except Exception as exc:
+        logger.error("verify_telegram_2fa_error", account_id=account.id, error=str(exc))
+        raise HTTPException(status_code=400, detail=f"2FA 인증 실패: {str(exc)}")
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
