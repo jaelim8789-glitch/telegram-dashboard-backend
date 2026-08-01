@@ -82,6 +82,7 @@ from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
 from app.services.telethon_pool import pool
+from app.services.session_manager import SessionManager
 
 #  AI Platform Imports 
 from app.ai.routers import (
@@ -203,10 +204,32 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("ai_plugins_load_failed", error=str(exc))
 
+    #  SessionManager — state machine coordinator 
+    try:
+        session_manager = SessionManager()
+        await session_manager.initialize(async_session_maker)
+        from sqlalchemy import select
+        from app.models.account import Account
+        async with async_session_maker() as db:
+            result = await db.scalars(select(Account))
+            accounts = list(result.all())
+        await session_manager.start(accounts)
+        logger.info("session_manager_started", accounts=len(accounts))
+    except Exception as exc:
+        logger.error("session_manager_startup_failed", error=str(exc))
+
     logger.info("app_started")
     yield
 
     #  Shutdown 
+    try:
+        session_manager = SessionManager()
+        if session_manager._initialized:
+            await session_manager.stop()
+            logger.info("session_manager_stopped")
+    except Exception as exc:
+        logger.error("session_manager_shutdown_failed", error=str(exc))
+
     try:
         await stop_bot()
     except Exception as exc:
@@ -436,6 +459,15 @@ async def health():
             "checks": {k: ("ok" if v is True else ("skipped" if v is None else "failed")) for k, v in checks.items()},
         },
     )
+
+
+@app.get("/api/metrics")
+async def api_metrics():
+    """SessionManager metrics — connected accounts, reconnect stats, event counts."""
+    session_manager = SessionManager()
+    if not session_manager._initialized:
+        return {"status": "not_initialized"}
+    return session_manager.get_metrics()
 
 
 # The module docstring has claimed ProxyHeadersMiddleware was in place, but it
