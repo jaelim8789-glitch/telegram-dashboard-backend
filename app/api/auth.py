@@ -3,6 +3,7 @@ import hmac
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import timedelta
@@ -657,3 +658,59 @@ async def reset_password(payload: ResetPasswordRequest, request: Request, db: As
 
     logger.info("password_reset", user_id=user.id)
     return ResetPasswordResponse(message="비밀번호가 재설정되었습니다")
+
+
+class LoginWithPhoneRequest(BaseModel):
+    phone: str
+
+
+class LoginWithPhoneResponse(BaseModel):
+    access_token: str
+    session_token: str
+
+
+@router.post("/login-with-phone", response_model=LoginWithPhoneResponse)
+async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Issue JWT for a phone that has an active Telegram account.
+
+    Called after MTProto verification completes — the account is already
+    active and the user just needs a web session token.
+    """
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "phone_login", max_attempts=20, window_seconds=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="요청이 너무 많습니다.",
+        )
+
+    # Find or create User
+    user = await user_crud.get_or_create_user(db, payload.phone)
+    await user_crud.touch_last_login(db, user)
+
+    # Find or create Tenant
+    tenant = await _resolve_tenant_id_by_user(db, user)
+    if not tenant:
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+        tenant = Tenant(
+            phone=payload.phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+
+    # Issue JWT + session
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant.id,
+    )
+    await db.commit()
+
+    logger.info("unified_login_success", user_id=user.id)
+    return LoginWithPhoneResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+    )
