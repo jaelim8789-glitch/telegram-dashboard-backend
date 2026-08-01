@@ -34,6 +34,7 @@ from app.api.billing import router as billing_router, public_router as billing_p
 from app.api.delivery_analytics import router as delivery_analytics_router
 from app.api.fortune import router as fortune_router
 from app.api.features import router as features_router
+from app.api.client_errors import router as client_errors_router
 from app.api.free_api_key import router as free_api_key_router
 from app.api.broadcast import router as broadcast_router
 from app.api.campaign import router as campaign_router
@@ -309,6 +310,7 @@ app.include_router(referral_router, dependencies=_auth_required)
 app.include_router(referral_public_router)
 app.include_router(features_router, dependencies=_auth_required)
 app.include_router(free_api_key_router)
+app.include_router(client_errors_router)
 app.include_router(fortune_router, dependencies=_auth_required)
 app.include_router(account_health_router, dependencies=_auth_required)
 app.include_router(account_health_summary_router, dependencies=_auth_required)
