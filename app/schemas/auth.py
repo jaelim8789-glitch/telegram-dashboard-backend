@@ -10,6 +10,7 @@ class SendCodeRequest(BaseModel):
 
 class SendCodeResponse(BaseModel):
     sent: bool
+    code: str | None = None  # Dev mode only: included when sms_provider == "console"
 
 
 class VerifyCodeRequest(BaseModel):

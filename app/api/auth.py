@@ -116,7 +116,11 @@ async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession
         )
 
     logger.info("verification_code_sent", phone=payload.phone)
-    return SendCodeResponse(sent=True)
+    resp = SendCodeResponse(sent=True)
+    # Dev mode: include code in response when using console SMS provider
+    if settings.sms_provider == "console":
+        resp = SendCodeResponse(sent=True, code=code)
+    return resp
 
 
 @router.post("/verify-code", response_model=VerifyCodeResponse)
@@ -155,16 +159,28 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
     # request takes this branch. An already-entitled existing tenant skips
     # straight through (matches the SMS branch's prior behavior for existing
     # active tenants).
-    if not tenant_already_entitled:
-        code_ok = payload.code is not None and await user_crud.verify_code(db, payload.phone, payload.code)
+    # SMS 코드가 있으면 SMS로 인증, 없으면 채널 인증으로 폴백
+    if payload.code is not None:
+        code_ok = await user_crud.verify_code(db, payload.phone, payload.code)
         if not code_ok:
-            if payload.telegram_verification_token is None or not await verification_crud.consume_verified_token(
-                db, payload.telegram_verification_token
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="공식 텔레그램 채널 가입 인증이 필요합니다. 채널 가입 후 다시 시도해주세요.",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="인증번호가 올바르지 않습니다. 다시 시도해주세요.",
+            )
+    elif payload.telegram_verification_token is not None:
+        token_ok = await verification_crud.consume_verified_token(
+            db, payload.telegram_verification_token
+        )
+        if not token_ok:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="인증에 실패했습니다. 다시 시도해주세요.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="인증번호 또는 텔레그램 인증 토큰이 필요합니다.",
+        )
 
     user = await user_crud.get_or_create_user(db, payload.phone)
     raw_key = generate_user_api_key()
@@ -198,6 +214,21 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
         await apply_plan_limits(db, tenant, "free")
 
     logger.info("user_api_key_issued", user_id=user.id)
+
+    # Auto-create Account so the user can see chats immediately
+    from app.models.account import Account
+    existing_account = await db.execute(
+        select(Account).where(Account.tenant_id == tenant.id, Account.phone == payload.phone)
+    )
+    if existing_account.scalar_one_or_none() is None:
+        account = Account(
+            phone=payload.phone,
+            tenant_id=tenant.id,
+            name=f"Telegram ({payload.phone})",
+            status="pending_auth",
+        )
+        db.add(account)
+
     return VerifyCodeResponse(api_key=raw_key)
 
 
