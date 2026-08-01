@@ -136,7 +136,12 @@ async def upload_attachment_endpoint(
 
     path = await save_broadcast_media(file)
     media_type = infer_media_type(file.filename or "")
-    return {"media_path": path, "media_type": media_type, "file_name": file.filename or "upload"}
+    return {
+        "success": True,
+        "media_path": path,
+        "media_type": media_type,
+        "file_name": file.filename or "upload",
+    }
 
 
 @router.post("/accounts/{account_id}/dialogs/{chat_id}/send", response_model=SendMessageResponse)
