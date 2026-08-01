@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from app.services.chat_actions import (
     list_dialogs, fetch_messages, send_chat_message, stream_new_messages,
     search_messages, send_typing_indicator, mute_dialog, pin_dialog, delete_dialog,
 )
+from app.services.media import save_broadcast_media, infer_media_type
 from app.services.telegram_actions import AccountNotAuthenticatedError
 from telethon.errors import FloodWaitError
 
@@ -119,6 +120,23 @@ async def get_messages_endpoint(
 
     messages = await fetch_messages(account_id, chat_id, limit=limit, offset_id=offset_id)
     return messages
+
+
+@router.post("/accounts/{account_id}/upload")
+async def upload_attachment_endpoint(
+    account_id: str,
+    file: UploadFile = File(...),
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    await require_account_tenant_access(account_id, db, identity)
+
+    path = await save_broadcast_media(file)
+    media_type = infer_media_type(file.filename or "")
+    return {"media_path": path, "media_type": media_type, "file_name": file.filename or "upload"}
 
 
 @router.post("/accounts/{account_id}/dialogs/{chat_id}/send", response_model=SendMessageResponse)

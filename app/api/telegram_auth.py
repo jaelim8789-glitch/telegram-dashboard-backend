@@ -221,6 +221,23 @@ async def verify_code(
     )
     pool.clear_pending_auth(account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    try:
+        from app.services.session_manager import SessionManager
+        manager = SessionManager()
+        if manager._initialized:
+            await manager.connect(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except Exception:
+        pass
+
     return AuthStepResult(status=account.status, requires_2fa=False)
 
 
@@ -261,6 +278,23 @@ async def verify_2fa(
     )
     pool.clear_pending_auth(account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    try:
+        from app.services.session_manager import SessionManager
+        manager = SessionManager()
+        if manager._initialized:
+            await manager.connect(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except Exception:
+        pass
+
     return AuthStepResult(status=account.status, requires_2fa=False)
 
 
