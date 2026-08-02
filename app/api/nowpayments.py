@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_api_key_or_admin
 from app.core.logging import get_logger
-from app.core.plans import validate_plan_id
+from app.core.plans import validate_plan_id, get_plan
 from app.database import get_db
 from app.services.nowpayments import get_nowpayments_service
 from app.models.nowpayments import NowPaymentsTransaction
@@ -36,15 +36,15 @@ router = APIRouter(prefix="/api/payments/nowpayments", tags=["nowpayments-paymen
 _auth_required = [Depends(require_api_key_or_admin)]
 
 
-@router.post("/create-invoice", dependencies=_auth_required)
+@router.post("/create-invoice")
 async def create_invoice(
     body: dict[str, Any],
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """NOWPayments 인보이스 생성"""
-    plan_id = str(body.get("plan", "")).lower()
-    currency = str(body.get("currency", "usdt")).upper()
+    plan_id = str(body.get("plan_id", body.get("plan", ""))).lower()
+    billing = str(body.get("billing", "monthly")).lower()
     
     # 플랜 유효성 검사
     if not validate_plan_id(plan_id):
@@ -52,8 +52,19 @@ async def create_invoice(
             status_code=400, detail="Invalid plan. Use valid plan ID"
         )
     
+    # 플랜 가격 조회
+    plan_info = get_plan(plan_id)
+    if not plan_info:
+        raise HTTPException(status_code=400, detail="Plan not found")
+    
+    # billing에 따른 가격 계산
+    prices = plan_info.get("prices_usdt", {})
+    price_usd = prices.get(billing, prices.get("monthly", 0))
+    
+    currency = str(body.get("currency", "usdttrc20")).upper()
+    
     # 통화 유효성 검사
-    allowed_currencies = {"USDT", "BTC", "ETH", "BNB", "TRX", "LTC", "DOGE", "SOL", "MATIC"}
+    allowed_currencies = {"USDTTRC20", "USDTTON", "USDT", "BTC", "ETH", "BNB", "TRX", "LTC", "DOGE", "SOL", "MATIC"}
     if currency not in allowed_currencies:
         raise HTTPException(
             status_code=400,
@@ -63,11 +74,11 @@ async def create_invoice(
     try:
         service = get_nowpayments_service()
         result = await service.create_payment(
-            amount=body.get("amount", 0),
+            amount=price_usd,
             currency=currency.lower(),
             plan_id=plan_id,
             tenant_id=identity.tenant_id,
-            order_description=body.get("description", f"TeleMon {plan_id.capitalize()} Subscription")
+            order_description=body.get("description", f"TeleMon {plan_id.capitalize()} Subscription ({billing})")
         )
         
         return result

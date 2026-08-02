@@ -1,4 +1,4 @@
-"""All-in-one API for: Message Templates, Follow-up Rules, Team Members, Usage Dashboard, Calendar."""
+"""All-in-one API for: Feature checking, Message Templates, Follow-up Rules, Team Members, Usage Dashboard, Calendar."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, require_tenant_access
 from app.core.logging import get_logger
+from app.core.plans import has_feature, get_plan_features
 from app.database import get_db, async_session_maker
 from app.models.account import Account
 from app.models.message_template import FollowUpRule, MessageTemplate
 from app.models.team import TeamMember
-from app.models.tenant import UsageRecord
+from app.models.tenant import Tenant, UsageRecord
 
 router = APIRouter(prefix="/api/features", tags=["features"])
 logger = get_logger(__name__)
@@ -21,6 +22,39 @@ logger = get_logger(__name__)
 
 def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 0. 🔑 PLAN FEATURE GATING
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/plan")
+async def get_plan_feature_flags(
+    identity=Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all feature flags for the authenticated tenant's current plan."""
+    tenant = await db.get(Tenant, identity.tenant_id) if identity.tenant_id else None
+    plan = tenant.plan if tenant else "free"
+    return {
+        "plan": plan,
+        "features": get_plan_features(plan),
+    }
+
+
+@router.get("/plan/{feature}")
+async def check_plan_feature(
+    feature: str,
+    identity=Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if the authenticated tenant's plan includes a specific feature."""
+    tenant = await db.get(Tenant, identity.tenant_id) if identity.tenant_id else None
+    plan = tenant.plan if tenant else "free"
+    return {
+        "feature": feature,
+        "enabled": has_feature(plan, feature),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -29,6 +29,7 @@ class TelegramMessage(BaseModel):
     reply_to_text: str | None = None
     media_type: str | None = None  # "photo", "video", "document", etc.
     media_file_id: str | None = None
+    media_url: str | None = None
     is_forwarded: bool = False
     forward_from_name: str | None = None
 
@@ -39,6 +40,7 @@ class SendMessageRequest(BaseModel):
     text: str
     reply_to_msg_id: int | None = None
     media_path: str | None = None
+    media_type: str | None = None
 
 
 class SendMessageResponse(BaseModel):
@@ -49,3 +51,15 @@ class SendMessageResponse(BaseModel):
 class ChatListResponse(BaseModel):
     accounts: list[dict]  # simplified account list
     dialogs: list[TelegramDialog]
+
+
+class EditMessageRequest(BaseModel):
+    text: str
+
+
+class ForwardMessageRequest(BaseModel):
+    target_chat_id: str
+
+
+class ReactRequest(BaseModel):
+    emoji: str

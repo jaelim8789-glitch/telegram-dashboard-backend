@@ -172,6 +172,10 @@ async def verify_code(
 
     pending = pool.get_pending_auth(account.id)
     if pending is None:
+        # Redis recovery is async — give it one chance before failing
+        await asyncio.sleep(0.3)
+        pending = pool.get_pending_auth(account.id)
+    if pending is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="먼저 인증번호를 요청해주세요 (send-code).",
@@ -219,6 +223,23 @@ async def verify_code(
     pool.clear_pending_auth(account.id)
     register_account_realtime(client, account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    try:
+        from app.services.session_manager import SessionManager
+        manager = SessionManager()
+        if manager._initialized:
+            await manager.connect(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except Exception:
+        pass
+
     return AuthStepResult(status=account.status, requires_2fa=False)
 
 
@@ -260,6 +281,23 @@ async def verify_2fa(
     pool.clear_pending_auth(account.id)
     register_account_realtime(client, account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    try:
+        from app.services.session_manager import SessionManager
+        manager = SessionManager()
+        if manager._initialized:
+            await manager.connect(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except Exception:
+        pass
+
     return AuthStepResult(status=account.status, requires_2fa=False)
 
 

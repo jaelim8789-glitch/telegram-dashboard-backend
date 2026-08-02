@@ -24,6 +24,7 @@ from app.models.token import TokenBalance, TokenTransaction, StreakRecord
 from app.models.user import PhoneVerification, User
 from app.models.referral import ReferralCode, ReferralCommission, ReferralPayout, ReferralConfig, ReferralAuditLog
 from app.models.knowledge_base import Document, Chunk, SearchLog, Feedback
+from app.models.bookmark import Bookmark
 
 __all__ = [
     "StyleProfile",
@@ -76,4 +77,5 @@ __all__ = [
     "Chunk",
     "SearchLog",
     "Feedback",
+    "Bookmark",
 ]

@@ -32,6 +32,26 @@ async def chat_websocket(
     if account_id not in chat_clients:
         chat_clients[account_id] = set()
     chat_clients[account_id].add(websocket)
+
+    async def send_broadcast_events():
+        while True:
+            try:
+                from app.api.chats import pop_ws_events
+                events = pop_ws_events()
+                for event in events:
+                    stale: list[WebSocket] = []
+                    for client in chat_clients.get(account_id, set()):
+                        try:
+                            await client.send_json(event)
+                        except WebSocketDisconnect:
+                            stale.append(client)
+                    for s in stale:
+                        chat_clients[account_id].discard(s)
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+
+    broadcast_task = asyncio.create_task(send_broadcast_events())
     try:
         while True:
             data = await websocket.receive_text()
@@ -51,6 +71,12 @@ async def chat_websocket(
         chat_clients[account_id].discard(websocket)
         if not chat_clients[account_id]:
             del chat_clients[account_id]
+    finally:
+        broadcast_task.cancel()
+        try:
+            await broadcast_task
+        except asyncio.CancelledError:
+            pass
 
 
 @ws_router.websocket("/ws/dashboard")
@@ -86,6 +112,54 @@ async def dashboard_websocket(
             await sender_task
         except asyncio.CancelledError:
             pass
+
+
+session_clients: set[WebSocket] = set()
+
+
+@ws_router.websocket("/ws/sessions")
+async def sessions_websocket(websocket: WebSocket):
+    """Real-time session state updates over WebSocket."""
+    await websocket.accept()
+    session_clients.add(websocket)
+
+    try:
+        from app.services.session_manager import SessionManager
+        manager = SessionManager()
+        if manager._initialized:
+            states = {}
+            for aid, state in manager._connection_service._states.items():
+                states[aid] = state.value
+            await websocket.send_json({"type": "session_states", "states": states})
+        else:
+            await websocket.send_json({"type": "session_states", "states": {}})
+
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            if msg.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif msg.get("type") == "reconnect":
+                account_id = msg.get("account_id")
+                if account_id and manager._initialized:
+                    import asyncio as _aio
+                    _aio.create_task(manager.reconnect(account_id))
+    except WebSocketDisconnect:
+        session_clients.discard(websocket)
+    except Exception:
+        session_clients.discard(websocket)
+
+
+async def broadcast_session_event(data: dict):
+    """Push session event to all connected /ws/sessions clients."""
+    payload = {"type": "session_event", **data}
+    stale = set()
+    for client in session_clients:
+        try:
+            await client.send_json(payload)
+        except Exception:
+            stale.add(client)
+    session_clients.difference_update(stale)
 
 
 async def collect_dashboard_stats(account_id: Optional[str] = None) -> dict:

@@ -1,13 +1,18 @@
+import asyncio
 import hashlib
 import hmac
+import json
 import time
+import urllib.parse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import timedelta
 
-from app.api.deps import Identity, get_current_identity
+from app.api.deps import Identity, get_current_identity, get_optional_identity
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import get_plan
@@ -657,3 +662,512 @@ async def reset_password(payload: ResetPasswordRequest, request: Request, db: As
 
     logger.info("password_reset", user_id=user.id)
     return ResetPasswordResponse(message="비밀번호가 재설정되었습니다")
+
+
+class LoginWithPhoneRequest(BaseModel):
+    phone: str
+
+
+class LoginWithPhoneResponse(BaseModel):
+    access_token: str
+    session_token: str
+
+
+@router.post("/login-with-phone", response_model=LoginWithPhoneResponse)
+async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Issue JWT for a phone that has an active Telegram account.
+
+    Called after MTProto verification completes — the account is already
+    active and the user just needs a web session token.
+    """
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "phone_login", max_attempts=20, window_seconds=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="요청이 너무 많습니다.",
+        )
+
+    # Find or create User
+    user = await user_crud.get_or_create_user(db, payload.phone)
+    await user_crud.touch_last_login(db, user)
+
+    # Find or create Tenant
+    tenant_id = await _resolve_tenant_id_by_user(db, user)
+    if not tenant_id:
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+        tenant = Tenant(
+            phone=payload.phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+        tenant_id = tenant.id
+
+    # Issue JWT + session
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant_id,
+    )
+
+    # Link orphaned accounts (created via prepare-account without tenant) to this tenant
+    from app.models.account import Account as AccountModel
+    orphan_result = await db.execute(
+        select(AccountModel).where(AccountModel.phone == payload.phone, AccountModel.tenant_id.is_(None))
+    )
+    for orphan in orphan_result.scalars().all():
+        orphan.tenant_id = tenant_id
+        logger.info("orphan_account_linked", account_id=orphan.id, tenant_id=tenant_id)
+
+    await db.commit()
+
+    logger.info("unified_login_success", user_id=user.id)
+    return LoginWithPhoneResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+    )
+
+
+class MiniAppAuthRequest(BaseModel):
+    init_data: str
+
+
+class MiniAppAuthResponse(BaseModel):
+    access_token: str
+    session_token: str
+    user_id: str
+    phone: str | None = None
+
+
+def _validate_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
+    """Validate Telegram Mini App initData signature.
+
+    Returns parsed user dict if valid, None if invalid.
+    """
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data))
+        if "hash" not in parsed or "auth_date" not in parsed:
+            return None
+
+        # Check auth_date freshness (5 minutes max)
+        auth_date = int(parsed.get("auth_date", 0))
+        if abs(time.time() - auth_date) > 300:
+            return None
+
+        # Build data_check_string
+        check_data = "\n".join(
+            f"{k}={v}" for k, v in sorted(parsed.items())
+            if k != "hash"
+        )
+
+        # Compute HMAC
+        secret_key = hmac.new(
+            bot_token.encode(), b"", hashlib.sha256
+        ).digest()
+
+        computed_hash = hmac.new(
+            secret_key, check_data.encode(), hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(computed_hash, parsed["hash"]):
+            return None
+
+        # Parse user
+        user_json = parsed.get("user")
+        if user_json:
+            return json.loads(user_json)
+
+        return {}
+    except Exception:
+        return None
+
+
+@router.post("/miniapp/auth", response_model=MiniAppAuthResponse)
+async def miniapp_auth(payload: MiniAppAuthRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Authenticate via Telegram Mini App initData.
+
+    Validates the HMAC signature, then creates/finds user + tenant,
+    and issues a JWT token.
+    """
+    bot_token = getattr(settings, "telegram_bot_token", "")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="Bot token이 설정되지 않았습니다.")
+
+    user_data = _validate_telegram_init_data(payload.init_data, bot_token)
+    if user_data is None:
+        raise HTTPException(status_code=401, detail="Telegram 인증에 실패했습니다.")
+
+    telegram_id = str(user_data.get("id", ""))
+    username = user_data.get("username", "")
+    first_name = user_data.get("first_name", "")
+    last_name = user_data.get("last_name", "")
+
+    if not telegram_id:
+        raise HTTPException(status_code=400, detail="Telegram 사용자 정보를 찾을 수 없습니다.")
+
+    # Telegram Mini App doesn't expose phone — use telegram_id as identifier
+    phone = f"tg:{telegram_id}"
+
+    # Find or create user
+    user = await user_crud.get_or_create_user(db, phone)
+    await user_crud.touch_last_login(db, user)
+
+    # Find or create tenant
+    tenant_id = await _resolve_tenant_id_by_user(db, user)
+    if not tenant_id:
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+        tenant = Tenant(
+            phone=phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+        tenant_id = tenant.id
+
+    # Issue JWT
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant_id,
+    )
+
+    # Link orphaned accounts to this tenant
+    from app.models.account import Account as AccountModel
+    orphan_result = await db.execute(
+        select(AccountModel).where(AccountModel.phone == phone, AccountModel.tenant_id.is_(None))
+    )
+    for orphan in orphan_result.scalars().all():
+        orphan.tenant_id = tenant_id
+
+    await db.commit()
+
+    logger.info("miniapp_auth_success", user_id=user.id, telegram_id=telegram_id)
+    return MiniAppAuthResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+        user_id=user.id,
+        phone=phone,
+    )
+
+
+# ── Unified Telegram login: public endpoints (no auth required) ──────────
+
+class PrepareAccountRequest(BaseModel):
+    phone: str
+
+class PrepareAccountResponse(BaseModel):
+    account_id: str
+    channel: str | None = None
+    delivery_hint: str | None = None
+
+class VerifyTelegramCodeRequest(BaseModel):
+    account_id: str
+    code: str
+
+class VerifyTelegramCodeResponse(BaseModel):
+    status: str
+    requires_2fa: bool = False
+
+class VerifyTelegram2FARequest(BaseModel):
+    account_id: str
+    password: str
+
+
+_SENT_CODE_TYPE_TO_CHANNEL = {
+    "SentCodeTypeApp": "telegram_app",
+    "SentCodeTypeSms": "sms",
+    "SentCodeTypeCall": "call",
+    "SentCodeTypeFlashCall": "flash_call",
+    "SentCodeTypeMissedCall": "flash_call",
+}
+
+
+def _sent_code_channel(sent) -> str | None:
+    type_name = type(sent.type).__name__ if getattr(sent, "type", None) is not None else None
+    return _SENT_CODE_TYPE_TO_CHANNEL.get(type_name)
+
+
+def _delivery_hint(channel: str | None) -> str | None:
+    if channel == "sms":
+        return "인증번호가 SMS로 전송되었습니다."
+    if channel == "telegram_app":
+        return "Telegram 앱을 확인하세요."
+    if channel == "call":
+        return "인증번호가 자동 전화로 안내됩니다."
+    if channel == "flash_call":
+        return "전화가 걸려오면 마지막 2자리로 인증합니다."
+    return None
+
+
+@router.post("/prepare-account", response_model=PrepareAccountResponse)
+async def prepare_account(
+    payload: PrepareAccountRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Create an Account + send MTProto code. No auth required, so onboarding
+    (add a Telegram account before/without logging into TeleMon itself) keeps
+    working — but if the caller IS already logged in (this same public endpoint
+    is also what the in-dashboard "add account" screen calls), the account is
+    tied to their tenant immediately instead of staying orphaned until a later
+    login with the exact same phone number happens to match it (see
+    _link_orphan_accounts_by_phone below). Without this, a logged-in user
+    registering a Telegram account under a DIFFERENT phone than their login
+    phone would silently end up with an account that 403s on every dialogs
+    lookup, since it never gets linked to their tenant.
+
+    Uses the shared TelethonPool (same as telegram_auth.send_code) for
+    proper connection lifecycle, FloodWait handling, and dead-session recovery.
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.models.account import Account
+    from app.core.crypto import encrypt_session, decrypt_session
+    from telethon.errors import (
+        FloodWaitError,
+        PhoneNumberInvalidError,
+        UserDeactivatedBanError,
+    )
+
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "prepare_account", max_attempts=10, window_seconds=300):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="요청이 너무 많습니다.")
+
+    phone = payload.phone.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="전화번호가 필요합니다.")
+
+    caller_tenant_id = identity.tenant_id if identity is not None else None
+
+    # Find existing account or create new one
+    result = await db.execute(select(Account).where(Account.phone == phone))
+    existing = result.scalar_one_or_none()
+
+    if existing and existing.status == "active":
+        if caller_tenant_id and not existing.tenant_id:
+            existing.tenant_id = caller_tenant_id
+            await db.commit()
+            logger.info("prepare_account_claimed_existing_orphan", account_id=existing.id, tenant_id=caller_tenant_id)
+        return PrepareAccountResponse(account_id=existing.id)
+
+    if existing:
+        account = existing
+        if caller_tenant_id and not account.tenant_id:
+            account.tenant_id = caller_tenant_id
+    else:
+        account = Account(
+            phone=phone,
+            name=f"Telegram ({phone})",
+            status="pending_auth",
+            tenant_id=caller_tenant_id,
+        )
+        db.add(account)
+        await db.flush()
+
+    # Use the pool (same client lifecycle as telegram_auth.send_code)
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    try:
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+
+    # Send code with FloodWait retry
+    _SHORT_FLOOD_WAIT = 10
+
+    async def _request_code():
+        return await asyncio.wait_for(client.send_code_request(phone), timeout=45)
+
+    try:
+        try:
+            sent = await _request_code()
+        except FloodWaitError as exc:
+            if exc.seconds > _SHORT_FLOOD_WAIT:
+                raise
+            await asyncio.sleep(exc.seconds)
+            sent = await _request_code()
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="텔레그램 서버 응답이 지연되고 있습니다.")
+    except PhoneNumberInvalidError:
+        raise HTTPException(status_code=400, detail="유효하지 않은 전화번호입니다.")
+    except FloodWaitError as exc:
+        raise HTTPException(status_code=429, detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도해주세요.")
+    except UserDeactivatedBanError:
+        await account_crud.set_auth_state(db, account, status="banned")
+        raise HTTPException(status_code=403, detail="차단된 계정입니다.")
+    except Exception as exc:
+        error_str = str(exc)
+        if any(e in error_str for e in ("Unauthorized", "auth_key", "SessionPasswordNeeded", "UserDeactivated")):
+            await pool.remove_client(account.id)
+            await account_crud.mark_account_session_invalid(db, account)
+            raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
+        logger.error("prepare_account_error", phone=phone, error=error_str)
+        raise HTTPException(status_code=500, detail=f"인증번호 발송 실패: {error_str}")
+
+    # Persist session + pending auth
+    await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
+    pool.set_pending_auth(account.id, sent.phone_code_hash)
+
+    channel = _sent_code_channel(sent)
+    logger.info("prepare_account_code_sent", account_id=account.id, channel=channel)
+    return PrepareAccountResponse(
+        account_id=account.id,
+        channel=channel,
+        delivery_hint=_delivery_hint(channel),
+    )
+
+
+@router.post("/verify-telegram-code", response_model=VerifyTelegramCodeResponse)
+async def verify_telegram_code(
+    payload: VerifyTelegramCodeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Verify the MTProto code. No auth required for onboarding, but see
+    prepare_account's docstring — if the caller is logged in, attach the
+    account to their tenant here too in case it wasn't already (e.g. account
+    was prepared anonymously, then the user logged in before finishing
+    verification).
+
+    Uses the shared TelethonPool (same as telegram_auth.verify_code).
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.core.crypto import decrypt_session, encrypt_session
+    from telethon.errors import (
+        SessionPasswordNeededError,
+        PhoneCodeInvalidError,
+        PhoneCodeExpiredError,
+        FloodWaitError,
+    )
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+
+    pending = pool.get_pending_auth(account.id)
+    if pending is None:
+        await asyncio.sleep(0.3)
+        pending = pool.get_pending_auth(account.id)
+    if pending is None:
+        raise HTTPException(status_code=400, detail="먼저 인증번호를 요청해주세요.")
+
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    try:
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+
+    try:
+        await client.sign_in(phone=account.phone, code=payload.code, phone_code_hash=pending.phone_code_hash)
+    except SessionPasswordNeededError:
+        await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
+        return VerifyTelegramCodeResponse(status="needs_2fa", requires_2fa=True)
+    except PhoneCodeInvalidError:
+        raise HTTPException(status_code=400, detail="인증번호가 올바르지 않습니다.")
+    except PhoneCodeExpiredError:
+        pool.clear_pending_auth(account.id)
+        raise HTTPException(status_code=400, detail="인증번호가 만료되었습니다. 다시 요청해주세요.")
+    except FloodWaitError as exc:
+        raise HTTPException(status_code=429, detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도하세요.")
+    except Exception as exc:
+        error_str = str(exc)
+        if any(e in error_str for e in ("Unauthorized", "auth_key", "SessionPasswordNeeded", "UserDeactivated")):
+            await pool.remove_client(account.id)
+            await account_crud.mark_account_session_invalid(db, account)
+            raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
+        logger.error("verify_telegram_code_error", account_id=account.id, error=error_str)
+        raise HTTPException(status_code=400, detail=f"인증 실패: {error_str}")
+
+    # Success
+    session_str = client.session.save()
+    account = await account_crud.set_auth_state(
+        db, account, status="active", session_data=encrypt_session(session_str)
+    )
+    pool.clear_pending_auth(account.id)
+
+    if identity is not None and identity.tenant_id and not account.tenant_id:
+        account.tenant_id = identity.tenant_id
+        await db.commit()
+        logger.info("verify_telegram_code_claimed_orphan", account_id=account.id, tenant_id=identity.tenant_id)
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    logger.info("unified_login_verified", account_id=account.id)
+    return VerifyTelegramCodeResponse(status="active", requires_2fa=False)
+
+
+@router.post("/verify-telegram-2fa")
+async def verify_telegram_2fa(
+    payload: VerifyTelegram2FARequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Verify 2FA password. No auth required for onboarding — see
+    prepare_account's docstring for why a logged-in caller still gets the
+    account attached to their tenant here.
+
+    Uses the shared TelethonPool.
+    """
+    from app.services.telethon_pool import pool
+    from app.crud import account as account_crud
+    from app.core.crypto import decrypt_session, encrypt_session
+    from telethon.errors import FloodWaitError
+
+    account = await account_crud.get_account(db, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+
+    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    try:
+        client = await pool.get_client(account.id, session_string, require_authorized=False)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+
+    try:
+        await client.sign_in(password=payload.password)
+    except FloodWaitError as exc:
+        raise HTTPException(status_code=429, detail=f"요청이 너무 많습니다. {exc.seconds}초 후 다시 시도하세요.")
+    except Exception as exc:
+        error_str = str(exc)
+        if any(e in error_str for e in ("Unauthorized", "auth_key", "UserDeactivated")):
+            await pool.remove_client(account.id)
+            await account_crud.mark_account_session_invalid(db, account)
+            raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
+        logger.error("verify_telegram_2fa_error", account_id=account.id, error=error_str)
+        raise HTTPException(status_code=400, detail=f"2FA 인증 실패: {error_str}")
+
+    session_str = client.session.save()
+    account = await account_crud.set_auth_state(
+        db, account, status="active", session_data=encrypt_session(session_str)
+    )
+
+    if identity is not None and identity.tenant_id and not account.tenant_id:
+        account.tenant_id = identity.tenant_id
+        await db.commit()
+        logger.info("verify_telegram_2fa_claimed_orphan", account_id=account.id, tenant_id=identity.tenant_id)
+
+    try:
+        from app.services.telegram_actions import list_groups
+        groups = await list_groups(account)
+        account.group_count = len(groups)
+        await db.commit()
+    except Exception:
+        pass
+
+    logger.info("unified_login_2fa_verified", account_id=account.id)
+    return {"status": "active"}

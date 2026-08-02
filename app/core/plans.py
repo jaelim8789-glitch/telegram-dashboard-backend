@@ -115,6 +115,52 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
     },
 }
 
+# Feature flags per plan — the single source of truth for feature gating.
+PLAN_FEATURES: dict[str, dict[str, bool]] = {
+    "free": {
+        "can_broadcast": False,
+        "can_schedule": False,
+        "can_attach_images": False,
+        "can_export_data": False,
+        "can_use_api": True,
+        "ai_operator": False,
+        "pixel_office": False,
+        "analytics": False,
+        "campaign": False,
+        "scheduler": False,
+        "voice": False,
+        "priority_support": False,
+    },
+    "pro": {
+        "can_broadcast": True,
+        "can_schedule": True,
+        "can_attach_images": True,
+        "can_export_data": True,
+        "can_use_api": True,
+        "ai_operator": True,
+        "pixel_office": False,
+        "analytics": True,
+        "campaign": True,
+        "scheduler": True,
+        "voice": False,
+        "priority_support": False,
+    },
+    "max": {
+        "can_broadcast": True,
+        "can_schedule": True,
+        "can_attach_images": True,
+        "can_export_data": True,
+        "can_use_api": True,
+        "ai_operator": True,
+        "pixel_office": True,
+        "analytics": True,
+        "campaign": True,
+        "scheduler": True,
+        "voice": True,
+        "priority_support": True,
+    },
+}
+
 
 def get_plan(plan_id: str) -> PlanDef | None:
     return PLAN_CATALOG.get(plan_id)
@@ -127,11 +173,38 @@ def get_plan_price_usdt(plan_id: str, billing: BillingInterval = "monthly") -> i
     return plan["prices_usdt"].get(billing)
 
 
-def get_plan_limits(plan_id: str) -> dict | None:
+def get_plan_limits(plan_id: str) -> dict:
+    """Return a flat dict of all numeric limits + feature flags for a plan.
+
+    Falls back to free-tier limits if plan_id is unknown.
+    """
     plan = get_plan(plan_id)
     if plan is None:
-        return None
-    return dict(plan["limits"])
+        plan = get_plan("free")
+    limits = plan.get("limits", {})
+    return {
+        "max_accounts": limits.get("max_accounts", 3),
+        "max_auto_reply_rules": limits.get("max_auto_reply_rules", 50),
+        "max_reply_macros": limits.get("max_reply_macros", 10),
+        "monthly_message_limit": limits.get("monthly_message_limit", 999999),
+        "monthly_auto_reply_limit": limits.get("monthly_auto_reply_limit", 999999),
+        "monthly_ai_chat_limit": limits.get("monthly_ai_chat_limit", 0),
+        "cooldown_minimum_minutes": limits.get("cooldown_minimum_minutes", 60),
+        "ai_credits_remaining": limits.get("monthly_ai_credits", 0),
+        "ai_credits_reset_tokens": limits.get("ai_reset_tokens", 0),
+        "features": get_plan_features(plan_id),
+    }
+
+
+def has_feature(plan_id: str, feature: str) -> bool:
+    """Check if a plan includes a specific feature."""
+    features = PLAN_FEATURES.get(plan_id, PLAN_FEATURES.get("free", {}))
+    return features.get(feature, False)
+
+
+def get_plan_features(plan_id: str) -> dict[str, bool]:
+    """Get all feature flags for a plan."""
+    return PLAN_FEATURES.get(plan_id, PLAN_FEATURES.get("free", {}))
 
 
 def is_deprecated_plan(plan_id: str) -> bool:

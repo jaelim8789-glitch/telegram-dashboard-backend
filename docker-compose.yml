@@ -64,6 +64,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: telemmon2026
+      NOWPAYMENTS_API_KEY: VZG2PB2-JFQ4NW7-NHYJARD-VV49XEJ
+      NOWPAYMENTS_IPN_SECRET: csI5GHanjgI+v9IO+oWShkBwM6pI49Vf
+      NOWPAYMENTS_PUBLIC_KEY: ""
     volumes:
       - media_data:/app/media
       - bot_data:/app/data

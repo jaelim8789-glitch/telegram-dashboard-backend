@@ -17,6 +17,32 @@ _macro_locks: dict[str, asyncio.Lock] = {}
 _macro_lock_global = asyncio.Lock()
 
 
+def _parse_target_chats(target_chats_raw: object) -> list[str]:
+    """Normalize target chat input from the DB into a list of chat IDs."""
+    if target_chats_raw is None:
+        return []
+
+    if isinstance(target_chats_raw, list):
+        return [str(c).strip() for c in target_chats_raw if str(c).strip()]
+
+    if not isinstance(target_chats_raw, str):
+        return []
+
+    text = target_chats_raw.strip()
+    if not text:
+        return []
+
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+
+    if isinstance(parsed, list):
+        return [str(c).strip() for c in parsed if str(c).strip()]
+
+    return [c.strip() for c in text.split(",") if c.strip()]
+
+
 def _get_macro_lock(macro_id: str) -> asyncio.Lock:
     lock = _macro_locks.get(macro_id)
     if lock is None:
@@ -57,9 +83,9 @@ async def _build_candidate_pool(
             continue
         if self_id and uid == self_id:
             continue
-        if getattr(sender, "bot", False):
+        if getattr(sender, "bot", False) is True:
             continue
-        if getattr(sender, "is_self", False):
+        if getattr(sender, "is_self", False) is True:
             continue
         if (chat_id, uid) in used_pairs:
             continue
@@ -94,9 +120,7 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
         if account is None:
             return {"status": "failed", "reason": "account_not_found"}
 
-        target_chats_raw = macro.target_chats
-        target_chats = json.loads(target_chats_raw) if target_chats_raw.startswith("[") else target_chats_raw.split(",")
-        target_chats = [c.strip() for c in target_chats if c.strip()]
+        target_chats = _parse_target_chats(macro.target_chats)
 
         used = await macro_crud.get_used_targets(macro)
         used_set = {(u["chat_id"], u["user_id"]) for u in used}

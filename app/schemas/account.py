@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AccountStatus = Literal["active", "inactive", "banned"]
+AccountStatus = Literal["active", "inactive", "banned", "pending_auth"]
 
 HealthStatus = Literal[
     "healthy", "unauthorized", "banned", "rate_limited",

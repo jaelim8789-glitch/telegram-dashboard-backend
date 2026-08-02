@@ -90,10 +90,14 @@ async def apply_plan_limits(db: AsyncSession, tenant: Tenant, plan: str) -> Tena
     tenant.monthly_auto_reply_limit = limits["monthly_auto_reply_limit"]
     tenant.monthly_ai_chat_limit = limits["monthly_ai_chat_limit"]
     tenant.cooldown_minimum_minutes = limits["cooldown_minimum_minutes"]
-    tenant.can_broadcast = limits["can_broadcast"]
-    tenant.can_schedule = limits["can_schedule"]
-    tenant.can_attach_images = limits["can_attach_images"]
-    tenant.can_export_data = limits["can_export_data"]
+
+    # Set feature flags from canonical PLAN_FEATURES
+    features = limits.get("features", {})
+    tenant.can_broadcast = features.get("can_broadcast", False)
+    tenant.can_schedule = features.get("can_schedule", False)
+    tenant.can_attach_images = features.get("can_attach_images", False)
+    tenant.can_export_data = features.get("can_export_data", False)
+    tenant.can_use_api = features.get("can_use_api", True)
 
     await db.commit()
     await db.refresh(tenant)

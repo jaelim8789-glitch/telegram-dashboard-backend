@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -53,6 +54,35 @@ from app.services.telegram_actions import AccountNotAuthenticatedError, get_auth
 from app.services.telethon_pool import is_account_flood_limited, record_flood_wait
 
 logger = get_logger(__name__)
+
+
+def normalize_media_paths(media_paths: str | list[str] | None) -> list[str]:
+    """Normalize media path input into a list of strings.
+
+    Accepts either a single path, a list of paths, or a JSON-style string array.
+    Returns an empty list for empty/None input.
+    """
+    if not media_paths:
+        return []
+
+    if isinstance(media_paths, list):
+        return [str(path) for path in media_paths if path]
+
+    if isinstance(media_paths, str):
+        text = media_paths.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return [text]
+            if isinstance(parsed, list):
+                return [str(path) for path in parsed if path]
+        return [text]
+
+    return [str(media_paths)]
+
 
 # ─── Failure Taxonomy ─────────────────────────────────────────────────
 

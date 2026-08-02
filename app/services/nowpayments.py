@@ -54,13 +54,11 @@ class NOWPaymentsService:
         
         payload = {
             "price_amount": amount,
-            "price_currency": "usd",  #  USD 
+            "price_currency": "usd",
             "pay_currency": currency.lower(),
             "order_id": f"tenant_{tenant_id}_plan_{plan_id}_{int(datetime.now().timestamp())}",
             "order_description": order_description,
             "ipn_callback_url": f"{settings.api_base_url}/api/payments/nowpayments/webhook",
-            "success_redirect_url": f"{settings.frontend_url}/payment/success",
-            "cancel_redirect_url": f"{settings.frontend_url}/payment/cancel"
         }
         
         try:
@@ -71,7 +69,7 @@ class NOWPaymentsService:
                     json=payload
                 )
                 
-                if response.status_code != 200:
+                if response.status_code not in (200, 201):
                     logger.error(f"NOWPayments API error: {response.status_code} - {response.text}")
                     raise RuntimeError(f"NOWPayments API error: {response.status_code}")
                     

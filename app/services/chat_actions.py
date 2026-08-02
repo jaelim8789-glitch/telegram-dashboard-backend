@@ -61,7 +61,7 @@ async def fetch_messages(
 
     kwargs = {"limit": limit}
     if offset_id:
-        kwargs["offset_id"] = offset_id
+        kwargs["max_id"] = offset_id - 1
 
     messages = await client.get_messages(chat_id, **kwargs)
     result = []
@@ -89,6 +89,7 @@ async def send_chat_message(
     text: str,
     reply_to_msg_id: int | None = None,
     media_path: str | None = None,
+    media_type: str | None = None,
 ) -> dict:
     """Send a message to a Telegram chat."""
     async with async_session_maker() as db:
@@ -100,7 +101,13 @@ async def send_chat_message(
     kwargs = {"comment_to": chat_id} if chat_id < 0 and abs(chat_id) > 10**12 else {}
     try:
         if media_path:
-            sent = await client.send_file(chat_id, media_path, caption=text, reply_to=reply_to_msg_id or None)
+            sent = await client.send_file(
+                chat_id,
+                media_path,
+                caption=text,
+                reply_to=reply_to_msg_id or None,
+                file_type=media_type,
+            )
         else:
             sent = await client.send_message(chat_id, text, reply_to=reply_to_msg_id or None)
     except FloodWaitError as exc:
@@ -290,3 +297,164 @@ async def search_messages(
         raise ValueError(f"텔레그램 쓰로틀링: {exc.seconds}초 후 다시 시도해주세요.")
 
     return results
+
+
+async def edit_chat_message(client, chat_id: int, message_id: int, text: str) -> dict:
+    """Edit an existing message."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.get_messages(entity, ids=message_id)
+    if msg is None:
+        raise ValueError("Message not found")
+    edited = await client.edit_message(entity, msg, text)
+    return {"ok": True, "message_id": edited.id}
+
+
+async def delete_chat_message(client, chat_id: int, message_id: int, revoke: bool = False) -> None:
+    """Delete a message."""
+    entity = await client.get_entity(chat_id)
+    await client.delete_messages(entity, [message_id], revoke=revoke)
+
+
+async def forward_chat_message(client, chat_id: int, message_id: int, target_chat_id: int) -> dict:
+    """Forward a message to another chat."""
+    entity = await client.get_entity(chat_id)
+    target = await client.get_entity(target_chat_id)
+    result = await client.forward_messages(target, message_id, entity)
+    return {"ok": True, "count": len(result) if result else 0}
+
+
+async def send_message_reaction(client, chat_id: int, message_id: int, emoji: str) -> None:
+    """Send a reaction to a message."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.get_messages(entity, ids=message_id)
+    if msg is None:
+        raise ValueError("Message not found")
+    await client.send_reaction(entity, msg, emoji)
+
+
+async def get_chat_details(client, chat_id: int) -> dict:
+    """Get detailed chat info including members."""
+    entity = await client.get_entity(chat_id)
+    info = {
+        "id": chat_id,
+        "title": getattr(entity, "title", None) or getattr(entity, "first_name", None) or "Unknown",
+        "type": type(entity).__name__,
+    }
+
+    try:
+        photo = await client.download_profile_photo(entity, file=bytes)
+        if photo:
+            info["has_photo"] = True
+    except Exception:
+        info["has_photo"] = False
+
+    if hasattr(entity, "participants_count"):
+        info["members_count"] = entity.participants_count
+
+    if hasattr(entity, "phone"):
+        info["phone"] = entity.phone
+    if hasattr(entity, "username"):
+        info["username"] = entity.username
+    if hasattr(entity, "status"):
+        status_name = type(entity.status).__name__
+        info["online_status"] = status_name
+
+    return info
+
+
+async def create_telegram_group(client, title: str, user_ids: list[str]) -> dict:
+    """Create a new Telegram group."""
+    users = []
+    for uid in user_ids:
+        try:
+            entity = await client.get_entity(uid)
+            users.append(entity)
+        except Exception:
+            continue
+
+    if not users:
+        raise ValueError("No valid users found")
+
+    chat = await client.create_group(title, users)
+    return {"ok": True, "chat_id": chat.id, "title": title}
+
+
+async def export_chat_history(client, chat_id: int, format: str = "json", limit: int = 500) -> list | dict:
+    """Export recent chat history."""
+    entity = await client.get_entity(chat_id)
+    messages = await client.get_messages(entity, limit=limit)
+
+    result = []
+    for msg in reversed(messages):
+        if msg is None:
+            continue
+        entry = {
+            "id": msg.id,
+            "date": msg.date.isoformat() if msg.date else None,
+            "sender_id": msg.sender_id,
+            "text": msg.text or "",
+            "is_outgoing": msg.out,
+        }
+        if format == "text":
+            sender = "You" if msg.out else "Other"
+            entry = f"[{entry['date']}] {sender}: {entry['text']}"
+        result.append(entry)
+
+    if format == "text":
+        return {"content": "\n".join(result), "count": len(result)}
+    return {"messages": result, "count": len(result)}
+
+
+async def send_chat_sticker(client, chat_id: int, sticker_id: str, emoji: str = "") -> dict:
+    """Send a sticker to a chat."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.send_file(entity, sticker_id, force_document=True)
+    return {"ok": True, "message_id": msg.id}
+
+
+async def search_stickers(client, query: str) -> list:
+    """Search for stickers."""
+    try:
+        result = await client.get_stickers(query)
+        stickers = []
+        for sticker in result[:20]:
+            stickers.append({
+                "id": sticker.id,
+                "emoji": getattr(sticker, "emoji", ""),
+                "file_size": getattr(sticker, "size", 0),
+                "document_id": getattr(sticker, "id", 0),
+            })
+        return stickers
+    except Exception:
+        return []
+
+
+async def get_user_profile_info(client, user_id: int) -> dict:
+    """Get detailed user profile info."""
+    try:
+        user = await client.get_entity(user_id)
+        profile = {
+            "id": user_id,
+            "first_name": getattr(user, "first_name", ""),
+            "last_name": getattr(user, "last_name", ""),
+            "username": getattr(user, "username", ""),
+            "phone": getattr(user, "phone", None),
+            "is_self": getattr(user, "self", False),
+            "is_bot": getattr(user, "bot", False),
+        }
+
+        status = getattr(user, "status", None)
+        if status:
+            profile["online_status"] = type(status).__name__
+
+        try:
+            photos = []
+            async for photo in client.iter_profile_photos(user, limit=5):
+                photos.append(photo.id)
+            profile["recent_photos_count"] = len(photos)
+        except Exception:
+            profile["recent_photos_count"] = 0
+
+        return profile
+    except Exception as e:
+        return {"id": user_id, "error": str(e)}
