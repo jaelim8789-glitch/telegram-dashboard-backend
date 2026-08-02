@@ -1,6 +1,6 @@
 import asyncio
 
-from app.services.random_reply_service import _build_candidate_pool
+from app.services.random_reply_service import _build_candidate_pool, _parse_target_chats
 
 
 class FakeSender:
@@ -51,3 +51,12 @@ def test_build_candidate_pool_returns_empty_when_everything_is_filtered():
     )
 
     assert candidates == []
+
+
+def test_parse_target_chats_handles_empty_json_and_whitespace():
+    assert _parse_target_chats(None) == []
+    assert _parse_target_chats("") == []
+    assert _parse_target_chats("   ") == []
+    assert _parse_target_chats("[]") == []
+    assert _parse_target_chats("[\"-1001\", \"-1002\"]") == ["-1001", "-1002"]
+    assert _parse_target_chats("-1001, -1002") == ["-1001", "-1002"]

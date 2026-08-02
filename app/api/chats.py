@@ -611,8 +611,8 @@ async def get_user_profile(
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
 
-    from app.services.chat_actions import get_user_profile
-    return await get_user_profile(client, int(user_id))
+    from app.services.chat_actions import get_user_profile_info
+    return await get_user_profile_info(client, int(user_id))
 
 
 _BOOKMARKS_TABLE_ENSURED = False

@@ -524,7 +524,7 @@ async def search_stickers(client, query: str) -> list:
         return []
 
 
-async def get_user_profile(client, user_id: int) -> dict:
+async def get_user_profile_info(client, user_id: int) -> dict:
     """Get detailed user profile info."""
     try:
         user = await client.get_entity(user_id)
@@ -543,9 +543,8 @@ async def get_user_profile(client, user_id: int) -> dict:
             profile["online_status"] = type(status).__name__
 
         try:
-            entity = await client.get_entity(user_id)
             photos = []
-            async for photo in client.iter_profile_photos(entity, limit=5):
+            async for photo in client.iter_profile_photos(user, limit=5):
                 photos.append(photo.id)
             profile["recent_photos_count"] = len(photos)
         except Exception:
