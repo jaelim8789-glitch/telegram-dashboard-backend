@@ -13,7 +13,17 @@ async def create_session(
     tenant_id: str | None = None,
     api_key_id: str | None = None,
 ) -> tuple[str, UserSession]:
-    """Create a new session. Returns (raw_token, session_row)."""
+    """Create a new session. Returns (raw_token, session_row).
+
+    Deactivates the user's prior sessions first — every retry of an
+    abandoned/failed login flow (closed tab, network hiccup, etc.) used to
+    call this and pile up a new row without ever cleaning up the old ones,
+    so a single confused login attempt could leave a user with a dozen
+    "duplicate logins" that were invisible anywhere and never expired.
+    """
+    if user_id:
+        await deactivate_all_user_sessions(db, user_id)
+
     raw_token = f"sx-{__import__('secrets').token_urlsafe(32)}"
     token_hash = hash_session_token(raw_token)
     session = UserSession(

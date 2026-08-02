@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.core.logging import get_logger
 from app.crud import broadcast as broadcast_crud
 from app.crud import reply_macro as macro_crud
+from app.crud import session as session_crud
 from app.database import async_session_maker
 from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.ai_growth_coach_service import run_daily_growth_coach
@@ -256,6 +257,12 @@ def start_scheduler() -> None:
         id="telegram_bot_daily_report",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _cleanup_expired_sessions_wrapper,
+        IntervalTrigger(hours=1),
+        id="cleanup_expired_sessions",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("scheduler_started", interval_seconds=DISPATCH_INTERVAL_SECONDS)
 
@@ -274,6 +281,18 @@ async def _run_daily_content_generation_wrapper() -> None:
             await run_daily_content_generation(db)
     except Exception as exc:
         logger.error("content_calendar_daily_job_failed", error=str(exc))
+
+
+async def _cleanup_expired_sessions_wrapper() -> None:
+    """cleanup_expired_sessions() existed since the session model was added
+    but was never wired to anything — expired rows just accumulated forever."""
+    try:
+        async with async_session_maker() as db:
+            removed = await session_crud.cleanup_expired_sessions(db)
+            if removed:
+                logger.info("expired_sessions_cleaned", count=removed)
+    except Exception as exc:
+        logger.error("expired_sessions_cleanup_failed", error=str(exc))
 
 
 # ─── Job monitoring / metrics ────────────────────────────────────────────
