@@ -55,7 +55,16 @@ async def get_session_by_token(db: AsyncSession, raw_token: str) -> UserSession 
 
 
 async def touch_session(db: AsyncSession, session: UserSession) -> None:
+    """Called on every request authenticated via X-Session-Token.
+
+    Also slides expires_at forward, so an actively-used session never hits
+    the 30-day wall — only a session that's genuinely gone unused for
+    SESSION_EXPIRE_DAYS gets reaped by cleanup_expired_sessions(). Without
+    this, "stay logged in until I log out" wasn't actually true: a daily
+    user still got silently kicked out on day 30.
+    """
     session.last_used_at = datetime.now(timezone.utc)
+    session.expires_at = _session_expires_at()
     await db.flush()
 
 
