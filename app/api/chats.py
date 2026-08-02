@@ -6,21 +6,26 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.core.crypto import decrypt_session
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
+from app.models.bookmark import Bookmark
 from app.schemas.chat_telegram import (
     TelegramDialog, TelegramMessage, SendMessageRequest,
     SendMessageResponse, ChatListResponse,
+    EditMessageRequest, ForwardMessageRequest, ReactRequest,
 )
 from app.services.chat_actions import (
     list_dialogs, fetch_messages, send_chat_message, stream_new_messages,
     search_messages, send_typing_indicator, mute_dialog, pin_dialog, delete_dialog,
 )
 from app.services.media import save_broadcast_media, infer_media_type
+from app.services.telethon_pool import pool
 from app.services.telegram_actions import AccountNotAuthenticatedError
 from telethon.errors import FloodWaitError
 
@@ -166,6 +171,135 @@ async def send_message_endpoint(
     return result
 
 
+async def _get_account_or_404(account_id: str, db: AsyncSession):
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return account
+
+
+def _config_error_to_http(exc: RuntimeError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+
+@router.put("/accounts/{account_id}/dialogs/{chat_id}/messages/{message_id}")
+async def edit_message(
+    account_id: str,
+    chat_id: str,
+    message_id: int,
+    payload: EditMessageRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import edit_chat_message
+    try:
+        result = await edit_chat_message(client, int(chat_id), message_id, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    return result
+
+
+@router.delete("/accounts/{account_id}/dialogs/{chat_id}/messages/{message_id}")
+async def delete_message(
+    account_id: str,
+    chat_id: str,
+    message_id: int,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+    revoke: bool = False,
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import delete_chat_message
+    try:
+        await delete_chat_message(client, int(chat_id), message_id, revoke=revoke)
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    return {"ok": True}
+
+
+@router.post("/accounts/{account_id}/dialogs/{chat_id}/messages/{message_id}/forward")
+async def forward_message(
+    account_id: str,
+    chat_id: str,
+    message_id: int,
+    payload: ForwardMessageRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import forward_chat_message
+    try:
+        result = await forward_chat_message(client, int(chat_id), message_id, int(payload.target_chat_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    return result
+
+
+@router.post("/accounts/{account_id}/dialogs/{chat_id}/messages/{message_id}/react")
+async def send_reaction(
+    account_id: str,
+    chat_id: str,
+    message_id: int,
+    payload: ReactRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import send_message_reaction
+    try:
+        await send_message_reaction(client, int(chat_id), message_id, payload.emoji)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    return {"ok": True}
+
+
 @router.get("/accounts/{account_id}/dialogs/{chat_id}/stream")
 async def stream_messages_endpoint(
     account_id: str,
@@ -271,34 +405,80 @@ async def delete_dialog_endpoint(
     return result
 
 
-_BOOKMARKS: dict[str, list[dict]] = {}
+_BOOKMARKS_TABLE_ENSURED = False
+
+
+async def _ensure_bookmarks_table(db: AsyncSession) -> None:
+    """Create the bookmarks table if it does not exist."""
+    global _BOOKMARKS_TABLE_ENSURED
+    if _BOOKMARKS_TABLE_ENSURED:
+        return
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id SERIAL PRIMARY KEY,
+            tenant_id VARCHAR(36) NOT NULL,
+            account_id VARCHAR(36) NOT NULL,
+            chat_id VARCHAR(36) NOT NULL,
+            message_id INTEGER NOT NULL,
+            text VARCHAR(4000),
+            sender_name VARCHAR(200),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    await db.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_bookmarks_tenant_id
+        ON bookmarks (tenant_id)
+    """))
+    await db.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_bookmarks_account_id
+        ON bookmarks (account_id)
+    """))
+    await db.commit()
+    _BOOKMARKS_TABLE_ENSURED = True
 
 
 @router.get("/bookmarks")
 async def get_bookmarks(
     identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_bookmarks_table(db)
     key = identity.tenant_id or identity.user_id or "default"
-    return _BOOKMARKS.get(key, [])
+    from sqlalchemy import select
+    result = await db.execute(
+        select(Bookmark).where(Bookmark.tenant_id == key).order_by(Bookmark.created_at.desc())
+    )
+    bookmarks = result.scalars().all()
+    return [
+        {
+            "id": b.message_id,
+            "chat_id": b.chat_id,
+            "text": b.text,
+            "sender_name": b.sender_name,
+            "saved_at": b.created_at.isoformat() if b.created_at else None,
+        }
+        for b in bookmarks
+    ]
 
 
 @router.post("/bookmarks")
 async def add_bookmark(
     body: dict,
     identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_bookmarks_table(db)
     key = identity.tenant_id or identity.user_id or "default"
-    if key not in _BOOKMARKS:
-        _BOOKMARKS[key] = []
-    _BOOKMARKS[key].append({
-        "id": body.get("message_id"),
-        "chat_id": body.get("chat_id"),
-        "chat_title": body.get("chat_title", ""),
-        "text": body.get("text", "")[:200],
-        "sender_name": body.get("sender_name", ""),
-        "date": body.get("date"),
-        "saved_at": str(datetime.now(timezone.utc)),
-    })
+    bookmark = Bookmark(
+        tenant_id=key,
+        account_id=body.get("account_id", ""),
+        chat_id=str(body.get("chat_id", "")),
+        message_id=body.get("message_id", 0),
+        text=body.get("text", "")[:200],
+        sender_name=body.get("sender_name", ""),
+    )
+    db.add(bookmark)
+    await db.commit()
     return {"status": "saved"}
 
 
@@ -307,8 +487,17 @@ async def remove_bookmark(
     message_id: int,
     chat_id: int = Query(...),
     identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_bookmarks_table(db)
     key = identity.tenant_id or identity.user_id or "default"
-    items = _BOOKMARKS.get(key, [])
-    _BOOKMARKS[key] = [b for b in items if not (b["id"] == message_id and b["chat_id"] == chat_id)]
+    from sqlalchemy import delete as sa_delete
+    await db.execute(
+        sa_delete(Bookmark).where(
+            Bookmark.tenant_id == key,
+            Bookmark.message_id == message_id,
+            Bookmark.chat_id == str(chat_id),
+        )
+    )
+    await db.commit()
     return {"status": "removed"}

@@ -51,3 +51,15 @@ class SendMessageResponse(BaseModel):
 class ChatListResponse(BaseModel):
     accounts: list[dict]  # simplified account list
     dialogs: list[TelegramDialog]
+
+
+class EditMessageRequest(BaseModel):
+    text: str
+
+
+class ForwardMessageRequest(BaseModel):
+    target_chat_id: str
+
+
+class ReactRequest(BaseModel):
+    emoji: str
