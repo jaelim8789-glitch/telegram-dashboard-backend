@@ -37,6 +37,19 @@ async def get_current_identity(
     return identity
 
 
+async def get_optional_identity(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> Identity | None:
+    """Like get_current_identity but returns None instead of raising when no
+    valid credentials are present. For endpoints that must stay reachable
+    without auth (public onboarding) but should still attach the caller's
+    tenant when they happen to already be logged in."""
+    return await _resolve_identity(x_api_key, authorization, x_session_token, db)
+
+
 async def get_current_tenant_id(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import timedelta
 
-from app.api.deps import Identity, get_current_identity
+from app.api.deps import Identity, get_current_identity, get_optional_identity
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.plans import get_plan
@@ -906,8 +906,22 @@ def _delivery_hint(channel: str | None) -> str | None:
 
 
 @router.post("/prepare-account", response_model=PrepareAccountResponse)
-async def prepare_account(payload: PrepareAccountRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Public endpoint: create an Account + send MTProto code. No auth required.
+async def prepare_account(
+    payload: PrepareAccountRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Create an Account + send MTProto code. No auth required, so onboarding
+    (add a Telegram account before/without logging into TeleMon itself) keeps
+    working — but if the caller IS already logged in (this same public endpoint
+    is also what the in-dashboard "add account" screen calls), the account is
+    tied to their tenant immediately instead of staying orphaned until a later
+    login with the exact same phone number happens to match it (see
+    _link_orphan_accounts_by_phone below). Without this, a logged-in user
+    registering a Telegram account under a DIFFERENT phone than their login
+    phone would silently end up with an account that 403s on every dialogs
+    lookup, since it never gets linked to their tenant.
 
     Uses the shared TelethonPool (same as telegram_auth.send_code) for
     proper connection lifecycle, FloodWait handling, and dead-session recovery.
@@ -930,20 +944,29 @@ async def prepare_account(payload: PrepareAccountRequest, request: Request, db: 
     if not phone:
         raise HTTPException(status_code=400, detail="전화번호가 필요합니다.")
 
+    caller_tenant_id = identity.tenant_id if identity is not None else None
+
     # Find existing account or create new one
     result = await db.execute(select(Account).where(Account.phone == phone))
     existing = result.scalar_one_or_none()
 
     if existing and existing.status == "active":
+        if caller_tenant_id and not existing.tenant_id:
+            existing.tenant_id = caller_tenant_id
+            await db.commit()
+            logger.info("prepare_account_claimed_existing_orphan", account_id=existing.id, tenant_id=caller_tenant_id)
         return PrepareAccountResponse(account_id=existing.id)
 
     if existing:
         account = existing
+        if caller_tenant_id and not account.tenant_id:
+            account.tenant_id = caller_tenant_id
     else:
         account = Account(
             phone=phone,
             name=f"Telegram ({phone})",
             status="pending_auth",
+            tenant_id=caller_tenant_id,
         )
         db.add(account)
         await db.flush()
@@ -1001,8 +1024,17 @@ async def prepare_account(payload: PrepareAccountRequest, request: Request, db: 
 
 
 @router.post("/verify-telegram-code", response_model=VerifyTelegramCodeResponse)
-async def verify_telegram_code(payload: VerifyTelegramCodeRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Public endpoint: verify the MTProto code. No auth required.
+async def verify_telegram_code(
+    payload: VerifyTelegramCodeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Verify the MTProto code. No auth required for onboarding, but see
+    prepare_account's docstring — if the caller is logged in, attach the
+    account to their tenant here too in case it wasn't already (e.g. account
+    was prepared anonymously, then the user logged in before finishing
+    verification).
 
     Uses the shared TelethonPool (same as telegram_auth.verify_code).
     """
@@ -1061,6 +1093,11 @@ async def verify_telegram_code(payload: VerifyTelegramCodeRequest, request: Requ
     )
     pool.clear_pending_auth(account.id)
 
+    if identity is not None and identity.tenant_id and not account.tenant_id:
+        account.tenant_id = identity.tenant_id
+        await db.commit()
+        logger.info("verify_telegram_code_claimed_orphan", account_id=account.id, tenant_id=identity.tenant_id)
+
     try:
         from app.services.telegram_actions import list_groups
         groups = await list_groups(account)
@@ -1074,8 +1111,15 @@ async def verify_telegram_code(payload: VerifyTelegramCodeRequest, request: Requ
 
 
 @router.post("/verify-telegram-2fa")
-async def verify_telegram_2fa(payload: VerifyTelegram2FARequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Public endpoint: verify 2FA password. No auth required.
+async def verify_telegram_2fa(
+    payload: VerifyTelegram2FARequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    identity: "Identity | None" = Depends(get_optional_identity),
+):
+    """Verify 2FA password. No auth required for onboarding — see
+    prepare_account's docstring for why a logged-in caller still gets the
+    account attached to their tenant here.
 
     Uses the shared TelethonPool.
     """
@@ -1111,6 +1155,11 @@ async def verify_telegram_2fa(payload: VerifyTelegram2FARequest, request: Reques
     account = await account_crud.set_auth_state(
         db, account, status="active", session_data=encrypt_session(session_str)
     )
+
+    if identity is not None and identity.tenant_id and not account.tenant_id:
+        account.tenant_id = identity.tenant_id
+        await db.commit()
+        logger.info("verify_telegram_2fa_claimed_orphan", account_id=account.id, tenant_id=identity.tenant_id)
 
     try:
         from app.services.telegram_actions import list_groups
