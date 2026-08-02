@@ -33,7 +33,14 @@ import app.services.broadcast_processor as broadcast_processor_module
 from app.api.deps import Identity, get_current_identity, require_api_key_or_admin
 from app.config import settings
 from app.database import Base, get_db
-from app.main import app
+import app.main as app_main_module
+
+app = getattr(app_main_module, "app", None)
+if app is None:
+    raise RuntimeError("FastAPI app instance could not be found in app.main")
+
+if hasattr(app, "app") and not hasattr(app, "dependency_overrides"):
+    app = app.app
 
 
 @pytest_asyncio.fixture

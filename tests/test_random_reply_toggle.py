@@ -89,7 +89,7 @@ async def test_list_active_with_message_excludes_inactive_and_empty_message(db_s
 
     on_with_msg = await macro_crud.get_or_create_for_account(db_session, "acct-on")
     on_with_msg.is_active = True
-    on_with_msg.message_content = ""
+    on_with_msg.message_content = "hello"
     off = await macro_crud.get_or_create_for_account(db_session, "acct-off")
     off.is_active = False
     off.message_content = ""

@@ -83,9 +83,9 @@ async def _build_candidate_pool(
             continue
         if self_id and uid == self_id:
             continue
-        if getattr(sender, "bot", False):
+        if getattr(sender, "bot", False) is True:
             continue
-        if getattr(sender, "is_self", False):
+        if getattr(sender, "is_self", False) is True:
             continue
         if (chat_id, uid) in used_pairs:
             continue
