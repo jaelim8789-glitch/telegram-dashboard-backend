@@ -184,6 +184,7 @@ async def send_chat_message(
     text: str,
     reply_to_msg_id: int | None = None,
     media_path: str | None = None,
+    media_type: str | None = None,
 ) -> dict:
     """Send a message to a Telegram chat."""
     async with async_session_maker() as db:
@@ -195,7 +196,13 @@ async def send_chat_message(
     kwargs = {"comment_to": chat_id} if chat_id < 0 and abs(chat_id) > 10**12 else {}
     try:
         if media_path:
-            sent = await client.send_file(chat_id, media_path, caption=text, reply_to=reply_to_msg_id or None)
+            sent = await client.send_file(
+                chat_id,
+                media_path,
+                caption=text,
+                reply_to=reply_to_msg_id or None,
+                file_type=media_type,
+            )
         else:
             sent = await client.send_message(chat_id, text, reply_to=reply_to_msg_id or None)
     except FloodWaitError as exc:
@@ -491,3 +498,59 @@ async def export_chat_history(client, chat_id: int, format: str = "json", limit:
     if format == "text":
         return {"content": "\n".join(result), "count": len(result)}
     return {"messages": result, "count": len(result)}
+
+
+async def send_chat_sticker(client, chat_id: int, sticker_id: str, emoji: str = "") -> dict:
+    """Send a sticker to a chat."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.send_file(entity, sticker_id, force_document=True)
+    return {"ok": True, "message_id": msg.id}
+
+
+async def search_stickers(client, query: str) -> list:
+    """Search for stickers."""
+    try:
+        result = await client.get_stickers(query)
+        stickers = []
+        for sticker in result[:20]:
+            stickers.append({
+                "id": sticker.id,
+                "emoji": getattr(sticker, "emoji", ""),
+                "file_size": getattr(sticker, "size", 0),
+                "document_id": getattr(sticker, "id", 0),
+            })
+        return stickers
+    except Exception:
+        return []
+
+
+async def get_user_profile(client, user_id: int) -> dict:
+    """Get detailed user profile info."""
+    try:
+        user = await client.get_entity(user_id)
+        profile = {
+            "id": user_id,
+            "first_name": getattr(user, "first_name", ""),
+            "last_name": getattr(user, "last_name", ""),
+            "username": getattr(user, "username", ""),
+            "phone": getattr(user, "phone", None),
+            "is_self": getattr(user, "self", False),
+            "is_bot": getattr(user, "bot", False),
+        }
+
+        status = getattr(user, "status", None)
+        if status:
+            profile["online_status"] = type(status).__name__
+
+        try:
+            entity = await client.get_entity(user_id)
+            photos = []
+            async for photo in client.iter_profile_photos(entity, limit=5):
+                photos.append(photo.id)
+            profile["recent_photos_count"] = len(photos)
+        except Exception:
+            profile["recent_photos_count"] = 0
+
+        return profile
+    except Exception as e:
+        return {"id": user_id, "error": str(e)}

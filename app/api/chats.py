@@ -210,6 +210,7 @@ async def send_message_endpoint(
         account_id, chat_id, body.text,
         reply_to_msg_id=body.reply_to_msg_id,
         media_path=body.media_path,
+        media_type=body.media_type,
     )
     return result
 
@@ -550,6 +551,68 @@ async def export_chat(
         return await export_chat_history(client, int(chat_id), format)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/accounts/{account_id}/dialogs/{chat_id}/send-sticker")
+async def send_sticker(
+    account_id: str,
+    chat_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import send_chat_sticker
+    try:
+        result = await send_chat_sticker(client, int(chat_id), payload.get("sticker_id", ""), payload.get("emoji", ""))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    return result
+
+
+@router.get("/accounts/{account_id}/stickers")
+async def search_stickers_endpoint(
+    account_id: str,
+    query: str = "",
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import search_stickers
+    return await search_stickers(client, query)
+
+
+@router.get("/accounts/{account_id}/users/{user_id}/profile")
+async def get_user_profile(
+    account_id: str,
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import get_user_profile
+    return await get_user_profile(client, int(user_id))
 
 
 _BOOKMARKS_TABLE_ENSURED = False
