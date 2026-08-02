@@ -1,5 +1,6 @@
 """Connection Service — handles Telegram connection lifecycle."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from app.services.state_machine import SessionState, RecoveryReason, transition
@@ -19,6 +20,8 @@ class ConnectionService:
         self._backoff = backoff
         self._health_service = health_service
         self._states: dict[str, SessionState] = {}
+        self._inflight_operations: dict[str, asyncio.Task[SessionState]] = {}
+        self._inflight_lock = asyncio.Lock()
         self._event_seq = 0
 
     def get_state(self, account_id: str) -> SessionState:
@@ -26,8 +29,25 @@ class ConnectionService:
 
     async def connect(self, account_id: str, session_string: str = "") -> SessionState:
         """Connect an account. Returns final state."""
+        async with self._inflight_lock:
+            existing = self._inflight_operations.get(account_id)
+            if existing is not None:
+                task = existing
+            else:
+                task = asyncio.create_task(self._connect_impl(account_id, session_string))
+                self._inflight_operations[account_id] = task
+        try:
+            return await task
+        finally:
+            async with self._inflight_lock:
+                if self._inflight_operations.get(account_id) is task:
+                    self._inflight_operations.pop(account_id, None)
+
+    async def _connect_impl(self, account_id: str, session_string: str = "") -> SessionState:
         async with self._lock_manager.get_lock(account_id):
             current = self.get_state(account_id)
+            if current in {SessionState.CONNECTING, SessionState.CONNECTED, SessionState.RECONNECTING}:
+                return current
             if current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
                 transition_event = "re_auth"
                 transition_reason = RecoveryReason.RE_AUTH
@@ -36,19 +56,22 @@ class ConnectionService:
                 transition_reason = RecoveryReason.REGISTER
             result = transition(current, transition_event, transition_reason)
             self._states[account_id] = result.current
-            await self._emit(account_id, result.current, RecoveryReason.REGISTER)
+            await self._emit(account_id, result.current, transition_reason)
 
-            try:
-                from app.services.telethon_pool import pool
-                client = await pool.get_client(account_id, session_string, require_authorized=True)
-                result2 = transition(result.current, "connected")
+        try:
+            from app.services.telethon_pool import pool
+            client = await pool.get_client(account_id, session_string, require_authorized=True)
+            async with self._lock_manager.get_lock(account_id):
+                result2 = transition(self.get_state(account_id), "connected")
                 self._states[account_id] = result2.current
                 self._backoff.reset(account_id)
                 await self._emit(account_id, result2.current)
                 return result2.current
-            except Exception as exc:
+        except Exception as exc:
+            async with self._lock_manager.get_lock(account_id):
                 error_event = self._classify_error(exc)
-                result3 = transition(result.current, error_event)
+                current = self.get_state(account_id)
+                result3 = transition(current, error_event)
                 self._states[account_id] = result3.current
                 await self._emit(account_id, result3.current, result3.reason, str(exc))
                 if result3.current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
@@ -58,28 +81,49 @@ class ConnectionService:
 
     async def reconnect(self, account_id: str, session_string: str = "") -> SessionState:
         """Reconnect with backoff."""
+        async with self._inflight_lock:
+            existing = self._inflight_operations.get(account_id)
+            if existing is not None:
+                task = existing
+            else:
+                task = asyncio.create_task(self._reconnect_impl(account_id, session_string))
+                self._inflight_operations[account_id] = task
+        try:
+            return await task
+        finally:
+            async with self._inflight_lock:
+                if self._inflight_operations.get(account_id) is task:
+                    self._inflight_operations.pop(account_id, None)
+
+    async def _reconnect_impl(self, account_id: str, session_string: str = "") -> SessionState:
         async with self._lock_manager.get_lock(account_id):
             current = self.get_state(account_id)
+            if current in {SessionState.RECONNECTING, SessionState.CONNECTING}:
+                return current
             result = transition(current, "reconnect", RecoveryReason.NETWORK)
             self._states[account_id] = result.current
             await self._emit(account_id, result.current, RecoveryReason.NETWORK)
+            if current in {SessionState.CONNECTED, SessionState.DISCONNECTED}:
+                self._states[account_id] = SessionState.RECONNECTING
 
+        try:
             delay = self._backoff.next_delay(account_id)
-            import asyncio
             await asyncio.sleep(delay)
 
-            try:
-                from app.services.telethon_pool import pool
-                await pool.disconnect(account_id)
-                client = await pool.get_client(account_id, session_string, require_authorized=True)
-                result2 = transition(result.current, "connected")
+            from app.services.telethon_pool import pool
+            await pool.disconnect(account_id)
+            client = await pool.get_client(account_id, session_string, require_authorized=True)
+            async with self._lock_manager.get_lock(account_id):
+                result2 = transition(self.get_state(account_id), "connected")
                 self._states[account_id] = result2.current
                 self._backoff.reset(account_id)
                 await self._emit(account_id, result2.current)
                 return result2.current
-            except Exception as exc:
+        except Exception as exc:
+            async with self._lock_manager.get_lock(account_id):
                 error_event = self._classify_error(exc)
-                result3 = transition(result.current, error_event)
+                current = self.get_state(account_id)
+                result3 = transition(current, error_event)
                 self._states[account_id] = result3.current
                 await self._emit(account_id, result3.current, result3.reason, str(exc))
                 if result3.current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
