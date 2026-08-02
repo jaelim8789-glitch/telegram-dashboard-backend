@@ -29,7 +29,7 @@ class HealthService:
             SessionState.CONNECTED: {"status": "healthy", "has_session": True},
             SessionState.DISCONNECTED: {"status": "disconnected", "has_session": True},
             SessionState.RECONNECTING: {"status": "reconnecting", "has_session": True},
-            SessionState.EXPIRED: {"status": "unauthorized", "has_session": True},
+            SessionState.EXPIRED: {"status": "expired", "has_session": True},
             SessionState.UNAUTHORIZED: {"status": "unauthorized", "has_session": True},
             SessionState.BANNED: {"status": "banned", "has_session": True},
             SessionState.FLOOD_WAIT: {"status": "rate_limited", "has_session": True},

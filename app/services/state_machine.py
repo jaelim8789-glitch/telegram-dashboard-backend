@@ -121,7 +121,7 @@ def transition(current: SessionState, event: str, reason: RecoveryReason | None 
     target = transitions.get(event)
 
     if target is None:
-        logger.warning("invalid_transition", current=current.value, event=event)
+        logger.warning("invalid_transition current=%s event=%s", current.value, event)
         return TransitionResult(
             previous=current,
             current=current,

@@ -1,0 +1,71 @@
+# TeleMon Production Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences from base compose:
+#   - Stricter resource limits
+#   - Log rotation
+#   - Graceful shutdown
+#   - No build contexts (uses pre-built images)
+#   - Secrets via Docker secrets instead of env vars
+
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-backend:${TAG:-latest}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 512M
+      update_config:
+        order: start-first
+        failure_action: rollback
+        delay: 10s
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    secrets:
+      - nowpayments_api_key
+      - nowpayments_ipn_secret
+    environment:
+      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      NOWPAYMENTS_API_KEY: ""
+      NOWPAYMENTS_IPN_SECRET: ""
+      NOWPAYMENTS_PUBLIC_KEY: ""
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-frontend:${TAG:-latest}
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    restart: always
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+secrets:
+  nowpayments_api_key:
+    external: true
+  nowpayments_ipn_secret:
+    external: true
