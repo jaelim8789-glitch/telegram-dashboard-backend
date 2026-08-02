@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import time
+import urllib.parse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
@@ -716,6 +718,122 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
     return LoginWithPhoneResponse(
         access_token=create_user_access_token(user.id),
         session_token=raw_token,
+    )
+
+
+class MiniAppAuthRequest(BaseModel):
+    init_data: str
+
+
+class MiniAppAuthResponse(BaseModel):
+    access_token: str
+    session_token: str
+    user_id: str
+    phone: str | None = None
+
+
+def _validate_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
+    """Validate Telegram Mini App initData signature.
+
+    Returns parsed user dict if valid, None if invalid.
+    """
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data))
+        if "hash" not in parsed or "auth_date" not in parsed:
+            return None
+
+        # Check auth_date freshness (5 minutes max)
+        auth_date = int(parsed.get("auth_date", 0))
+        if abs(time.time() - auth_date) > 300:
+            return None
+
+        # Build data_check_string
+        check_data = "\n".join(
+            f"{k}={v}" for k, v in sorted(parsed.items())
+            if k != "hash"
+        )
+
+        # Compute HMAC
+        secret_key = hmac.new(
+            bot_token.encode(), b"", hashlib.sha256
+        ).digest()
+
+        computed_hash = hmac.new(
+            secret_key, check_data.encode(), hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(computed_hash, parsed["hash"]):
+            return None
+
+        # Parse user
+        user_json = parsed.get("user")
+        if user_json:
+            return json.loads(user_json)
+
+        return {}
+    except Exception:
+        return None
+
+
+@router.post("/miniapp/auth", response_model=MiniAppAuthResponse)
+async def miniapp_auth(payload: MiniAppAuthRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Authenticate via Telegram Mini App initData.
+
+    Validates the HMAC signature, then creates/finds user + tenant,
+    and issues a JWT token.
+    """
+    bot_token = getattr(settings, "telegram_bot_token", "")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="Bot token이 설정되지 않았습니다.")
+
+    user_data = _validate_telegram_init_data(payload.init_data, bot_token)
+    if user_data is None:
+        raise HTTPException(status_code=401, detail="Telegram 인증에 실패했습니다.")
+
+    telegram_id = str(user_data.get("id", ""))
+    username = user_data.get("username", "")
+    first_name = user_data.get("first_name", "")
+    last_name = user_data.get("last_name", "")
+
+    if not telegram_id:
+        raise HTTPException(status_code=400, detail="Telegram 사용자 정보를 찾을 수 없습니다.")
+
+    # Telegram Mini App doesn't expose phone — use telegram_id as identifier
+    phone = f"tg:{telegram_id}"
+
+    # Find or create user
+    user = await user_crud.get_or_create_user(db, phone)
+    await user_crud.touch_last_login(db, user)
+
+    # Find or create tenant
+    tenant_id = await _resolve_tenant_id_by_user(db, user)
+    if not tenant_id:
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+        tenant = Tenant(
+            phone=phone,
+            plan="free",
+            subscription_status="active",
+            trial_expires_at=trial_expires,
+        )
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+        tenant_id = tenant.id
+
+    # Issue JWT
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant_id,
+    )
+    await db.commit()
+
+    logger.info("miniapp_auth_success", user_id=user.id, telegram_id=telegram_id)
+    return MiniAppAuthResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+        user_id=user.id,
+        phone=phone,
     )
 
 
