@@ -712,6 +712,16 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant_id,
     )
+
+    # Link orphaned accounts (created via prepare-account without tenant) to this tenant
+    from app.models.account import Account as AccountModel
+    orphan_result = await db.execute(
+        select(AccountModel).where(AccountModel.phone == payload.phone, AccountModel.tenant_id.is_(None))
+    )
+    for orphan in orphan_result.scalars().all():
+        orphan.tenant_id = tenant_id
+        logger.info("orphan_account_linked", account_id=orphan.id, tenant_id=tenant_id)
+
     await db.commit()
 
     logger.info("unified_login_success", user_id=user.id)
@@ -826,6 +836,15 @@ async def miniapp_auth(payload: MiniAppAuthRequest, request: Request, db: AsyncS
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant_id,
     )
+
+    # Link orphaned accounts to this tenant
+    from app.models.account import Account as AccountModel
+    orphan_result = await db.execute(
+        select(AccountModel).where(AccountModel.phone == phone, AccountModel.tenant_id.is_(None))
+    )
+    for orphan in orphan_result.scalars().all():
+        orphan.tenant_id = tenant_id
+
     await db.commit()
 
     logger.info("miniapp_auth_success", user_id=user.id, telegram_id=telegram_id)
