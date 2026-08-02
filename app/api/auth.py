@@ -690,8 +690,8 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
     await user_crud.touch_last_login(db, user)
 
     # Find or create Tenant
-    tenant = await _resolve_tenant_id_by_user(db, user)
-    if not tenant:
+    tenant_id = await _resolve_tenant_id_by_user(db, user)
+    if not tenant_id:
         plan_def = get_plan("free")
         trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
         trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
@@ -704,10 +704,11 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
         db.add(tenant)
         await db.flush()
         await apply_plan_limits(db, tenant, "free")
+        tenant_id = tenant.id
 
     # Issue JWT + session
     raw_token, _ = await session_crud.create_session(
-        db, user_id=user.id, tenant_id=tenant.id,
+        db, user_id=user.id, tenant_id=tenant_id,
     )
     await db.commit()
 
