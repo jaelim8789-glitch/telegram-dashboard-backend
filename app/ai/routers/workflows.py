@@ -49,11 +49,12 @@ async def create_workflow(
 @router.get("/{workflow_id}", response_model=WorkflowDefinitionResponse)
 async def get_workflow(
     workflow_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     engine = get_workflow_engine()
     workflow = await engine.get_definition(db, workflow_id)
-    if not workflow:
+    if not workflow or workflow.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return WorkflowDefinitionResponse.model_validate(workflow)
 
@@ -62,10 +63,11 @@ async def get_workflow(
 async def update_workflow(
     workflow_id: str,
     data: WorkflowDefinitionUpdate,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     engine = get_workflow_engine()
-    workflow = await engine.update_definition(db, workflow_id, data.model_dump(exclude_none=True))
+    workflow = await engine.update_definition(db, workflow_id, tenant_id, data.model_dump(exclude_none=True))
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return WorkflowDefinitionResponse.model_validate(workflow)
@@ -74,10 +76,11 @@ async def update_workflow(
 @router.delete("/{workflow_id}", status_code=204)
 async def delete_workflow(
     workflow_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     engine = get_workflow_engine()
-    deleted = await engine.delete_definition(db, workflow_id)
+    deleted = await engine.delete_definition(db, workflow_id, tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -109,11 +112,12 @@ async def execute_workflow(
 @router.get("/executions/{execution_id}", response_model=WorkflowExecutionResponse)
 async def get_execution(
     execution_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     engine = get_workflow_engine()
     execution = await engine.get_execution(db, execution_id)
-    if not execution:
+    if not execution or execution.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Execution not found")
     return WorkflowExecutionResponse.model_validate(execution)
 
@@ -121,8 +125,12 @@ async def get_execution(
 @router.get("/executions/{execution_id}/steps", response_model=list[WorkflowStepResponse])
 async def get_execution_steps(
     execution_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     engine = get_workflow_engine()
+    execution = await engine.get_execution(db, execution_id)
+    if not execution or execution.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
     steps = await engine.get_steps(db, execution_id)
     return [WorkflowStepResponse.model_validate(s) for s in steps]

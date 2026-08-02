@@ -83,9 +83,12 @@ async def get_task_stats(
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(
     task_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(AiTask).where(AiTask.id == task_id))
+    result = await db.execute(
+        select(AiTask).where(AiTask.id == task_id, AiTask.tenant_id == tenant_id)
+    )
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -95,11 +98,14 @@ async def get_task(
 @router.post("/{task_id}/cancel", response_model=TaskResponse)
 async def cancel_task(
     task_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     queue = get_task_queue()
-    cancelled = await queue.cancel(db, task_id)
+    cancelled = await queue.cancel(db, task_id, tenant_id)
     if not cancelled:
         raise HTTPException(status_code=400, detail="Task cannot be cancelled")
-    result = await db.execute(select(AiTask).where(AiTask.id == task_id))
+    result = await db.execute(
+        select(AiTask).where(AiTask.id == task_id, AiTask.tenant_id == tenant_id)
+    )
     return TaskResponse.model_validate(result.scalar_one())

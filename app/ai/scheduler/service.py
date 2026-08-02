@@ -54,11 +54,15 @@ class AiSchedulerService:
         return schedule
 
     async def update_schedule(
-        self, db: AsyncSession, schedule_id: str, data: dict[str, Any]
+        self, db: AsyncSession, schedule_id: str, tenant_id: str, data: dict[str, Any]
     ) -> AiScheduleDefinition | None:
-        """Update a schedule definition."""
+        """Update a schedule definition. Scoped to tenant_id so one tenant can't
+        modify another tenant's schedule by guessing/enumerating IDs."""
         result = await db.execute(
-            select(AiScheduleDefinition).where(AiScheduleDefinition.id == schedule_id)
+            select(AiScheduleDefinition).where(
+                AiScheduleDefinition.id == schedule_id,
+                AiScheduleDefinition.tenant_id == tenant_id,
+            )
         )
         schedule = result.scalar_one_or_none()
         if not schedule:
@@ -71,10 +75,13 @@ class AiSchedulerService:
         logger.info("schedule_updated", name=schedule.name)
         return schedule
 
-    async def delete_schedule(self, db: AsyncSession, schedule_id: str) -> bool:
-        """Delete a schedule definition."""
+    async def delete_schedule(self, db: AsyncSession, schedule_id: str, tenant_id: str) -> bool:
+        """Delete a schedule definition. Scoped to tenant_id, see update_schedule."""
         result = await db.execute(
-            select(AiScheduleDefinition).where(AiScheduleDefinition.id == schedule_id)
+            select(AiScheduleDefinition).where(
+                AiScheduleDefinition.id == schedule_id,
+                AiScheduleDefinition.tenant_id == tenant_id,
+            )
         )
         schedule = result.scalar_one_or_none()
         if not schedule:

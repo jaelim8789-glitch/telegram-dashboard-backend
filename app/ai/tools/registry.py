@@ -88,11 +88,15 @@ class ToolRegistry:
         return tool
 
     async def update_definition(
-        self, db: AsyncSession, tool_id: str, data: dict[str, Any]
+        self, db: AsyncSession, tool_id: str, tenant_id: str, data: dict[str, Any]
     ) -> AiToolDefinition | None:
-        """Update an existing tool definition."""
+        """Update an existing tool definition. Scoped to tenant_id so one
+        tenant can't modify another tenant's tool by guessing/enumerating IDs."""
         result = await db.execute(
-            select(AiToolDefinition).where(AiToolDefinition.id == tool_id)
+            select(AiToolDefinition).where(
+                AiToolDefinition.id == tool_id,
+                AiToolDefinition.tenant_id == tenant_id,
+            )
         )
         tool = result.scalar_one_or_none()
         if not tool:
@@ -106,10 +110,13 @@ class ToolRegistry:
         logger.info("tool_definition_updated", name=tool.name)
         return tool
 
-    async def delete_definition(self, db: AsyncSession, tool_id: str) -> bool:
-        """Delete a tool definition."""
+    async def delete_definition(self, db: AsyncSession, tool_id: str, tenant_id: str) -> bool:
+        """Delete a tool definition. Scoped to tenant_id, see update_definition."""
         result = await db.execute(
-            select(AiToolDefinition).where(AiToolDefinition.id == tool_id)
+            select(AiToolDefinition).where(
+                AiToolDefinition.id == tool_id,
+                AiToolDefinition.tenant_id == tenant_id,
+            )
         )
         tool = result.scalar_one_or_none()
         if not tool:

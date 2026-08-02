@@ -190,11 +190,13 @@ class TaskQueue:
         logger.info("task_retry_scheduled", task_id=task_id, attempt=task.retry_count)
         return task
 
-    async def cancel(self, db: AsyncSession, task_id: str) -> bool:
-        """Cancel a pending or queued task."""
+    async def cancel(self, db: AsyncSession, task_id: str, tenant_id: str) -> bool:
+        """Cancel a pending or queued task. Scoped to tenant_id so one tenant
+        can't cancel another tenant's task by guessing/enumerating IDs."""
         result = await db.execute(
             select(AiTask).where(
                 AiTask.id == task_id,
+                AiTask.tenant_id == tenant_id,
                 AiTask.status.in_(["pending", "queued"]),
             )
         )

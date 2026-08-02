@@ -48,10 +48,14 @@ async def create_schedule(
 @router.get("/{schedule_id}", response_model=ScheduleDefinitionResponse)
 async def get_schedule(
     schedule_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(AiScheduleDefinition).where(AiScheduleDefinition.id == schedule_id)
+        select(AiScheduleDefinition).where(
+            AiScheduleDefinition.id == schedule_id,
+            AiScheduleDefinition.tenant_id == tenant_id,
+        )
     )
     schedule = result.scalar_one_or_none()
     if not schedule:
@@ -63,10 +67,11 @@ async def get_schedule(
 async def update_schedule(
     schedule_id: str,
     data: ScheduleDefinitionUpdate,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     service = get_ai_scheduler_service()
-    schedule = await service.update_schedule(db, schedule_id, data.model_dump(exclude_none=True))
+    schedule = await service.update_schedule(db, schedule_id, tenant_id, data.model_dump(exclude_none=True))
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return ScheduleDefinitionResponse.model_validate(schedule)
@@ -75,10 +80,11 @@ async def update_schedule(
 @router.delete("/{schedule_id}", status_code=204)
 async def delete_schedule(
     schedule_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     service = get_ai_scheduler_service()
-    deleted = await service.delete_schedule(db, schedule_id)
+    deleted = await service.delete_schedule(db, schedule_id, tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
@@ -87,8 +93,17 @@ async def delete_schedule(
 async def get_schedule_executions(
     schedule_id: str,
     limit: int = 20,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
+    owner_check = await db.execute(
+        select(AiScheduleDefinition.id).where(
+            AiScheduleDefinition.id == schedule_id,
+            AiScheduleDefinition.tenant_id == tenant_id,
+        )
+    )
+    if owner_check.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
     result = await db.execute(
         select(AiScheduleExecution)
         .where(AiScheduleExecution.schedule_id == schedule_id)
@@ -102,11 +117,15 @@ async def get_schedule_executions(
 @router.post("/{schedule_id}/trigger", response_model=ScheduleExecutionResponse)
 async def trigger_schedule(
     schedule_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     service = get_ai_scheduler_service()
     result = await db.execute(
-        select(AiScheduleDefinition).where(AiScheduleDefinition.id == schedule_id)
+        select(AiScheduleDefinition).where(
+            AiScheduleDefinition.id == schedule_id,
+            AiScheduleDefinition.tenant_id == tenant_id,
+        )
     )
     schedule = result.scalar_one_or_none()
     if not schedule:

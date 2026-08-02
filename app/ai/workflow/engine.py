@@ -45,11 +45,15 @@ class WorkflowEngine:
         return workflow
 
     async def update_definition(
-        self, db: AsyncSession, workflow_id: str, data: dict[str, Any]
+        self, db: AsyncSession, workflow_id: str, tenant_id: str, data: dict[str, Any]
     ) -> AiWorkflowDefinition | None:
-        """Update an existing workflow definition."""
+        """Update an existing workflow definition. Scoped to tenant_id so one
+        tenant can't modify another tenant's workflow by guessing/enumerating IDs."""
         result = await db.execute(
-            select(AiWorkflowDefinition).where(AiWorkflowDefinition.id == workflow_id)
+            select(AiWorkflowDefinition).where(
+                AiWorkflowDefinition.id == workflow_id,
+                AiWorkflowDefinition.tenant_id == tenant_id,
+            )
         )
         workflow = result.scalar_one_or_none()
         if not workflow:
@@ -63,10 +67,13 @@ class WorkflowEngine:
         logger.info("workflow_definition_updated", name=workflow.name)
         return workflow
 
-    async def delete_definition(self, db: AsyncSession, workflow_id: str) -> bool:
-        """Delete a workflow definition."""
+    async def delete_definition(self, db: AsyncSession, workflow_id: str, tenant_id: str) -> bool:
+        """Delete a workflow definition. Scoped to tenant_id, see update_definition."""
         result = await db.execute(
-            select(AiWorkflowDefinition).where(AiWorkflowDefinition.id == workflow_id)
+            select(AiWorkflowDefinition).where(
+                AiWorkflowDefinition.id == workflow_id,
+                AiWorkflowDefinition.tenant_id == tenant_id,
+            )
         )
         workflow = result.scalar_one_or_none()
         if not workflow:

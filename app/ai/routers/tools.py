@@ -30,7 +30,9 @@ async def list_tools(
     registry = get_tool_registry()
     if not registry.is_loaded:
         await registry.load_from_db(db)
-    tools = registry.list_definitions()
+    # list_definitions() is a process-wide, all-tenants cache — filter here so
+    # one tenant can't see another tenant's custom tool definitions.
+    tools = [t for t in registry.list_definitions() if t.tenant_id == tenant_id]
     return ToolListResponse(
         tools=[ToolDefinitionResponse.model_validate(t) for t in tools],
         total=len(tools),
@@ -51,13 +53,14 @@ async def create_tool(
 @router.get("/{tool_id}", response_model=ToolDefinitionResponse)
 async def get_tool(
     tool_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     registry = get_tool_registry()
     if not registry.is_loaded:
         await registry.load_from_db(db)
     for tool in registry.list_definitions():
-        if tool.id == tool_id:
+        if tool.id == tool_id and tool.tenant_id == tenant_id:
             return ToolDefinitionResponse.model_validate(tool)
     from fastapi import HTTPException
     raise HTTPException(status_code=404, detail="Tool not found")
@@ -67,10 +70,11 @@ async def get_tool(
 async def update_tool(
     tool_id: str,
     data: ToolDefinitionUpdate,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     registry = get_tool_registry()
-    tool = await registry.update_definition(db, tool_id, data.model_dump(exclude_none=True))
+    tool = await registry.update_definition(db, tool_id, tenant_id, data.model_dump(exclude_none=True))
     if not tool:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Tool not found")
@@ -80,10 +84,11 @@ async def update_tool(
 @router.delete("/{tool_id}", status_code=204)
 async def delete_tool(
     tool_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     registry = get_tool_registry()
-    deleted = await registry.delete_definition(db, tool_id)
+    deleted = await registry.delete_definition(db, tool_id, tenant_id)
     if not deleted:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Tool not found")
