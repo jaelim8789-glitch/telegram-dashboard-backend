@@ -156,7 +156,7 @@ async def fetch_messages(
 
     kwargs = {"limit": limit}
     if offset_id:
-        kwargs["offset_id"] = offset_id
+        kwargs["max_id"] = offset_id - 1
 
     messages = await client.get_messages(chat_id, **kwargs)
     result = []
@@ -418,3 +418,76 @@ async def send_message_reaction(client, chat_id: int, message_id: int, emoji: st
     if msg is None:
         raise ValueError("Message not found")
     await client.send_reaction(entity, msg, emoji)
+
+
+async def get_chat_details(client, chat_id: int) -> dict:
+    """Get detailed chat info including members."""
+    entity = await client.get_entity(chat_id)
+    info = {
+        "id": chat_id,
+        "title": getattr(entity, "title", None) or getattr(entity, "first_name", None) or "Unknown",
+        "type": type(entity).__name__,
+    }
+
+    try:
+        photo = await client.download_profile_photo(entity, file=bytes)
+        if photo:
+            info["has_photo"] = True
+    except Exception:
+        info["has_photo"] = False
+
+    if hasattr(entity, "participants_count"):
+        info["members_count"] = entity.participants_count
+
+    if hasattr(entity, "phone"):
+        info["phone"] = entity.phone
+    if hasattr(entity, "username"):
+        info["username"] = entity.username
+    if hasattr(entity, "status"):
+        status_name = type(entity.status).__name__
+        info["online_status"] = status_name
+
+    return info
+
+
+async def create_telegram_group(client, title: str, user_ids: list[str]) -> dict:
+    """Create a new Telegram group."""
+    users = []
+    for uid in user_ids:
+        try:
+            entity = await client.get_entity(uid)
+            users.append(entity)
+        except Exception:
+            continue
+
+    if not users:
+        raise ValueError("No valid users found")
+
+    chat = await client.create_group(title, users)
+    return {"ok": True, "chat_id": chat.id, "title": title}
+
+
+async def export_chat_history(client, chat_id: int, format: str = "json", limit: int = 500) -> list | dict:
+    """Export recent chat history."""
+    entity = await client.get_entity(chat_id)
+    messages = await client.get_messages(entity, limit=limit)
+
+    result = []
+    for msg in reversed(messages):
+        if msg is None:
+            continue
+        entry = {
+            "id": msg.id,
+            "date": msg.date.isoformat() if msg.date else None,
+            "sender_id": msg.sender_id,
+            "text": msg.text or "",
+            "is_outgoing": msg.out,
+        }
+        if format == "text":
+            sender = "You" if msg.out else "Other"
+            entry = f"[{entry['date']}] {sender}: {entry['text']}"
+        result.append(entry)
+
+    if format == "text":
+        return {"content": "\n".join(result), "count": len(result)}
+    return {"messages": result, "count": len(result)}

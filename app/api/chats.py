@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,23 @@ from telethon.errors import FloodWaitError
 router = APIRouter(prefix="/api/chat-telegram", tags=["chat-telegram"])
 logger = get_logger(__name__)
 
+_WS_BROADCAST: list = []
+_NOTIFICATION_SETTINGS: dict[str, dict] = {}
+
+
+def broadcast_to_ws(event_type: str, data: dict):
+    """Queue an event for WebSocket broadcast."""
+    _WS_BROADCAST.append({"type": event_type, "data": data, "timestamp": datetime.utcnow().isoformat()})
+    if len(_WS_BROADCAST) > 100:
+        _WS_BROADCAST.pop(0)
+
+
+def pop_ws_events() -> list[dict]:
+    """Pop and return all pending broadcast events."""
+    events = _WS_BROADCAST.copy()
+    _WS_BROADCAST.clear()
+    return events
+
 # In-memory WebSocket clients per account: account_id → set of WebSocket
 chat_ws_clients: dict[str, set[WebSocket]] = {}
 
@@ -45,6 +63,25 @@ async def chat_websocket(
     if account_id not in chat_ws_clients:
         chat_ws_clients[account_id] = set()
     chat_ws_clients[account_id].add(websocket)
+
+    async def send_broadcast_events():
+        while True:
+            try:
+                events = pop_ws_events()
+                for event in events:
+                    dead: list[WebSocket] = []
+                    for client in chat_ws_clients.get(account_id, set()):
+                        try:
+                            await client.send_json(event)
+                        except WebSocketDisconnect:
+                            dead.append(client)
+                    for d in dead:
+                        chat_ws_clients[account_id].discard(d)
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+
+    broadcast_task = asyncio.create_task(send_broadcast_events())
     try:
         while True:
             data = await websocket.receive_text()
@@ -60,6 +97,12 @@ async def chat_websocket(
         chat_ws_clients[account_id].discard(websocket)
         if not chat_ws_clients[account_id]:
             del chat_ws_clients[account_id]
+    finally:
+        broadcast_task.cancel()
+        try:
+            await broadcast_task
+        except asyncio.CancelledError:
+            pass
 
 
 async def broadcast_dialog_update(account_id: str):
@@ -209,6 +252,7 @@ async def edit_message(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
         )
+    broadcast_to_ws("message_edited", {"chat_id": chat_id, "message_id": message_id, "text": payload.text})
     return result
 
 
@@ -237,6 +281,7 @@ async def delete_message(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
         )
+    broadcast_to_ws("message_deleted", {"chat_id": chat_id, "message_id": message_id})
     return {"ok": True}
 
 
@@ -403,6 +448,108 @@ async def delete_dialog_endpoint(
     await require_account_tenant_access(account_id, db, identity)
     result = await delete_dialog(account_id, chat_id)
     return result
+
+
+@router.get("/accounts/{account_id}/dialogs/{chat_id}/info")
+async def get_chat_info(
+    account_id: str,
+    chat_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get detailed info about a chat: name, photo, members, etc."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import get_chat_details
+    try:
+        return await get_chat_details(client, int(chat_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+class CreateGroupRequest(BaseModel):
+    title: str
+    user_ids: list[str] = []
+
+
+@router.post("/accounts/{account_id}/groups/create")
+async def create_group(
+    account_id: str,
+    payload: CreateGroupRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import create_telegram_group
+    try:
+        return await create_telegram_group(client, payload.title, payload.user_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+class NotificationSettingsRequest(BaseModel):
+    muted: bool = False
+    sound: str = "default"
+
+
+@router.post("/accounts/{account_id}/dialogs/{chat_id}/notifications")
+async def set_notification_settings(
+    account_id: str,
+    chat_id: str,
+    payload: NotificationSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    key = f"{account_id}:{chat_id}"
+    _NOTIFICATION_SETTINGS[key] = {"muted": payload.muted, "sound": payload.sound}
+    return {"ok": True}
+
+
+@router.get("/accounts/{account_id}/dialogs/{chat_id}/notifications")
+async def get_notification_settings(
+    account_id: str,
+    chat_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    key = f"{account_id}:{chat_id}"
+    return _NOTIFICATION_SETTINGS.get(key, {"muted": False, "sound": "default"})
+
+
+@router.get("/accounts/{account_id}/dialogs/{chat_id}/export")
+async def export_chat(
+    account_id: str,
+    chat_id: str,
+    format: str = "json",
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Export chat history as JSON or text."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import export_chat_history
+    try:
+        return await export_chat_history(client, int(chat_id), format)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 _BOOKMARKS_TABLE_ENSURED = False

@@ -19,6 +19,26 @@ async def chat_websocket(
     if account_id not in chat_clients:
         chat_clients[account_id] = set()
     chat_clients[account_id].add(websocket)
+
+    async def send_broadcast_events():
+        while True:
+            try:
+                from app.api.chats import pop_ws_events
+                events = pop_ws_events()
+                for event in events:
+                    stale: list[WebSocket] = []
+                    for client in chat_clients.get(account_id, set()):
+                        try:
+                            await client.send_json(event)
+                        except WebSocketDisconnect:
+                            stale.append(client)
+                    for s in stale:
+                        chat_clients[account_id].discard(s)
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+
+    broadcast_task = asyncio.create_task(send_broadcast_events())
     try:
         while True:
             data = await websocket.receive_text()
@@ -38,6 +58,12 @@ async def chat_websocket(
         chat_clients[account_id].discard(websocket)
         if not chat_clients[account_id]:
             del chat_clients[account_id]
+    finally:
+        broadcast_task.cancel()
+        try:
+            await broadcast_task
+        except asyncio.CancelledError:
+            pass
 
 
 @ws_router.websocket("/ws/dashboard")
