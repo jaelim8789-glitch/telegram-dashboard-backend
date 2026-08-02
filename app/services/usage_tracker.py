@@ -101,6 +101,14 @@ async def apply_plan_limits(db: AsyncSession, tenant: Tenant, plan: str) -> Tena
 
     await db.commit()
     await db.refresh(tenant)
+
+    # ensure_initial_credits() existed since the credit system was added but
+    # was never actually called from anywhere — every tenant (free signups
+    # and paid upgrades alike) sat at 0 AI credits forever unless a request
+    # happened to hit the free-tier self-heal path in check_and_deduct_credits.
+    from app.services.ai_credit_service import ensure_initial_credits
+    await ensure_initial_credits(tenant, db)
+
     logger.info("plan_limits_applied", tenant_id=tenant.id, plan=plan)
     return tenant
 

@@ -19,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.tenant import Tenant
 
 FREE_REFILL_INTERVAL = timedelta(hours=5)
-FREE_REFILL_AMOUNT = 10
+# The docstring above always said "10 chats every 5 hours" but this was set
+# to 10 *credits* — chat costs 50cr, so free tenants could never afford a
+# single AI chat message even right after a refill. 500 credits actually
+# buys the documented 10 chats (or a mix of cheaper features).
+FREE_REFILL_AMOUNT = 500
 
 # Monthly credit pool + manual-reset allowance, per paid plan.
 PLAN_MONTHLY_CREDITS: dict[str, int] = {
