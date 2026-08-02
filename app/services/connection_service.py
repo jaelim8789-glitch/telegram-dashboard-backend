@@ -1,6 +1,7 @@
 """Connection Service — handles Telegram connection lifecycle."""
 
 import logging
+from datetime import datetime, timezone
 from app.services.state_machine import SessionState, RecoveryReason, transition
 from app.services.backoff import BackoffStrategy
 from app.services.lock_manager import LockManager
@@ -17,6 +18,7 @@ class ConnectionService:
         self._lock_manager = lock_manager
         self._backoff = backoff
         self._states: dict[str, SessionState] = {}
+        self._event_seq = 0
 
     def get_state(self, account_id: str) -> SessionState:
         return self._states.get(account_id, SessionState.NOT_CONFIGURED)
@@ -109,8 +111,13 @@ class ConnectionService:
 
     async def _emit(self, account_id: str, state: SessionState, reason: RecoveryReason | None = None, error: str | None = None):
         event_name = f"session.{state.value}"
+        self._event_seq += 1
         data = {
+            "version": 1,
+            "event": event_name,
             "account_id": account_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "seq": self._event_seq,
             "state": state.value,
             "reason": reason.value if reason else None,
             "error": error,

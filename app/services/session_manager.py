@@ -110,7 +110,7 @@ class SessionManager:
                 logger.error("monitor_error", error=str(exc))
 
     async def _on_any_session_event(self, data: dict):
-        """Subscribe to all session.* events — update metrics + log."""
+        """Subscribe to all session.* events — update metrics + log + websocket broadcast."""
         self._metrics.record_event()
         if self._event_logger:
             await self._event_logger.log(
@@ -120,3 +120,6 @@ class SessionManager:
                 reason=data.get("reason"),
                 error=data.get("error"),
             )
+
+        from app.routes import ws as ws_routes
+        await ws_routes.broadcast_session_event(data)
