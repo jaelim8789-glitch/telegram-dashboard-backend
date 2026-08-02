@@ -82,6 +82,9 @@ from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
 from app.services.telethon_pool import pool
+from app.realtime.dispatcher import dispatcher as realtime_dispatcher
+from app.realtime.broadcast import register_broadcast_consumer
+from app.realtime.handlers import attach_all_account_realtime_listeners
 
 #  AI Platform Imports 
 from app.ai.routers import (
@@ -165,7 +168,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("auto_reply_listeners_skipped", reason="another_worker_running")
 
-    #  Telegram bot (optional) 
+    #  Realtime update handlers (live message/read/typing/presence push)
+    # Same per-worker duplication risk as auto-reply above: only the singleton-
+    # lock winner attaches Telethon listeners; every worker still runs dispatcher
+    # workers + the broadcast consumer since those only act on this worker's own
+    # in-memory chat_clients websocket set, not shared state.
+    register_broadcast_consumer()
+    realtime_dispatcher.start()
+    if await acquire_singleton_lock("realtime_update_handlers"):
+        try:
+            await attach_all_account_realtime_listeners()
+            logger.info("realtime_update_handlers_attached")
+        except Exception as exc:
+            logger.error("realtime_update_handlers_startup_failed", error=str(exc))
+    else:
+        logger.info("realtime_update_handlers_skipped", reason="another_worker_running")
+
+    #  Telegram bot (optional)
     try:
         await start_bot()
     except Exception as exc:
@@ -206,7 +225,12 @@ async def lifespan(app: FastAPI):
     logger.info("app_started")
     yield
 
-    #  Shutdown 
+    #  Shutdown
+    try:
+        await realtime_dispatcher.stop()
+    except Exception as exc:
+        logger.error("realtime_dispatcher_shutdown_failed", error=str(exc))
+
     try:
         await stop_bot()
     except Exception as exc:

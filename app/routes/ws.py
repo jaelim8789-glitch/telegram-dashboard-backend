@@ -10,6 +10,19 @@ ws_router = APIRouter()
 chat_clients: dict[str, set[WebSocket]] = {}
 
 
+async def broadcast_to_account(account_id: str, message: dict) -> None:
+    """Send a JSON message to every open /ws/chat connection for this account.
+    Used by app/realtime to push live Telegram updates without the frontend polling."""
+    dead: list[WebSocket] = []
+    for client in chat_clients.get(account_id, set()):
+        try:
+            await client.send_json(message)
+        except Exception:
+            dead.append(client)
+    for client in dead:
+        chat_clients.get(account_id, set()).discard(client)
+
+
 @ws_router.websocket("/ws/chat")
 async def chat_websocket(
     websocket: WebSocket,
