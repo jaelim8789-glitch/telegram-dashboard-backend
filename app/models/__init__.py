@@ -25,6 +25,8 @@ from app.models.user import PhoneVerification, User
 from app.models.referral import ReferralCode, ReferralCommission, ReferralPayout, ReferralConfig, ReferralAuditLog
 from app.models.knowledge_base import Document, Chunk, SearchLog, Feedback
 from app.models.bookmark import Bookmark
+from app.models.escrow import Escrow, EscrowMilestone, EscrowMessage
+from app.models.trust import TrustProfile, TransactionReview
 
 __all__ = [
     "StyleProfile",
@@ -78,4 +80,9 @@ __all__ = [
     "SearchLog",
     "Feedback",
     "Bookmark",
+    "Escrow",
+    "EscrowMilestone",
+    "EscrowMessage",
+    "TrustProfile",
+    "TransactionReview",
 ]

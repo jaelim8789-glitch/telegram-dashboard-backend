@@ -74,6 +74,9 @@ from app.api.telemon_memory import router as telemon_memory_router
 from app.routers.ai_admin import router as ai_employee_admin_router
 from app.api.usdt_payment import router as usdt_payment_router
 from app.api.nowpayments import router as nowpayments_router
+from app.api.translate import router as translate_router
+from app.api.escrow import router as escrow_router
+from app.api.trust import router as trust_router
 from app.api.referral import router as referral_router, public_router as referral_public_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -410,6 +413,9 @@ app.include_router(dashboard_router, dependencies=_auth_required)
 app.include_router(ws_router)
 app.include_router(miniapp_router)
 app.include_router(knowledge_base_router)
+app.include_router(translate_router)
+app.include_router(escrow_router, dependencies=_auth_required)
+app.include_router(trust_router, dependencies=_auth_required)
 
 
 @app.get("/metrics")
