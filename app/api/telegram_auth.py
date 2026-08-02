@@ -26,6 +26,7 @@ from app.database import get_db
 from app.models.account import Account
 from app.schemas.telegram_auth import AuthStepResult, SendCodeResponse, Verify2FARequest, VerifyCodeRequest
 from app.services.telethon_pool import pool
+from app.realtime.handlers import register_account_realtime
 
 router = APIRouter(prefix="/api/accounts", tags=["telegram-auth"])
 logger = get_logger(__name__)
@@ -216,6 +217,7 @@ async def verify_code(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
+    register_account_realtime(client, account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
     return AuthStepResult(status=account.status, requires_2fa=False)
 
@@ -256,6 +258,7 @@ async def verify_2fa(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
+    register_account_realtime(client, account.id)
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
     return AuthStepResult(status=account.status, requires_2fa=False)
 

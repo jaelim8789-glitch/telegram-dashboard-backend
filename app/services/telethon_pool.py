@@ -52,6 +52,17 @@ class TelethonClientPool:
         self._pending_auth: dict[str, PendingAuth] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @staticmethod
+    def _unregister_realtime(client: TelegramClient, account_id: str) -> None:
+        # Lazy import: app.realtime.handlers doesn't import this module at load
+        # time, but importing it here at module level would still risk a cycle
+        # if that ever changes, so keep it function-local.
+        from app.realtime.handlers import unregister_account_realtime
+        try:
+            unregister_account_realtime(client, account_id)
+        except Exception:
+            logger.warning("realtime_unregister_failed_on_pool_teardown", account_id=account_id)
+
     def _lock_for(self, account_id: str) -> asyncio.Lock:
         lock = self._locks.get(account_id)
         if lock is None:
@@ -174,6 +185,8 @@ class TelethonClientPool:
 
     async def disconnect(self, account_id: str) -> None:
         client = self._clients.pop(account_id, None)
+        if client is not None:
+            self._unregister_realtime(client, account_id)
         if client is not None and client.is_connected():
             try:
                 await asyncio.wait_for(
@@ -189,6 +202,8 @@ class TelethonClientPool:
         async with self._lock_for(account_id):
             client = self._clients.pop(account_id, None)
         self._pending_auth.pop(account_id, None)
+        if client is not None:
+            self._unregister_realtime(client, account_id)
         if client is not None:
             try:
                 await asyncio.wait_for(
