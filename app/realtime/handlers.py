@@ -13,13 +13,29 @@ these buckets, which is the same abstraction level the rest of this codebase
 (chat_actions.py) is built on.
 """
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, utils
 
 from app.core.logging import get_logger
 from app.realtime.dispatcher import UpdateEvent, dispatcher
 from app.services.telegram_mappers import message_to_dict
 
 logger = get_logger(__name__)
+
+
+def _raw_chat_id(chat_id: int | None) -> int | None:
+    """Telethon's `event.chat_id` is the "marked" ID (users unchanged, basic
+    groups negated, channels/supergroups prefixed with -100) — but
+    `telegram_mappers.dialog_to_dict()` (what the REST dialogs list and the
+    frontend's `room.id` are built from) uses the raw, unmarked `entity.id`.
+    Publishing the marked ID here meant every group/channel event silently
+    failed to match any open chat room on the frontend (chat_id !== room.id),
+    so live updates never rendered — only a refresh (which re-fetches via
+    REST with the raw ID) ever showed them. Private 1:1 chats happened to
+    still work since a user ID is identical in both forms.
+    """
+    if chat_id is None:
+        return None
+    return utils.resolve_id(chat_id)[0]
 
 # account_id -> list of (event_class, callback) so unregister can remove exactly
 # what register attached, mirroring auto_reply_service.py's _handlers pattern.
@@ -44,7 +60,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type="message.new",
-            chat_id=event.chat_id,
+            chat_id=_raw_chat_id(event.chat_id),
             payload={"message": m},
         ))
 
@@ -60,7 +76,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type="message.edited",
-            chat_id=event.chat_id,
+            chat_id=_raw_chat_id(event.chat_id),
             payload={"message": m},
         ))
 
@@ -68,7 +84,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type="message.deleted",
-            chat_id=event.chat_id,
+            chat_id=_raw_chat_id(event.chat_id),
             payload={"deleted_ids": list(event.deleted_ids)},
         ))
 
@@ -76,7 +92,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type="message.read",
-            chat_id=event.chat_id,
+            chat_id=_raw_chat_id(event.chat_id),
             payload={
                 "max_id": event.max_id,
                 "inbox": event.inbox,
@@ -104,7 +120,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type=event_type,
-            chat_id=getattr(event, "chat_id", None),
+            chat_id=_raw_chat_id(getattr(event, "chat_id", None)),
             payload=payload,
         ))
 
@@ -112,7 +128,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
         dispatcher.publish(UpdateEvent(
             account_id=account_id,
             event_type="chat.action",
-            chat_id=event.chat_id,
+            chat_id=_raw_chat_id(event.chat_id),
             payload={
                 "user_added": bool(getattr(event, "user_added", False)),
                 "user_joined": bool(getattr(event, "user_joined", False)),
