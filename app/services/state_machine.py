@@ -57,16 +57,19 @@ TRANSITIONS: dict[SessionState, dict[str, StateTransition]] = {
         "failed": StateTransition(SessionState.DISCONNECTED),
         "expired": StateTransition(SessionState.EXPIRED, RecoveryReason.SESSION_EXPIRED),
         "banned": StateTransition(SessionState.BANNED, RecoveryReason.BANNED),
+        "disconnect": StateTransition(SessionState.DISCONNECTED, RecoveryReason.MANUAL),
     },
     SessionState.CONNECTED: {
         "disconnect": StateTransition(SessionState.DISCONNECTED, RecoveryReason.NETWORK),
         "expired": StateTransition(SessionState.EXPIRED, RecoveryReason.SESSION_EXPIRED),
         "banned": StateTransition(SessionState.BANNED, RecoveryReason.BANNED),
         "flood_wait": StateTransition(SessionState.FLOOD_WAIT, RecoveryReason.FLOOD_WAIT),
+        "reconnect": StateTransition(SessionState.RECONNECTING, RecoveryReason.NETWORK),
     },
     SessionState.DISCONNECTED: {
         "reconnect": StateTransition(SessionState.RECONNECTING, RecoveryReason.NETWORK),
         "expired": StateTransition(SessionState.EXPIRED, RecoveryReason.SESSION_EXPIRED),
+        "register": StateTransition(SessionState.CONNECTING, RecoveryReason.REGISTER),
     },
     SessionState.RECONNECTING: {
         "connected": StateTransition(SessionState.CONNECTED),
@@ -77,10 +80,12 @@ TRANSITIONS: dict[SessionState, dict[str, StateTransition]] = {
     },
     SessionState.EXPIRED: {
         "re_auth": StateTransition(SessionState.CONNECTING, RecoveryReason.RE_AUTH),
+        "register": StateTransition(SessionState.CONNECTING, RecoveryReason.REGISTER),
         "delete": StateTransition(SessionState.NOT_CONFIGURED),
     },
     SessionState.UNAUTHORIZED: {
         "re_auth": StateTransition(SessionState.CONNECTING, RecoveryReason.RE_AUTH),
+        "register": StateTransition(SessionState.CONNECTING, RecoveryReason.REGISTER),
     },
     SessionState.BANNED: {},
     SessionState.FLOOD_WAIT: {

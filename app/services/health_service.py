@@ -22,6 +22,23 @@ class HealthService:
             "banned": banned,
         }
 
+    def derive_state_health(self, state: SessionState) -> dict:
+        mapping = {
+            SessionState.NOT_CONFIGURED: {"status": "not_configured", "has_session": False},
+            SessionState.CONNECTING: {"status": "connecting", "has_session": True},
+            SessionState.CONNECTED: {"status": "healthy", "has_session": True},
+            SessionState.DISCONNECTED: {"status": "disconnected", "has_session": True},
+            SessionState.RECONNECTING: {"status": "reconnecting", "has_session": True},
+            SessionState.EXPIRED: {"status": "unauthorized", "has_session": True},
+            SessionState.UNAUTHORIZED: {"status": "unauthorized", "has_session": True},
+            SessionState.BANNED: {"status": "banned", "has_session": True},
+            SessionState.FLOOD_WAIT: {"status": "rate_limited", "has_session": True},
+            SessionState.RATE_LIMITED: {"status": "rate_limited", "has_session": True},
+            SessionState.SUSPENDED: {"status": "restricted", "has_session": True},
+            SessionState.UPDATING: {"status": "updating", "has_session": True},
+        }
+        return mapping.get(state, {"status": "unknown", "has_session": False})
+
     def derive_health(self, account, latest_message=None) -> dict:
         if account.status == "banned":
             return {"status": "banned", "has_session": bool(account.session_data)}

@@ -37,8 +37,8 @@ class SessionManager:
         self._event_bus: EventBus = MemoryEventBus()
         self._lock_manager = LockManager()
         self._backoff = BackoffStrategy()
-        self._connection_service = ConnectionService(self._event_bus, self._lock_manager, self._backoff)
         self._health_service = HealthService()
+        self._connection_service = ConnectionService(self._event_bus, self._lock_manager, self._backoff, self._health_service)
         self._metrics = MetricsCollector()
         self._event_logger: EventLogger | None = None
         self._monitor_task: asyncio.Task | None = None

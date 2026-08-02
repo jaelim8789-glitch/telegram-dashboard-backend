@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 class ConnectionService:
     """Manages Telegram connections per account."""
 
-    def __init__(self, event_bus: EventBus, lock_manager: LockManager, backoff: BackoffStrategy):
+    def __init__(self, event_bus: EventBus, lock_manager: LockManager, backoff: BackoffStrategy, health_service=None):
         self._event_bus = event_bus
         self._lock_manager = lock_manager
         self._backoff = backoff
+        self._health_service = health_service
         self._states: dict[str, SessionState] = {}
         self._event_seq = 0
 
@@ -27,7 +28,13 @@ class ConnectionService:
         """Connect an account. Returns final state."""
         async with self._lock_manager.get_lock(account_id):
             current = self.get_state(account_id)
-            result = transition(current, "register", RecoveryReason.REGISTER)
+            if current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
+                transition_event = "re_auth"
+                transition_reason = RecoveryReason.RE_AUTH
+            else:
+                transition_event = "register"
+                transition_reason = RecoveryReason.REGISTER
+            result = transition(current, transition_event, transition_reason)
             self._states[account_id] = result.current
             await self._emit(account_id, result.current, RecoveryReason.REGISTER)
 
@@ -44,7 +51,10 @@ class ConnectionService:
                 result3 = transition(result.current, error_event)
                 self._states[account_id] = result3.current
                 await self._emit(account_id, result3.current, result3.reason, str(exc))
-                return result3.current
+                if result3.current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
+                    self._states[account_id] = SessionState.DISCONNECTED
+                    await self._emit(account_id, SessionState.DISCONNECTED, RecoveryReason.RE_AUTH, str(exc))
+                return self._states[account_id]
 
     async def reconnect(self, account_id: str, session_string: str = "") -> SessionState:
         """Reconnect with backoff."""
@@ -72,7 +82,10 @@ class ConnectionService:
                 result3 = transition(result.current, error_event)
                 self._states[account_id] = result3.current
                 await self._emit(account_id, result3.current, result3.reason, str(exc))
-                return result3.current
+                if result3.current in {SessionState.EXPIRED, SessionState.UNAUTHORIZED}:
+                    self._states[account_id] = SessionState.DISCONNECTED
+                    await self._emit(account_id, SessionState.DISCONNECTED, RecoveryReason.RE_AUTH, str(exc))
+                return self._states[account_id]
 
     async def disconnect(self, account_id: str):
         """Disconnect an account."""
@@ -112,6 +125,9 @@ class ConnectionService:
     async def _emit(self, account_id: str, state: SessionState, reason: RecoveryReason | None = None, error: str | None = None):
         event_name = f"session.{state.value}"
         self._event_seq += 1
+        health = None
+        if self._health_service is not None:
+            health = self._health_service.derive_state_health(state)
         data = {
             "version": 1,
             "event": event_name,
@@ -121,5 +137,6 @@ class ConnectionService:
             "state": state.value,
             "reason": reason.value if reason else None,
             "error": error,
+            "health": health,
         }
         await self._event_bus.publish(event_name, data)
