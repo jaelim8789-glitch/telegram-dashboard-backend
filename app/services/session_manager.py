@@ -92,11 +92,18 @@ class SessionManager:
             return await self._event_logger.get_events(account_id, limit)
         return []
 
+    # Every tick does one live Telegram API call (get_me()) per connected
+    # account — at 10s this becomes a flood-wait risk and a log-noise problem
+    # once account counts grow past a handful (this product's whole premise
+    # is many accounts per tenant). 60s keeps health checks meaningful while
+    # cutting API/log volume 6x.
+    MONITOR_INTERVAL_SECONDS: ClassVar[int] = 60
+
     async def _monitor_loop(self):
-        """Periodic health check every 10 seconds."""
+        """Periodic health check."""
         while True:
             try:
-                await asyncio.sleep(10)
+                await asyncio.sleep(self.MONITOR_INTERVAL_SECONDS)
                 for account_id, state in list(self._connection_service._states.items()):
                     if state == SessionState.CONNECTED:
                         try:
