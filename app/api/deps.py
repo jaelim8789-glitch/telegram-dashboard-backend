@@ -216,12 +216,23 @@ async def require_account_tenant_access(
         return account.tenant_id or ""
     
     if identity.tenant_id is None:
+        logger.warning(
+            "account_tenant_access_denied_no_tenant",
+            account_id=account_id,
+            identity_kind=identity.kind,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이 기능에 접근할 수 없습니다. 먼저 결제/요금제를 설정해주세요.",
         )
-    
+
     if account.tenant_id != identity.tenant_id:
+        logger.warning(
+            "account_tenant_access_denied_mismatch",
+            account_id=account_id,
+            account_tenant_id=account.tenant_id,
+            identity_tenant_id=identity.tenant_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="해당 계정에 접근할 수 없습니다.",
