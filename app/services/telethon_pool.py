@@ -47,6 +47,7 @@ class TelethonClientPool:
     MAX_RECONNECT_ATTEMPTS = 3
     RECONNECT_DELAY_SECONDS = 2
     DISCONNECT_TIMEOUT_SECONDS = 5
+    CONNECT_TIMEOUT_SECONDS = 10
 
     def __init__(self) -> None:
         self._clients: dict[str, TelegramClient] = {}
@@ -82,7 +83,7 @@ class TelethonClientPool:
                 for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
                     attempt_start = datetime.now(timezone.utc)
                     try:
-                        await client.connect()
+                        await asyncio.wait_for(client.connect(), timeout=self.CONNECT_TIMEOUT_SECONDS)
                         attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
                         logger.info(
                             "telethon_reconnect_succeeded",
@@ -104,6 +105,8 @@ class TelethonClientPool:
                         if attempt < self.MAX_RECONNECT_ATTEMPTS:
                             await asyncio.sleep(self.RECONNECT_DELAY_SECONDS)
                         else:
+                            self._clients.pop(account_id, None)
+                            self._pending_auth.pop(account_id, None)
                             logger.error(
                                 "telethon_reconnect_exhausted",
                                 account_id=account_id,
@@ -121,7 +124,7 @@ class TelethonClientPool:
                     for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
                         attempt_start = datetime.now(timezone.utc)
                         try:
-                            await client.connect()
+                            await asyncio.wait_for(client.connect(), timeout=self.CONNECT_TIMEOUT_SECONDS)
                             attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
                             logger.info(
                                 "telethon_zombie_reconnect_succeeded",
@@ -143,6 +146,8 @@ class TelethonClientPool:
                             if attempt < self.MAX_RECONNECT_ATTEMPTS:
                                 await asyncio.sleep(self.RECONNECT_DELAY_SECONDS)
                             else:
+                                self._clients.pop(account_id, None)
+                                self._pending_auth.pop(account_id, None)
                                 logger.error(
                                     "telethon_reconnect_exhausted",
                                     account_id=account_id,
@@ -221,6 +226,7 @@ class TelethonClientPool:
 
     async def disconnect(self, account_id: str) -> None:
         client = self._clients.pop(account_id, None)
+        self._pending_auth.pop(account_id, None)
         if client is not None and client.is_connected():
             try:
                 await asyncio.wait_for(

@@ -9,6 +9,7 @@ from app.services.connection_service import ConnectionService
 from app.services.health_service import HealthService
 from app.services.lock_manager import LockManager
 from app.services.state_machine import SessionState, transition
+import app.services.telethon_pool as telethon_pool
 
 
 class AsyncBus:
@@ -32,6 +33,35 @@ class FakePool:
     async def disconnect(self, account_id):
         self.disconnected.append(account_id)
         self.clients.pop(account_id, None)
+
+
+class FakeTelethonClient:
+    def __init__(self, connected=False):
+        self._connected = connected
+
+    def is_connected(self):
+        return self._connected
+
+    async def connect(self):
+        self._connected = True
+
+    async def get_me(self):
+        return object()
+
+    async def disconnect(self):
+        self._connected = False
+
+    async def is_user_authorized(self):
+        return True
+
+
+class HangingClient(FakeTelethonClient):
+    def __init__(self):
+        super().__init__(connected=False)
+
+    async def connect(self):
+        await asyncio.sleep(0.05)
+        self._connected = True
 
 
 def test_reconnect_is_allowed_from_connected_state():
@@ -118,6 +148,36 @@ async def test_disconnect_cleans_up_runtime_client(monkeypatch):
 
     assert "acc-1" not in fake_pool.clients
     assert "acc-1" in fake_pool.disconnected
+
+
+@pytest.mark.asyncio
+async def test_pool_reuses_existing_client_and_disconnect_cleans_up():
+    pool = telethon_pool.TelethonClientPool()
+    fake_client = FakeTelethonClient(connected=True)
+    pool._clients["acc-1"] = fake_client
+    pool._pending_auth["acc-1"] = telethon_pool.PendingAuth(phone_code_hash="hash")
+
+    client = await pool.get_client("acc-1", require_authorized=False)
+
+    assert client is fake_client
+    await pool.disconnect("acc-1")
+    assert "acc-1" not in pool._clients
+    assert "acc-1" not in pool._pending_auth
+
+
+@pytest.mark.asyncio
+async def test_get_client_times_out_and_cleans_up_hanging_connect(monkeypatch):
+    monkeypatch.setattr(telethon_pool, "TelegramClient", lambda *args, **kwargs: HangingClient())
+    monkeypatch.setattr(telethon_pool, "StringSession", lambda session_string: session_string)
+
+    pool = telethon_pool.TelethonClientPool()
+    pool.CONNECT_TIMEOUT_SECONDS = 0.01
+    pool.MAX_RECONNECT_ATTEMPTS = 1
+
+    with pytest.raises(asyncio.TimeoutError):
+        await pool.get_client("acc-1", require_authorized=False)
+
+    assert "acc-1" not in pool._clients
 
 
 def test_expired_state_health_is_reported_as_expired():
