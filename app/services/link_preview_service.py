@@ -203,7 +203,11 @@ async def fetch_link_preview(url: str) -> LinkPreview:
                 extensions={"sni_hostname": hostname},
             )
             try:
-                async with await client.send(request, stream=True) as resp:
+                # httpx.Response from send(..., stream=True) is not an async
+                # context manager in this httpx version (0.27) — only
+                # client.stream(...) is. Manage the close manually instead.
+                resp = await client.send(request, stream=True)
+                try:
                     if resp.is_redirect:
                         location = resp.headers.get("location")
                         if not location:
@@ -228,6 +232,8 @@ async def fetch_link_preview(url: str) -> LinkPreview:
                             break
                     body = b"".join(chunks)
                     return _parse_head(body, current_url)
+                finally:
+                    await resp.aclose()
             except httpx.TimeoutException as exc:
                 raise LinkPreviewError("대상 서버 응답 시간이 초과되었습니다.", status_code=504) from exc
             except httpx.TransportError as exc:
