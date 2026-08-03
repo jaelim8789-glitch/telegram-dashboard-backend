@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "create_style_profiles"
@@ -18,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "style_profiles",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("name", sa.String(200), nullable=False),

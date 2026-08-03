@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     #  Tenants (multi-tenant / ) 
-    op.create_table(
+    create_table_if_not_exists(
         "tenants",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("name", sa.String(length=100), nullable=False, server_default=""),
@@ -56,7 +57,7 @@ def upgrade() -> None:
     )
 
     #  Payment Records (USDT) 
-    op.create_table(
+    create_table_if_not_exists(
         "payment_records",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tx_id", sa.String(length=100), nullable=False),
@@ -75,7 +76,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_payment_records_tenant_id"), "payment_records", ["tenant_id"], unique=False)
 
     #  Usage Records 
-    op.create_table(
+    create_table_if_not_exists(
         "usage_records",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=36), nullable=False),
@@ -89,7 +90,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_usage_records_recorded_at"), "usage_records", ["recorded_at"], unique=False)
 
     #  Leads (CRM) 
-    op.create_table(
+    create_table_if_not_exists(
         "leads",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=36), nullable=False),
@@ -114,7 +115,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_leads_account_id"), "leads", ["account_id"], unique=False)
 
     #  Reply Macros 
-    op.create_table(
+    create_table_if_not_exists(
         "reply_macros",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("account_id", sa.String(length=36), nullable=False),
@@ -135,7 +136,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_reply_macros_account_id"), "reply_macros", ["account_id"], unique=False)
 
-    op.create_table(
+    create_table_if_not_exists(
         "reply_macro_logs",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("macro_id", sa.String(length=36), nullable=False),
@@ -155,7 +156,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_reply_macro_logs_created_at"), "reply_macro_logs", ["created_at"], unique=False)
 
     #  Message Templates 
-    op.create_table(
+    create_table_if_not_exists(
         "message_templates",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=36), nullable=False),
@@ -172,7 +173,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_message_templates_tenant_id"), "message_templates", ["tenant_id"], unique=False)
 
     #  Follow-up Rules 
-    op.create_table(
+    create_table_if_not_exists(
         "follow_up_rules",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=36), nullable=False),
@@ -191,7 +192,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_follow_up_rules_account_id"), "follow_up_rules", ["account_id"], unique=False)
 
     #  Team Members 
-    op.create_table(
+    create_table_if_not_exists(
         "team_members",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=36), nullable=False),

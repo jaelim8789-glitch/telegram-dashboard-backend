@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -19,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "folders",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("account_id", sa.String(length=36), nullable=False),

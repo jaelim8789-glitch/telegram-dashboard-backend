@@ -12,6 +12,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "add_broadcast_schedule"
@@ -24,7 +25,7 @@ def upgrade() -> None:
     op.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS validation_status VARCHAR(20) NULL")
     op.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS validation_error TEXT NULL")
 
-    op.create_table(
+    create_table_if_not_exists(
         "broadcast_schedule_entries",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), index=True, nullable=False),

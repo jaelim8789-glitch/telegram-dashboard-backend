@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -19,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         'users',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('phone', sa.String(length=50), nullable=False),
@@ -32,7 +33,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_users_phone'), 'users', ['phone'], unique=True)
     op.create_index(op.f('ix_users_api_key_hash'), 'users', ['api_key_hash'], unique=True)
 
-    op.create_table(
+    create_table_if_not_exists(
         'phone_verifications',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('phone', sa.String(length=50), nullable=False),

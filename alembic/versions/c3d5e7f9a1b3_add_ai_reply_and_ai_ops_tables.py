@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -24,7 +25,7 @@ def upgrade() -> None:
         sa.Column('ai_fallback_reply_enabled', sa.Boolean(), server_default=sa.false(), nullable=False),
     )
 
-    op.create_table(
+    create_table_if_not_exists(
         'auto_reply_suggestions',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('account_id', sa.String(length=36), nullable=False),
@@ -41,7 +42,7 @@ def upgrade() -> None:
     op.create_index('ix_auto_reply_suggestions_account_id', 'auto_reply_suggestions', ['account_id'])
     op.create_index('ix_auto_reply_suggestions_created_at', 'auto_reply_suggestions', ['created_at'])
 
-    op.create_table(
+    create_table_if_not_exists(
         'ai_ops_reports',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('report', sa.Text(), nullable=False),

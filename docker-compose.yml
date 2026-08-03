@@ -38,7 +38,7 @@ services:
         max-size: "10m"
         max-file: "3"
     command: >
-      sh -c "alembic upgrade heads 2>/dev/null; uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
+      sh -c "alembic upgrade heads; uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
     deploy:
       resources:
         limits:
