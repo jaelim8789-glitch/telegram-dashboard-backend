@@ -102,7 +102,7 @@ async def list_rules(identity=Depends(get_current_identity)):
     _ensure_db()
     conn = _get_conn()
     try:
-        rows = conn.execute("SELECT * FROM rules WHERE user_id= ORDER BY created_at DESC", (user_id,)).fetchall()
+        rows = conn.execute("SELECT * FROM rules WHERE user_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
         return {"rules": [{**dict(r), "trigger_config": json.loads(r["trigger_config"] or "{}"),
                            "actions": json.loads(r["actions"] or "[]")} for r in rows]}
     finally:
@@ -118,7 +118,7 @@ async def create_rule(body: dict, identity=Depends(get_current_identity)):
     conn = _get_conn()
     try:
         conn.execute(
-            "INSERT INTO rules (id,user_id,name,description,is_active,trigger_type,trigger_config,actions,cooldown_seconds,created_at,updated_at) VALUES (,,,,,,,,,,)",
+            "INSERT INTO rules (id,user_id,name,description,is_active,trigger_type,trigger_config,actions,cooldown_seconds,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (rule_id, user_id, body.get("name","Rule")[:200], body.get("description","")[:500],
              1 if body.get("is_active",True) else 0, body.get("trigger_type",""),
              json.dumps(body.get("trigger_config",{})), json.dumps(body.get("actions",[])),
@@ -133,9 +133,10 @@ async def create_rule(body: dict, identity=Depends(get_current_identity)):
 @router.get("/{rule_id}")
 async def get_rule(rule_id: str, identity=Depends(get_current_identity)):
     _ensure_db()
+    user_id = identity.user_id or identity.tenant_id or ""
     conn = _get_conn()
     try:
-        r = conn.execute("SELECT * FROM rules WHERE id= AND user_id=", (rule_id, user_id)).fetchone()
+        r = conn.execute("SELECT * FROM rules WHERE id=? AND user_id=?", (rule_id, user_id)).fetchone()
         if not r:
             return {"error": "not found"}
         d = dict(r)
@@ -149,6 +150,7 @@ async def get_rule(rule_id: str, identity=Depends(get_current_identity)):
 @router.put("/{rule_id}")
 async def update_rule(rule_id: str, body: dict, identity=Depends(get_current_identity)):
     _ensure_db()
+    user_id = identity.user_id or identity.tenant_id or ""
     now = datetime.now(timezone.utc).isoformat()
     updates, params = [], []
     for field in body:
@@ -159,15 +161,15 @@ async def update_rule(rule_id: str, body: dict, identity=Depends(get_current_ide
             val = json.dumps(val) if isinstance(val, (dict, list)) else val
         if field == "is_active":
             val = 1 if val else 0
-        updates.append(f"{field}=")
+        updates.append(f"{field}=?")
         params.append(val)
     if not updates:
         return {"updated": False}
-    updates.append("updated_at=")
+    updates.append("updated_at=?")
     params.append(now); params.append(rule_id); params.append(user_id)
     conn = _get_conn()
     try:
-        conn.execute(f"UPDATE rules SET {','.join(updates)} WHERE id= AND user_id=", params)
+        conn.execute(f"UPDATE rules SET {','.join(updates)} WHERE id=? AND user_id=?", params)
         conn.commit()
         return {"updated": True}
     finally:
@@ -177,9 +179,10 @@ async def update_rule(rule_id: str, body: dict, identity=Depends(get_current_ide
 @router.delete("/{rule_id}")
 async def delete_rule(rule_id: str, identity=Depends(get_current_identity)):
     _ensure_db()
+    user_id = identity.user_id or identity.tenant_id or ""
     conn = _get_conn()
     try:
-        conn.execute("DELETE FROM rules WHERE id= AND user_id=", (rule_id, user_id))
+        conn.execute("DELETE FROM rules WHERE id=? AND user_id=?", (rule_id, user_id))
         conn.commit()
         return {"deleted": True}
     finally:
@@ -189,12 +192,13 @@ async def delete_rule(rule_id: str, identity=Depends(get_current_identity)):
 @router.post("/{rule_id}/toggle")
 async def toggle_rule(rule_id: str, identity=Depends(get_current_identity)):
     _ensure_db()
+    user_id = identity.user_id or identity.tenant_id or ""
     conn = _get_conn()
     try:
-        conn.execute("UPDATE rules SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id= AND user_id=",
+        conn.execute("UPDATE rules SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id=? AND user_id=?",
                      (rule_id, user_id))
         conn.commit()
-        r = conn.execute("SELECT is_active FROM rules WHERE id=", (rule_id,)).fetchone()
+        r = conn.execute("SELECT is_active FROM rules WHERE id=?", (rule_id,)).fetchone()
         return {"is_active": bool(r["is_active"])} if r else {"error": "not found"}
     finally:
         conn.close()
@@ -203,10 +207,11 @@ async def toggle_rule(rule_id: str, identity=Depends(get_current_identity)):
 @router.get("/stats/summary")
 async def trigger_stats(identity=Depends(get_current_identity)):
     _ensure_db()
+    user_id = identity.user_id or identity.tenant_id or ""
     conn = _get_conn()
     try:
-        total = conn.execute("SELECT COUNT(*) as c FROM rules WHERE user_id=", (user_id,)).fetchone()["c"]
-        active = conn.execute("SELECT COUNT(*) as c FROM rules WHERE user_id= AND is_active=1", (user_id,)).fetchone()["c"]
+        total = conn.execute("SELECT COUNT(*) as c FROM rules WHERE user_id=?", (user_id,)).fetchone()["c"]
+        active = conn.execute("SELECT COUNT(*) as c FROM rules WHERE user_id=? AND is_active=1", (user_id,)).fetchone()["c"]
         return {"total_rules": total, "active_rules": active}
     finally:
         conn.close()
