@@ -191,17 +191,14 @@ async def lifespan(app: FastAPI):
         logger.info("realtime_update_handlers_skipped", reason="another_worker_running")
 
     #  Telegram bot (optional)
-    # Same per-worker duplication risk as the scheduler above: getUpdates polling
-    # is exclusive per bot token, so every worker starting it fights the others
-    # for the long-poll connection (visible as repeated "Conflict: terminated by
-    # other getUpdates request" errors). Only the singleton-lock winner starts it.
-    if await acquire_singleton_lock("telegram_bot"):
-        try:
-            await start_bot()
-        except Exception as exc:
-            logger.error("telegram_bot_startup_failed", error=str(exc))
-    else:
-        logger.info("telegram_bot_skipped", reason="another_worker_running")
+    # start_bot() already guards itself internally via
+    # acquire_singleton_lock("telegram_bot_polling") — no extra wrapping needed
+    # here, that would just be a second, differently-named lock racing the same
+    # thing.
+    try:
+        await start_bot()
+    except Exception as exc:
+        logger.error("telegram_bot_startup_failed", error=str(exc))
 
     #  AI Platform Startup
     try:
