@@ -150,6 +150,14 @@ class AdminRotatePasswordResponse(BaseModel):
     message: str = "관리자 비밀번호가 변경되었습니다."
 
 
+class AdminVerifyPasswordRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AdminVerifyPasswordResponse(BaseModel):
+    ok: bool = True
+
+
 class AdminStats(BaseModel):
     total_users: int = 0
     total_accounts: int = 0

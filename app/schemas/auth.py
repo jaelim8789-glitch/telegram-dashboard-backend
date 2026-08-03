@@ -63,6 +63,7 @@ class MeResponse(BaseModel):
     telegram_username: str | None = None
     telegram_photo_url: str | None = None
     stars_balance: int = 0
+    requires_reauth: bool = False
 
 
 class TelegramLoginRequest(BaseModel):

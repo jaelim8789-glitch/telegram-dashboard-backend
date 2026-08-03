@@ -24,6 +24,9 @@ class UserSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requires_reauth: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 def generate_session_token() -> str:
@@ -33,6 +36,11 @@ def generate_session_token() -> str:
 def hash_session_token(token: str) -> str:
     import hashlib
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def hash_session_binding(value: str) -> str:
+    import hashlib
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _session_expires_at() -> datetime:

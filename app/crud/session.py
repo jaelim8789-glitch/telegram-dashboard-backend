@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.session import UserSession, hash_session_token, _session_expires_at
+from app.models.session import UserSession, hash_session_token, hash_session_binding, _session_expires_at
 
 
 async def create_session(
@@ -12,6 +12,8 @@ async def create_session(
     user_id: str | None = None,
     tenant_id: str | None = None,
     api_key_id: str | None = None,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
 ) -> tuple[str, UserSession]:
     """Create a new session. Returns (raw_token, session_row).
 
@@ -34,13 +36,30 @@ async def create_session(
         api_key_id=api_key_id,
         expires_at=_session_expires_at(),
         last_used_at=datetime.now(timezone.utc),
+        user_agent_hash=hash_session_binding(user_agent) if user_agent else None,
+        client_ip_hash=hash_session_binding(client_ip) if client_ip else None,
     )
     db.add(session)
     await db.flush()
     return raw_token, session
 
 
-async def get_session_by_token(db: AsyncSession, raw_token: str) -> UserSession | None:
+async def get_session_by_token(
+    db: AsyncSession,
+    raw_token: str,
+    *,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
+) -> UserSession | None:
+    """Look up a live session by raw token.
+
+    When the caller supplies the request's User-Agent and/or client IP, the
+    stored hashes are compared against them. A mismatch sets
+    ``requires_reauth = True`` (persisted) — a SOFT signal, not a hard block:
+    the session is still returned so the endpoint can surface a re-login
+    prompt instead of silently failing. Sessions created before this feature
+    have no stored hash, so they are never flagged.
+    """
     if not raw_token.startswith("sx-"):
         return None
     token_hash = hash_session_token(raw_token)
@@ -51,7 +70,20 @@ async def get_session_by_token(db: AsyncSession, raw_token: str) -> UserSession 
             UserSession.expires_at > datetime.now(timezone.utc),
         )
     )
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    if session is None:
+        return None
+
+    if session.user_agent_hash is not None and user_agent is not None:
+        if session.user_agent_hash != hash_session_binding(user_agent):
+            session.requires_reauth = True
+    if session.client_ip_hash is not None and client_ip is not None:
+        if session.client_ip_hash != hash_session_binding(client_ip):
+            session.requires_reauth = True
+    if session.requires_reauth:
+        await db.flush()
+
+    return session
 
 
 async def touch_session(db: AsyncSession, session: UserSession) -> None:
