@@ -13,7 +13,7 @@ All real execution is handled by:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -86,7 +86,7 @@ async def get_queue_metrics(
 ):
     """Aggregate queue metrics across all automation systems."""
     tenant_id = identity.tenant_id if identity.kind != "admin" else None
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Broadcast metrics
@@ -191,7 +191,7 @@ async def get_execution_log(
             bcast_query = bcast_query.join(Account, Broadcast.account_id == Account.id).where(Account.tenant_id == tenant_id)
         bcast_result = await db.execute(bcast_query)
         for b in bcast_result.scalars().all():
-            is_scheduled = b.scheduled_at and b.scheduled_at > datetime.now(timezone.utc)
+            is_scheduled = b.scheduled_at and b.scheduled_at > datetime.utcnow()
             entries.append(ExecutionLogEntry(
                 id=b.id,
                 type="scheduled" if is_scheduled else "broadcast",
@@ -270,7 +270,7 @@ async def get_queue_health(
         issues.append(f"브로드캐스트 대기열 과부하: {pending_count}건")
 
     # Check for stuck broadcasts (pending for > 1 hour)
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
     stuck_count = (await db.execute(
         select(func.count(Broadcast.id)).where(
             Broadcast.status == "sending",
