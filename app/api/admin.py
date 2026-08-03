@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import case, func, select, text as sa_text
+from sqlalchemy import and_, case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 
@@ -782,17 +782,23 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
 
 @router.get("/stats", response_model=AdminStats, dependencies=[Depends(require_admin)])
 async def get_admin_stats(db: AsyncSession = Depends(get_db)):
-    """Aggregate stats for the new admin dashboard — 4 batch queries instead of 10."""
+    """Aggregate stats for the new admin dashboard.
+
+    Each query is scoped to a single table — mixing unrelated tables' columns
+    into one select() without a join condition produces an implicit cross
+    join (every row of one table paired with every row of the other), which
+    silently inflates every count/sum in that query. No error, just wrong
+    numbers, so this needs to stay one query per table rather than batching
+    across tables.
+    """
     today_start = utcnow_naive().replace(hour=0, minute=0, second=0, microsecond=0)
     one_hour_ago = utcnow_naive() - timedelta(hours=1)
     week_ago = utcnow_naive() - timedelta(days=7)
     month_start = today_start.replace(day=1)
 
-    r1 = (await db.execute(select(
-        func.count(User.id).label("total_users"),
-        func.count(Account.id).label("total_accounts"),
-        func.count(APIKey.id).label("total_api_keys"),
-    ))).one()
+    r1 = (await db.execute(select(func.count(User.id)))).scalar() or 0
+    r1b = (await db.execute(select(func.count(Account.id)))).scalar() or 0
+    r1c = (await db.execute(select(func.count(APIKey.id)))).scalar() or 0
 
     r2 = (await db.execute(select(
         func.count(case((Account.status == "active", 1))).label("active"),
@@ -803,26 +809,29 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
     r3 = (await db.execute(select(
         func.count(MessageLog.id).label("total"),
         func.count(case((MessageLog.created_at >= today_start, 1))).label("today"),
-        func.count(case((MessageLog.created_at >= one_hour_ago, MessageLog.success.is_(False)), 1)).label("errors"),
+        func.count(case((and_(MessageLog.created_at >= one_hour_ago, MessageLog.success.is_(False)), 1))).label("errors"),
     ))).one()
 
     r4 = (await db.execute(select(
         func.count(case((User.created_at >= week_ago, 1))).label("weekly_users"),
+    ))).one()
+
+    r4b = (await db.execute(select(
         func.coalesce(func.sum(PaymentRecord.amount_usdt), 0).label("revenue"),
     ).where(PaymentRecord.created_at >= month_start))).one()
 
     return AdminStats(
-        total_users=r1.total_users or 0,
-        total_accounts=r1.total_accounts or 0,
+        total_users=r1,
+        total_accounts=r1b,
         total_messages_sent=r3.total or 0,
-        total_api_keys=r1.total_api_keys or 0,
+        total_api_keys=r1c,
         active_accounts=r2.active or 0,
         unhealthy_accounts=r2.unhealthy or 0,
         banned_accounts=r2.banned or 0,
         recent_errors=r3.errors or 0,
         today_messages_sent=r3.today or 0,
         weekly_users=r4.weekly_users or 0,
-        monthly_revenue=(r4.revenue or 0) / 100.0,
+        monthly_revenue=(r4b.revenue or 0) / 100.0,
         system_status={"backend": "healthy", "db": "healthy"},
     )
 
