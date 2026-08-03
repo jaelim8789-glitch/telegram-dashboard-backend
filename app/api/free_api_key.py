@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
+from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.crud import telegram_verification as verification_crud
 from app.crud import user as user_crud
 from app.database import get_db
@@ -37,7 +37,7 @@ def utcnow_naive() -> datetime:
 
 @router.post("/start", response_model=TelegramVerifyStartResponse)
 async def start(request: Request, db: AsyncSession = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "free_api_key_start", max_attempts=10, window_seconds=300):
         retry_after = get_retry_after_seconds(client_ip, "free_api_key_start")
         raise HTTPException(
@@ -66,7 +66,7 @@ async def issue(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "free_api_key_issue", max_attempts=20, window_seconds=300):
         retry_after = get_retry_after_seconds(client_ip, "free_api_key_issue")
         raise HTTPException(
