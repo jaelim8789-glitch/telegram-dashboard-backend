@@ -52,23 +52,23 @@ async def get_toggle_state(
 @router.put("/toggle")
 async def set_toggle_state(
     account_id: str,
-    request: Request,  # FastAPI Request 객체를 사용하여 body를 직접 가져옴
+    request: Request,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
-    """랜덤 답장 켜기/끄기 + 메시지 내용 저장. 켜져있으면 스케줄러가 주기적으로 자동 실행."""
+    """랜덤 답장 켜기/끄기 + 메시지 내용/대상 저장. 켜져있으면 스케줄러가 주기적으로 자동 실행."""
     await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     macro = await macro_crud.get_or_create_for_account(db, account_id)
 
-    # 요청 본문을 직접 파싱
     try:
         body = await request.json()
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target_chats  1  .")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="JSON body required.")
 
     is_active = bool(body.get("is_active", macro.is_active))
     message_content = body.get("message_content")
+    target_chats_raw = body.get("target_chats")
 
     if is_active and not (message_content or macro.message_content):
         raise HTTPException(status_code=422, detail="메시지 내용을 입력해야 켤 수 있습니다.")
@@ -76,12 +76,16 @@ async def set_toggle_state(
     macro.is_active = is_active
     if message_content is not None:
         macro.message_content = message_content
+    if target_chats_raw is not None:
+        if isinstance(target_chats_raw, list):
+            macro.target_chats = json.dumps([str(c) for c in target_chats_raw])
+        else:
+            macro.target_chats = str(target_chats_raw)
 
-    # DB에 변경사항 반영
     await db.commit()
     await db.refresh(macro)
 
-    return {"is_active": macro.is_active, "message_content": macro.message_content}
+    return {"is_active": macro.is_active, "message_content": macro.message_content, "target_chats": json.loads(macro.target_chats or "[]"), "last_sent_at": macro.last_sent_at.isoformat() if macro.last_sent_at else None}
 
 
 @router.get("", response_model=list[ReplyMacroRead])
