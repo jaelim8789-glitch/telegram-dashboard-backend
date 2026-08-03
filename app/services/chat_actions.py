@@ -30,9 +30,13 @@ async def list_dialogs(account_id: str, limit: int = 100) -> list[dict]:
 
         dialogs = []
         async for dialog in client.iter_dialogs(limit=limit):
-            d = _dialog_to_dict(dialog)
-            if d:
-                dialogs.append(d)
+            try:
+                d = _dialog_to_dict(dialog)
+                if d:
+                    dialogs.append(d)
+            except Exception:
+                logger.warning("chat_actions_dialog_parse_failed", account_id=account_id, dialog_id=getattr(dialog, "id", "unknown"))
+                continue
         return dialogs
     except AuthKeyUnregisteredError as exc:
         # Session connected fine but Telegram has since revoked it (remote
@@ -74,9 +78,13 @@ async def fetch_messages(
     if reply_ids:
         reply_map = {}
         for reply_id in reply_ids:
-            reply_msg = await client.get_messages(chat_id, ids=reply_id)
-            if reply_msg and not isinstance(reply_msg, MessageService):
-                reply_map[reply_id] = reply_msg.message[:200]
+            try:
+                reply_msg = await client.get_messages(chat_id, ids=reply_id)
+                if reply_msg and not isinstance(reply_msg, MessageService):
+                    reply_map[reply_id] = getattr(reply_msg, "message", "") or ""
+            except Exception:
+                logger.warning("chat_actions_reply_fetch_failed", account_id=account_id, chat_id=chat_id, reply_id=reply_id)
+                continue
         for m in result:
             if m["reply_to_msg_id"] in reply_map:
                 m["reply_to_text"] = reply_map[m["reply_to_msg_id"]]
@@ -280,19 +288,23 @@ async def search_messages(
     results = []
     try:
         async for msg in client.iter_messages(limit=limit, search=query):
-            m = _message_to_dict(msg, my_user_id)
-            if m:
-                peer_id = _peer_id(msg.peer_id)
-                try:
-                    entity = await client.get_entity(msg.peer_id)
-                    chat_title = entity.title if hasattr(entity, 'title') and entity.title else (
-                        f"{entity.first_name or ''} {entity.last_name or ''}".strip() if isinstance(entity, User) else str(getattr(entity, 'id', ''))
-                    )
-                except Exception:
-                    chat_title = str(peer_id) if peer_id else "Unknown"
-                m["chat_id"] = peer_id
-                m["chat_title"] = chat_title
-                results.append(m)
+            try:
+                m = _message_to_dict(msg, my_user_id)
+                if m:
+                    peer_id = _peer_id(msg.peer_id)
+                    try:
+                        entity = await client.get_entity(msg.peer_id)
+                        chat_title = entity.title if hasattr(entity, 'title') and entity.title else (
+                            f"{entity.first_name or ''} {entity.last_name or ''}".strip() if isinstance(entity, User) else str(getattr(entity, 'id', ''))
+                        )
+                    except Exception:
+                        chat_title = str(peer_id) if peer_id else "Unknown"
+                    m["chat_id"] = peer_id
+                    m["chat_title"] = chat_title
+                    results.append(m)
+            except Exception:
+                logger.warning("chat_actions_search_message_failed", account_id=account_id, msg_id=getattr(msg, "id", "unknown"))
+                continue
     except FloodWaitError as exc:
         raise ValueError(f"텔레그램 쓰로틀링: {exc.seconds}초 후 다시 시도해주세요.")
 
@@ -388,17 +400,21 @@ async def export_chat_history(client, chat_id: int, format: str = "json", limit:
     for msg in reversed(messages):
         if msg is None:
             continue
-        entry = {
-            "id": msg.id,
-            "date": msg.date.isoformat() if msg.date else None,
-            "sender_id": msg.sender_id,
-            "text": msg.text or "",
-            "is_outgoing": msg.out,
-        }
-        if format == "text":
-            sender = "You" if msg.out else "Other"
-            entry = f"[{entry['date']}] {sender}: {entry['text']}"
-        result.append(entry)
+        try:
+            entry = {
+                "id": msg.id,
+                "date": msg.date.isoformat() if msg.date else None,
+                "sender_id": msg.sender_id,
+                "text": msg.text or "",
+                "is_outgoing": msg.out,
+            }
+            if format == "text":
+                sender = "You" if msg.out else "Other"
+                entry = f"[{entry['date']}] {sender}: {entry['text']}"
+            result.append(entry)
+        except Exception:
+            logger.warning("chat_actions_export_message_failed", chat_id=chat_id, msg_id=getattr(msg, "id", "unknown"))
+            continue
 
     if format == "text":
         return {"content": "\n".join(result), "count": len(result)}

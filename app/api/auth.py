@@ -949,6 +949,12 @@ async def prepare_account(
     result = await db.execute(select(Account).where(Account.phone == phone))
     existing = result.scalar_one_or_none()
 
+    if existing and existing.tenant_id and caller_tenant_id and existing.tenant_id != caller_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 등록된 번호입니다. 계정 목록에서 확인하세요.",
+        )
+
     if existing and existing.status == "active":
         if caller_tenant_id and not existing.tenant_id:
             existing.tenant_id = caller_tenant_id
@@ -971,7 +977,16 @@ async def prepare_account(
         await db.flush()
 
     # Use the pool (same client lifecycle as telegram_auth.send_code)
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
@@ -1058,7 +1073,16 @@ async def verify_telegram_code(
     if pending is None:
         raise HTTPException(status_code=400, detail="먼저 인증번호를 요청해주세요.")
 
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
@@ -1131,7 +1155,16 @@ async def verify_telegram_2fa(
     if account is None:
         raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
 
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:

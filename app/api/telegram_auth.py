@@ -93,7 +93,16 @@ async def send_code(
     await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         # require_authorized=False: session_data here may be a pre-auth snapshot from
         # an earlier incomplete attempt (saved right after send_code_request, before
@@ -181,7 +190,16 @@ async def verify_code(
             detail="먼저 인증번호를 요청해주세요 (send-code).",
         )
 
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         # require_authorized=False: this session was just saved by send_code before
         # sign_in ever ran — "not yet authorized" is the expected state here, not a
@@ -253,7 +271,16 @@ async def verify_2fa(
     await require_account_tenant_access(account_id, db, identity)
     account = await _get_account_or_404(account_id, db)
 
-    session_string = decrypt_session(account.session_data) if account.session_data else ""
+    session_string = ""
+    if account.session_data:
+        try:
+            session_string = decrypt_session(account.session_data)
+        except ValueError:
+            await account_crud.set_auth_state(db, account, status="session_corrupted")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+            )
     try:
         # require_authorized=False — same reasoning as verify_code: sign_in(password=...)
         # is what completes authorization, so it's expected to be unauthorized here.
@@ -318,8 +345,12 @@ async def get_status(
         client = await pool.get_client(account.id, session_string)
     except RuntimeError as exc:
         raise _config_error_to_http(exc)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+    except ValueError:
+        await account_crud.set_auth_state(db, account, status="session_corrupted")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="세션 데이터가 손상되었습니다. 재인증이 필요합니다.",
+        )
 
     try:
         authorized = await client.is_user_authorized()
