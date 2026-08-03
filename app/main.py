@@ -77,6 +77,7 @@ from app.api.nowpayments import router as nowpayments_router
 from app.api.translate import router as translate_router
 from app.api.escrow import router as escrow_router
 from app.api.trust import router as trust_router
+from app.api.automation import router as automation_router
 from app.api.referral import router as referral_router, public_router as referral_public_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -417,6 +418,7 @@ app.include_router(knowledge_base_router)
 app.include_router(translate_router)
 app.include_router(escrow_router, dependencies=_auth_required)
 app.include_router(trust_router, dependencies=_auth_required)
+app.include_router(automation_router)
 
 
 @app.get("/metrics")
