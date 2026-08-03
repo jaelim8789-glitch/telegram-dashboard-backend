@@ -152,6 +152,8 @@ async def get_payment_status(
         "paid_amount": transaction.paid_amount,
         "currency": transaction.pay_currency,
         "order_id": transaction.order_id,
+        "fulfilled": transaction.fulfilled,
+        "fulfilled_at": transaction.fulfilled_at.isoformat() if transaction.fulfilled_at else None,
         "created_at": transaction.created_at.isoformat() if transaction.created_at else None
     }
 
@@ -177,6 +179,8 @@ async def get_payment_history(
             "paid_amount": t.paid_amount,
             "currency": t.pay_currency,
             "order_id": t.order_id,
+            "fulfilled": t.fulfilled,
+            "fulfilled_at": t.fulfilled_at.isoformat() if t.fulfilled_at else None,
             "created_at": t.created_at.isoformat() if t.created_at else None
         }
         for t in transactions

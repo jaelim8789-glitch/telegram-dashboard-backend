@@ -3,7 +3,7 @@ NOWPayments   - NOWPayments
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, Float, DateTime, Text
+from sqlalchemy import Column, String, Float, DateTime, Text, Boolean
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -38,6 +38,12 @@ class NowPaymentsTransaction(Base):
     
     #  
     payment_status = Column(String, index=True, nullable=False)
+    
+    #  :  (  false->   true  )
+    fulfilled = Column(Boolean, default=False, nullable=False)
+    
+    #  (  )
+    fulfilled_at = Column(DateTime, nullable=True)
     
     # / (:    )
     note = Column(Text, nullable=True)

@@ -31,6 +31,7 @@ from app.services.broadcast_processor import process_broadcast, process_recurrin
 from app.services.join_queue_service import process_all_accounts, recover_stale_flood_wait_items
 from app.services.random_reply_service import execute_random_reply
 from app.services.usdt_watcher import check_usdt_payments
+from app.services.nowpayments import check_nowpayments_payments
 from app.bot.service import send_daily_report_to_all_users
 
 try:
@@ -200,6 +201,12 @@ def start_scheduler() -> None:
         check_usdt_payments,
         IntervalTrigger(minutes=5),
         id="check_usdt_payments",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        check_nowpayments_payments,
+        IntervalTrigger(minutes=5),
+        id="check_nowpayments_payments",
         replace_existing=True,
     )
     scheduler.add_job(
