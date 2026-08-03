@@ -33,18 +33,18 @@ async def _validate_ws_identity(token: str | None, headers) -> "Identity | None"
         return None
 
 
-async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> bool:
+async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> "Identity | None":
     """Hard-enforcement auth gate for WebSocket connections.
 
     Every /ws/* connection must present valid credentials (via the token query
     param, X-Session-Token header, or Authorization Bearer JWT). Missing or
     invalid credentials close the connection with 4401 (unauthorized). Returns
-    True when the handler should proceed, False when the connection has been
+    the resolved Identity when authorized, or None when the connection has been
     closed and the handler must return.
     """
     identity = await _validate_ws_identity(token, websocket.headers)
     if identity is not None:
-        return True
+        return identity
 
     supplied = bool(
         token
@@ -57,7 +57,60 @@ async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> bool:
         logger.warning("ws_auth_rejected", path=websocket.url.path)
     await websocket.accept()
     await websocket.close(code=4401)
-    return False
+    return None
+
+
+async def _verify_account_access(
+    websocket: WebSocket,
+    identity: "Identity",
+    account_id: str | None,
+) -> bool:
+    """Verify the authenticated identity's tenant owns the given account.
+
+    Mirrors the REST-side ``require_account_tenant_access`` logic for WebSocket
+    subscriptions. Returns True when access is allowed; otherwise closes the
+    connection with 4401 and returns False. Admin identities may subscribe to
+    any account. Users without a tenant are denied.
+    """
+    if account_id is None:
+        logger.warning("ws_account_denied_no_account", path=websocket.url.path)
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return False
+
+    if identity.kind == "admin":
+        return True
+
+    if identity.tenant_id is None:
+        logger.warning(
+            "ws_account_denied_no_tenant",
+            account_id=account_id,
+            identity_kind=identity.kind,
+        )
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return False
+
+    try:
+        from app.crud import account as account_crud
+        from app.database import async_session_maker
+
+        async with async_session_maker() as db:
+            account = await account_crud.get_account(db, account_id)
+    except Exception:
+        account = None
+
+    if account is None or account.tenant_id != identity.tenant_id:
+        logger.warning(
+            "ws_account_denied_cross_tenant",
+            account_id=account_id,
+            identity_kind=identity.kind,
+        )
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return False
+
+    return True
 
 
 async def broadcast_to_account(account_id: str, message: dict) -> None:
@@ -91,7 +144,12 @@ async def chat_websocket(
     account_id: str = Query(...),
     token: Optional[str] = Query(default=None),
 ):
-    if not await _ws_auth_gate(websocket, token):
+    identity = await _ws_auth_gate(websocket, token)
+    if identity is None:
+        return
+    # Tenant ownership check: an authenticated user may only subscribe to
+    # accounts their own tenant owns (prevents cross-tenant IDOR).
+    if not await _verify_account_access(websocket, identity, account_id):
         return
     await websocket.accept()
     if account_id not in chat_clients:
@@ -150,7 +208,11 @@ async def dashboard_websocket(
     account_id: Optional[str] = Query(None),
     token: Optional[str] = Query(default=None),
 ):
-    if not await _ws_auth_gate(websocket, token):
+    identity = await _ws_auth_gate(websocket, token)
+    if identity is None:
+        return
+    # account_id is required — omitting it would surface all accounts' stats.
+    if not await _verify_account_access(websocket, identity, account_id):
         return
     await websocket.accept()
 
@@ -191,7 +253,8 @@ async def sessions_websocket(
     token: Optional[str] = Query(default=None),
 ):
     """Real-time session state updates over WebSocket."""
-    if not await _ws_auth_gate(websocket, token):
+    identity = await _ws_auth_gate(websocket, token)
+    if identity is None:
         return
     await websocket.accept()
     session_clients.add(websocket)
@@ -214,7 +277,8 @@ async def sessions_websocket(
                 await websocket.send_json({"type": "pong"})
             elif msg.get("type") == "reconnect":
                 account_id = msg.get("account_id")
-                if account_id and manager._initialized:
+                # Only allow reconnecting accounts the tenant owns.
+                if account_id and await _verify_account_access(websocket, identity, account_id) and manager._initialized:
                     import asyncio as _aio
                     _aio.create_task(manager.reconnect(account_id))
     except WebSocketDisconnect:
