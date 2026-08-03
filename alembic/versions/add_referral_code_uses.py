@@ -7,11 +7,11 @@ depends_on: str | None = None
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, add_column_if_not_exists
 
 
 def upgrade() -> None:
-    op.add_column("tenants", sa.Column("referral_code_uses", sa.Integer(), nullable=False, server_default="0"))
+    add_column_if_not_exists("tenants", sa.Column("referral_code_uses", sa.Integer(), nullable=False, server_default="0"))
     
     from sqlalchemy.engine import reflection
     bind = op.get_bind()

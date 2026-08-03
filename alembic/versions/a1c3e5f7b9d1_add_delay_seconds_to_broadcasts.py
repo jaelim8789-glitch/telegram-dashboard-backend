@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -19,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('broadcasts', sa.Column('delay_seconds', sa.Integer(), nullable=True))
+    add_column_if_not_exists('broadcasts', sa.Column('delay_seconds', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:

@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists, add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,8 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('tenants', sa.Column('monthly_ai_chat_limit', sa.Integer(), server_default='20', nullable=False))
-    op.add_column('tenants', sa.Column('ai_chat_credit_balance', sa.Integer(), server_default='0', nullable=False))
+    add_column_if_not_exists('tenants', sa.Column('monthly_ai_chat_limit', sa.Integer(), server_default='20', nullable=False))
+    add_column_if_not_exists('tenants', sa.Column('ai_chat_credit_balance', sa.Integer(), server_default='0', nullable=False))
 
     create_table_if_not_exists(
         'ai_chat_messages',
@@ -33,9 +33,9 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_chat_messages_tenant_id', 'ai_chat_messages', ['tenant_id'])
-    op.create_index('ix_ai_chat_messages_telegram_user_id', 'ai_chat_messages', ['telegram_user_id'])
-    op.create_index('ix_ai_chat_messages_created_at', 'ai_chat_messages', ['created_at'])
+    create_index_if_not_exists('ix_ai_chat_messages_tenant_id', 'ai_chat_messages', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_chat_messages_telegram_user_id', 'ai_chat_messages', ['telegram_user_id'])
+    create_index_if_not_exists('ix_ai_chat_messages_created_at', 'ai_chat_messages', ['created_at'])
 
 
 def downgrade() -> None:

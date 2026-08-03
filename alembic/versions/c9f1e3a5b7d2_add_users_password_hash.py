@@ -7,6 +7,7 @@ Create Date: 2026-07-22 01:35:00
 """
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 revision = "c9f1e3a5b7d2"
 down_revision = "1c4d2d63fd1b"
@@ -15,7 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("password_hash", sa.String(length=64), nullable=True))
+    add_column_if_not_exists("users", sa.Column("password_hash", sa.String(length=64), nullable=True))
 
 
 def downgrade() -> None:

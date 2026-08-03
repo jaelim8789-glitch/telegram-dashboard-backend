@@ -28,3 +28,12 @@ def add_column_if_not_exists(table_name: str, column: sa.Column):
     columns = [c["name"] for c in insp.get_columns(table_name)]
     if column.name not in columns:
         op.add_column(table_name, column)
+
+
+def create_index_if_not_exists(index_name: str, table_name: str, columns, **kwargs):
+    """Create an index only if it doesn't already exist."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    existing = [ix["name"] for ix in insp.get_indexes(table_name)]
+    if index_name not in existing:
+        op.create_index(index_name, table_name, columns, **kwargs)

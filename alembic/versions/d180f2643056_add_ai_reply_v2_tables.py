@@ -14,7 +14,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -42,8 +42,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_reply_personas_tenant_id', 'ai_reply_personas', ['tenant_id'])
-    op.create_index('ix_ai_reply_personas_account_id', 'ai_reply_personas', ['account_id'])
+    create_index_if_not_exists('ix_ai_reply_personas_tenant_id', 'ai_reply_personas', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_reply_personas_account_id', 'ai_reply_personas', ['account_id'])
 
     #  ai_reply_conversations 
     create_table_if_not_exists(
@@ -64,9 +64,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_reply_conversations_tenant_id', 'ai_reply_conversations', ['tenant_id'])
-    op.create_index('ix_ai_reply_conversations_account_id', 'ai_reply_conversations', ['account_id'])
-    op.create_index('ix_ai_reply_conversations_chat_id', 'ai_reply_conversations', ['chat_id'])
+    create_index_if_not_exists('ix_ai_reply_conversations_tenant_id', 'ai_reply_conversations', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_reply_conversations_account_id', 'ai_reply_conversations', ['account_id'])
+    create_index_if_not_exists('ix_ai_reply_conversations_chat_id', 'ai_reply_conversations', ['chat_id'])
 
     #  ai_reply_suggestions_v2 
     create_table_if_not_exists(
@@ -97,11 +97,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_reply_suggestions_v2_tenant_id', 'ai_reply_suggestions_v2', ['tenant_id'])
-    op.create_index('ix_ai_reply_suggestions_v2_account_id', 'ai_reply_suggestions_v2', ['account_id'])
-    op.create_index('ix_ai_reply_suggestions_v2_chat_id', 'ai_reply_suggestions_v2', ['chat_id'])
-    op.create_index('ix_ai_reply_suggestions_v2_created_at', 'ai_reply_suggestions_v2', ['created_at'])
-    op.create_index('ix_ai_reply_suggestions_v2_status', 'ai_reply_suggestions_v2', ['status'])
+    create_index_if_not_exists('ix_ai_reply_suggestions_v2_tenant_id', 'ai_reply_suggestions_v2', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_reply_suggestions_v2_account_id', 'ai_reply_suggestions_v2', ['account_id'])
+    create_index_if_not_exists('ix_ai_reply_suggestions_v2_chat_id', 'ai_reply_suggestions_v2', ['chat_id'])
+    create_index_if_not_exists('ix_ai_reply_suggestions_v2_created_at', 'ai_reply_suggestions_v2', ['created_at'])
+    create_index_if_not_exists('ix_ai_reply_suggestions_v2_status', 'ai_reply_suggestions_v2', ['status'])
 
 
 def downgrade() -> None:

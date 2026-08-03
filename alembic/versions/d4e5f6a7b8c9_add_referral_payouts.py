@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "d4e5f6a7b8c9"
@@ -36,7 +36,7 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["referrer_id"], ["tenants.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_referral_payouts_referrer_id"), "referral_payouts", ["referrer_id"], unique=False)
+        create_index_if_not_exists(op.f("ix_referral_payouts_referrer_id"), "referral_payouts", ["referrer_id"], unique=False)
 
 
 def downgrade() -> None:

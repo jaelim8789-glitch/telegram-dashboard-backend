@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "2b68d1568159"
@@ -38,7 +38,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_ai_agents_owner_id"), "ai_agents", ["owner_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_ai_agents_owner_id"), "ai_agents", ["owner_id"], unique=False)
 
     create_table_if_not_exists(
         "ai_chats",
@@ -50,8 +50,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["agent_id"], ["ai_agents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_ai_chats_agent_id"), "ai_chats", ["agent_id"], unique=False)
-    op.create_index(op.f("ix_ai_chats_tenant_id"), "ai_chats", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_ai_chats_agent_id"), "ai_chats", ["agent_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_ai_chats_tenant_id"), "ai_chats", ["tenant_id"], unique=False)
 
     create_table_if_not_exists(
         "ai_messages",
@@ -67,7 +67,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["chat_id"], ["ai_chats.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_ai_messages_chat_id"), "ai_messages", ["chat_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_ai_messages_chat_id"), "ai_messages", ["chat_id"], unique=False)
 
 
 def downgrade() -> None:

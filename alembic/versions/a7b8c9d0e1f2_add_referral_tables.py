@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists, add_column_if_not_exists
 
 
 revision: str = "a7b8c9d0e1f2"
@@ -44,8 +44,8 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["owner_id"], ["tenants.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_referral_codes_code"), "referral_codes", ["code"], unique=True)
-        op.create_index(op.f("ix_referral_codes_owner_id"), "referral_codes", ["owner_id"], unique=False)
+        create_index_if_not_exists(op.f("ix_referral_codes_code"), "referral_codes", ["code"], unique=True)
+        create_index_if_not_exists(op.f("ix_referral_codes_owner_id"), "referral_codes", ["owner_id"], unique=False)
 
     if "referral_commissions" not in existing_tables:
         create_table_if_not_exists(
@@ -64,16 +64,16 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["referred_user_id"], ["tenants.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_referral_commissions_referrer_id"), "referral_commissions", ["referrer_id"], unique=False)
-        op.create_index(op.f("ix_referral_commissions_referred_user_id"), "referral_commissions", ["referred_user_id"], unique=False)
+        create_index_if_not_exists(op.f("ix_referral_commissions_referrer_id"), "referral_commissions", ["referrer_id"], unique=False)
+        create_index_if_not_exists(op.f("ix_referral_commissions_referred_user_id"), "referral_commissions", ["referred_user_id"], unique=False)
 
     if "tenants" in existing_tables:
         if not table_has_column("tenants", "referred_by"):
-            op.add_column("tenants", sa.Column("referred_by", sa.String(length=36), nullable=True))
+            add_column_if_not_exists("tenants", sa.Column("referred_by", sa.String(length=36), nullable=True))
         if not table_has_column("tenants", "referral_code"):
-            op.add_column("tenants", sa.Column("referral_code", sa.String(length=20), nullable=True, unique=True))
+            add_column_if_not_exists("tenants", sa.Column("referral_code", sa.String(length=20), nullable=True, unique=True))
         if not table_has_column("tenants", "referral_earnings"):
-            op.add_column("tenants", sa.Column("referral_earnings", sa.Integer(), nullable=False, server_default="0"))
+            add_column_if_not_exists("tenants", sa.Column("referral_earnings", sa.Integer(), nullable=False, server_default="0"))
 
 
 def downgrade() -> None:

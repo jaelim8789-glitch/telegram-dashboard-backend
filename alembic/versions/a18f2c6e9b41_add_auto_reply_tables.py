@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists, add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('accounts', sa.Column('auto_reply_enabled', sa.Boolean(), nullable=False, server_default=sa.false()))
+    add_column_if_not_exists('accounts', sa.Column('auto_reply_enabled', sa.Boolean(), nullable=False, server_default=sa.false()))
     op.alter_column('accounts', 'auto_reply_enabled', server_default=None)
 
     create_table_if_not_exists(
@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(op.f('ix_auto_reply_rules_account_id'), 'auto_reply_rules', ['account_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_auto_reply_rules_account_id'), 'auto_reply_rules', ['account_id'], unique=False)
 
     create_table_if_not_exists(
         'auto_reply_logs',
@@ -57,10 +57,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(op.f('ix_auto_reply_logs_rule_id'), 'auto_reply_logs', ['rule_id'], unique=False)
-    op.create_index(op.f('ix_auto_reply_logs_account_id'), 'auto_reply_logs', ['account_id'], unique=False)
-    op.create_index(op.f('ix_auto_reply_logs_status'), 'auto_reply_logs', ['status'], unique=False)
-    op.create_index(op.f('ix_auto_reply_logs_created_at'), 'auto_reply_logs', ['created_at'], unique=False)
+    create_index_if_not_exists(op.f('ix_auto_reply_logs_rule_id'), 'auto_reply_logs', ['rule_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_auto_reply_logs_account_id'), 'auto_reply_logs', ['account_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_auto_reply_logs_status'), 'auto_reply_logs', ['status'], unique=False)
+    create_index_if_not_exists(op.f('ix_auto_reply_logs_created_at'), 'auto_reply_logs', ['created_at'], unique=False)
 
 
 def downgrade() -> None:

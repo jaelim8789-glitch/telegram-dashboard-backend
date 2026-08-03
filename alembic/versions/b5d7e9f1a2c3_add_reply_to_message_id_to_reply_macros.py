@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -27,7 +28,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     existing_columns = {col["name"] for col in sa.inspect(conn).get_columns("reply_macros")}
     if "reply_to_message_id" not in existing_columns:
-        op.add_column(
+        add_column_if_not_exists(
             "reply_macros",
             sa.Column("reply_to_message_id", sa.Integer(), nullable=True),
         )

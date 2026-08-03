@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists, add_column_if_not_exists
 
 
 revision: str = "f6a7b8c9d0e1"
@@ -27,7 +27,7 @@ def upgrade() -> None:
     try:
         cols = [c["name"] for c in inspector.get_columns("referral_codes")]
         if "expires_at" not in cols:
-            op.add_column("referral_codes", sa.Column("expires_at", sa.DateTime(), nullable=True))
+            add_column_if_not_exists("referral_codes", sa.Column("expires_at", sa.DateTime(), nullable=True))
     except Exception:
         pass
 
@@ -40,7 +40,7 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_referral_config_key"), "referral_config", ["key"], unique=True)
+        create_index_if_not_exists(op.f("ix_referral_config_key"), "referral_config", ["key"], unique=True)
 
     if "referral_audit_logs" not in existing_tables:
         create_table_if_not_exists(
@@ -53,7 +53,7 @@ def upgrade() -> None:
             sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_referral_audit_logs_action"), "referral_audit_logs", ["action"], unique=False)
+        create_index_if_not_exists(op.f("ix_referral_audit_logs_action"), "referral_audit_logs", ["action"], unique=False)
 
 
 def downgrade() -> None:

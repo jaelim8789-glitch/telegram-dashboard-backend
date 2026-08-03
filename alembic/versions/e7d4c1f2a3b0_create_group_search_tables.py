@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["account_id"], ["accounts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_group_search_results_account_id"), "group_search_results", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_group_search_results_account_id"), "group_search_results", ["account_id"], unique=False)
 
     create_table_if_not_exists(
         "group_join_logs",
@@ -52,8 +52,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["account_id"], ["accounts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_group_join_logs_account_id"), "group_join_logs", ["account_id"], unique=False)
-    op.create_index(op.f("ix_group_join_logs_created_at"), "group_join_logs", ["created_at"], unique=False)
+    create_index_if_not_exists(op.f("ix_group_join_logs_account_id"), "group_join_logs", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_group_join_logs_created_at"), "group_join_logs", ["created_at"], unique=False)
 
 
 def downgrade() -> None:

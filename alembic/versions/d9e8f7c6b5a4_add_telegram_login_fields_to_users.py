@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
 
 
 revision: str = "d9e8f7c6b5a4"
@@ -18,10 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("telegram_id", sa.Integer(), nullable=True))
-    op.create_index(op.f("ix_users_telegram_id"), "users", ["telegram_id"], unique=True)
-    op.add_column("users", sa.Column("telegram_username", sa.String(255), nullable=True))
-    op.add_column("users", sa.Column("telegram_photo_url", sa.String(512), nullable=True))
+    add_column_if_not_exists("users", sa.Column("telegram_id", sa.Integer(), nullable=True))
+    create_index_if_not_exists(op.f("ix_users_telegram_id"), "users", ["telegram_id"], unique=True)
+    add_column_if_not_exists("users", sa.Column("telegram_username", sa.String(255), nullable=True))
+    add_column_if_not_exists("users", sa.Column("telegram_photo_url", sa.String(512), nullable=True))
 
 
 def downgrade() -> None:

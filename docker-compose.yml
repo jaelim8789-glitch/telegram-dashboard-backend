@@ -51,6 +51,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
       interval: 10s
@@ -63,6 +65,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://telegram_dashboard:${POSTGRES_PASSWORD:-telegram_dashboard_password}@db:5432/telegram_dashboard}
+      REDIS_URL: redis://redis:6379/0
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
