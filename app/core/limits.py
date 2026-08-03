@@ -20,7 +20,7 @@ def effective_broadcast_interval(batch_size: int | None = None) -> int:
         return BROADCAST_MIN_INTERVAL_SECONDS
     return max(MINIMUM_INTERVAL_SECONDS, BROADCAST_MIN_INTERVAL_SECONDS // batch_size)
 
-MAX_MEDIA_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_MEDIA_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB — Telegram media rarely exceeds this; keeps nginx upload surface bounded.
 ALLOWED_MEDIA_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska"}
 
 # Phone verification (Sprint 6 user login)  SMS costs money, so codes are deliberately
