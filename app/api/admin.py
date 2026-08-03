@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-import secrets
-from sqlalchemy import case, func, select, text as sa_text
+from sqlalchemy import and_, case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 
@@ -94,10 +93,18 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
             detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(retry_after)},
         )
+    # Layer 1: env-backed admin credentials (ADMIN_USERNAME / ADMIN_PASSWORD).
+    # Kept for backward compatibility, but flagged so ops notices when the
+    # deployment is still relying on plaintext env vars instead of the
+    # DB-backed bcrypt account created via /api/admin/setup.
     if verify_admin_credentials(payload.username, payload.password):
-        logger.info("admin_login_success")
+        logger.warning(
+            "admin_login_via_env",
+            detail="Admin authenticated via ADMIN_USERNAME/ADMIN_PASSWORD env vars; "
+            "prefer the DB-backed bcrypt admin account (POST /api/admin/setup).",
+        )
         return AdminTokenResponse(access_token=create_access_token())
-    # Fallback: check DB-based admin credentials (system_settings)
+    # Layer 2: DB-backed bcrypt admin credentials (set via /api/admin/setup).
     user_result = await db.execute(
         select(SystemSetting).where(SystemSetting.key == "admin_username")
     )
@@ -106,14 +113,11 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
     )
     db_user = user_result.scalar_one_or_none()
     db_pass = pass_result.scalar_one_or_none()
-    if db_user and db_pass:
-        if secrets.compare_digest(
-            payload.username.encode("utf-8"), db_user.value.encode("utf-8")
-        ) and secrets.compare_digest(
-            hash_password(payload.password).encode("utf-8"), db_pass.value.encode("utf-8")
-        ):
-            logger.info("admin_login_success_db")
-            return AdminTokenResponse(access_token=create_access_token())
+    if db_user and db_pass and verify_admin_credentials_hash(
+        payload.username, payload.password, db_user.value, db_pass.value
+    ):
+        logger.info("admin_login_success_db")
+        return AdminTokenResponse(access_token=create_access_token())
     logger.warning("admin_login_failed", username=payload.username)
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
@@ -778,66 +782,56 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
 
 @router.get("/stats", response_model=AdminStats, dependencies=[Depends(require_admin)])
 async def get_admin_stats(db: AsyncSession = Depends(get_db)):
-    """Aggregate stats for the new admin dashboard."""
-    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
-    total_accounts = (await db.execute(select(func.count(Account.id)))).scalar() or 0
-    total_api_keys = (await db.execute(select(func.count(APIKey.id)))).scalar() or 0
-    total_messages_sent = (await db.execute(select(func.count(MessageLog.id)))).scalar() or 0
+    """Aggregate stats for the new admin dashboard.
 
-    active_accounts = (await db.execute(
-        select(func.count(Account.id)).where(Account.status == "active")
-    )).scalar() or 0
-
-    banned_accounts = (await db.execute(
-        select(func.count(Account.id)).where(Account.status == "banned")
-    )).scalar() or 0
-
+    Each query is scoped to a single table — mixing unrelated tables' columns
+    into one select() without a join condition produces an implicit cross
+    join (every row of one table paired with every row of the other), which
+    silently inflates every count/sum in that query. No error, just wrong
+    numbers, so this needs to stay one query per table rather than batching
+    across tables.
+    """
     today_start = utcnow_naive().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_messages_sent = (await db.execute(
-        select(func.count(MessageLog.id)).where(MessageLog.created_at >= today_start)
-    )).scalar() or 0
-
     one_hour_ago = utcnow_naive() - timedelta(hours=1)
-    recent_errors = (await db.execute(
-        select(func.count(MessageLog.id)).where(
-            MessageLog.created_at >= one_hour_ago,
-            MessageLog.success.is_(False),
-        )
-    )).scalar() or 0
-
     week_ago = utcnow_naive() - timedelta(days=7)
-    weekly_users = (await db.execute(
-        select(func.count(User.id)).where(User.created_at >= week_ago)
-    )).scalar() or 0
-
-    # Unhealthy accounts: health status != "healthy" (from account_health logic)
-    unhealthy_accounts = (await db.execute(
-        select(func.count(Account.id)).where(
-            Account.status.in_(["suspended", "session_corrupted"])
-        )
-    )).scalar() or 0
-
-    # Monthly revenue from payment records
     month_start = today_start.replace(day=1)
-    revenue_result = await db.execute(
-        select(func.coalesce(func.sum(PaymentRecord.amount_usdt), 0)).where(
-            PaymentRecord.created_at >= month_start
-        )
-    )
-    monthly_revenue = (revenue_result.scalar() or 0) / 100.0
+
+    r1 = (await db.execute(select(func.count(User.id)))).scalar() or 0
+    r1b = (await db.execute(select(func.count(Account.id)))).scalar() or 0
+    r1c = (await db.execute(select(func.count(APIKey.id)))).scalar() or 0
+
+    r2 = (await db.execute(select(
+        func.count(case((Account.status == "active", 1))).label("active"),
+        func.count(case((Account.status.in_(["suspended", "session_corrupted"]), 1))).label("unhealthy"),
+        func.count(case((Account.status == "banned", 1))).label("banned"),
+    ))).one()
+
+    r3 = (await db.execute(select(
+        func.count(MessageLog.id).label("total"),
+        func.count(case((MessageLog.created_at >= today_start, 1))).label("today"),
+        func.count(case((and_(MessageLog.created_at >= one_hour_ago, MessageLog.success.is_(False)), 1))).label("errors"),
+    ))).one()
+
+    r4 = (await db.execute(select(
+        func.count(case((User.created_at >= week_ago, 1))).label("weekly_users"),
+    ))).one()
+
+    r4b = (await db.execute(select(
+        func.coalesce(func.sum(PaymentRecord.amount_usdt), 0).label("revenue"),
+    ).where(PaymentRecord.created_at >= month_start))).one()
 
     return AdminStats(
-        total_users=total_users,
-        total_accounts=total_accounts,
-        total_messages_sent=total_messages_sent,
-        total_api_keys=total_api_keys,
-        active_accounts=active_accounts,
-        unhealthy_accounts=unhealthy_accounts,
-        banned_accounts=banned_accounts,
-        recent_errors=recent_errors,
-        today_messages_sent=today_messages_sent,
-        weekly_users=weekly_users,
-        monthly_revenue=monthly_revenue,
+        total_users=r1,
+        total_accounts=r1b,
+        total_messages_sent=r3.total or 0,
+        total_api_keys=r1c,
+        active_accounts=r2.active or 0,
+        unhealthy_accounts=r2.unhealthy or 0,
+        banned_accounts=r2.banned or 0,
+        recent_errors=r3.errors or 0,
+        today_messages_sent=r3.today or 0,
+        weekly_users=r4.weekly_users or 0,
+        monthly_revenue=(r4b.revenue or 0) / 100.0,
         system_status={"backend": "healthy", "db": "healthy"},
     )
 
