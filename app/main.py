@@ -191,24 +191,33 @@ async def lifespan(app: FastAPI):
         logger.info("realtime_update_handlers_skipped", reason="another_worker_running")
 
     #  Telegram bot (optional)
+    # start_bot() already guards itself internally via
+    # acquire_singleton_lock("telegram_bot_polling") — no extra wrapping needed
+    # here, that would just be a second, differently-named lock racing the same
+    # thing.
     try:
         await start_bot()
     except Exception as exc:
         logger.error("telegram_bot_startup_failed", error=str(exc))
 
-    #  AI Platform Startup 
+    #  AI Platform Startup
     try:
         register_builtin_tools()
         logger.info("ai_builtin_tools_registered")
     except Exception as exc:
         logger.error("ai_builtin_tools_registration_failed", error=str(exc))
 
-    try:
-        worker = get_task_worker()
-        worker.start()
-        logger.info("ai_task_worker_started")
-    except Exception as exc:
-        logger.error("ai_task_worker_startup_failed", error=str(exc))
+    # Same per-worker duplication risk as the main scheduler above: every worker
+    # polling ai_tasks on its own 1s timer multiplies query load by worker count.
+    if await acquire_singleton_lock("ai_task_worker"):
+        try:
+            worker = get_task_worker()
+            worker.start()
+            logger.info("ai_task_worker_started")
+        except Exception as exc:
+            logger.error("ai_task_worker_startup_failed", error=str(exc))
+    else:
+        logger.info("ai_task_worker_skipped", reason="another_worker_running")
 
     # Same per-worker duplication risk as the main scheduler above.
     if await acquire_singleton_lock("ai_scheduler"):
