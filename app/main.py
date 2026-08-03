@@ -532,4 +532,8 @@ class ProxyHeadersApp(ProxyHeadersMiddleware):
         return getattr(self.app, name)
 
 
-app = ProxyHeadersApp(app, trusted_hosts="*")  # safe: only reachable via internal nginx/Cloudflare
+# nginx is the only thing that can reach uvicorn directly (not internet-exposed
+# itself). Only trust X-Forwarded-* headers when the direct TCP peer is our own
+# nginx container (or a localhost/dev caller) — arbitrary clients can no longer
+# spoof proxy headers to forge their client IP.
+app = ProxyHeadersApp(app, trusted_hosts=["nginx", "127.0.0.1", "localhost"])
