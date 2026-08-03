@@ -97,7 +97,7 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
     if plan_def is None:
         raise HTTPException(status_code=500, detail="API    .  .")
 
-    rate_key = phone if phone else (request.client.host if request else "unknown")
+    rate_key = phone if phone else (get_client_ip(request) if request else "unknown")
     if not _check_rate_limit(("request-key", rate_key), min_interval=10.0):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

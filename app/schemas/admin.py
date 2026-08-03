@@ -140,6 +140,16 @@ class AdminSetupResponse(BaseModel):
     message: str = "관리자 계정이 생성되었습니다."
 
 
+class AdminRotatePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AdminRotatePasswordResponse(BaseModel):
+    ok: bool = True
+    message: str = "관리자 비밀번호가 변경되었습니다."
+
+
 class AdminStats(BaseModel):
     total_users: int = 0
     total_accounts: int = 0

@@ -234,6 +234,28 @@ class Settings(BaseSettings):
         if "localhost" in self.cors_origins:
             findings.append("cors_origins (must be production origins, not localhost)")
 
+        # In production, user tokens must use their own secret, not the admin
+        # secret — otherwise anyone who can forge a user token (e.g. after an
+        # admin JWT secret leak) can also forge admin tokens, and vice versa.
+        user_jwt_secret = os.getenv("JWT_USER_SECRET", "")
+        if not user_jwt_secret or user_jwt_secret == self.admin_jwt_secret:
+            findings.append("JWT_USER_SECRET (must be set to a value different from ADMIN_JWT_SECRET)")
+
+        # In production, NOWPayments keys must be present — otherwise crypto
+        # payments silently fail to create invoices and webhooks can't be
+        # signature-verified.
+        if not self.NOWPAYMENTS_API_KEY or not self.NOWPAYMENTS_IPN_SECRET:
+            findings.append("NOWPAYMENTS_API_KEY / NOWPAYMENTS_IPN_SECRET (must be set)")
+
+        # In production, api_base_url must be a real public URL — otherwise
+        # NOWPayments IPN webhooks are sent to localhost and never arrive.
+        if "localhost" in self.api_base_url or not self.api_base_url.startswith("https://"):
+            findings.append("api_base_url (must be a public https URL, not localhost)")
+
+        # In production, Redis must be password-protected (REDIS_PASSWORD set).
+        if not os.getenv("REDIS_PASSWORD"):
+            findings.append("REDIS_PASSWORD (Redis auth must be configured)")
+
         if not findings:
             return self
 

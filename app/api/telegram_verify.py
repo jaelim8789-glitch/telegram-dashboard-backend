@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.rate_limiter import check_rate_limit, get_retry_after_seconds
+from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.crud import telegram_verification as verification_crud
 from app.database import get_db
 from app.schemas.telegram_verify import (
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 @router.post("/start", response_model=TelegramVerifyStartResponse)
 async def start(request: Request, db: AsyncSession = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "telegram_verify_start", max_attempts=10, window_seconds=300):
         retry_after = get_retry_after_seconds(client_ip, "telegram_verify_start")
         raise HTTPException(
@@ -52,7 +52,7 @@ async def start(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.post("/check", response_model=TelegramVerifyCheckResponse)
 async def check(payload: TelegramVerifyCheckRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "telegram_verify_check", max_attempts=30, window_seconds=60):
         retry_after = get_retry_after_seconds(client_ip, "telegram_verify_check")
         raise HTTPException(
