@@ -14,7 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = 'f7a8b9c0d1e2'
@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(op.f('ix_system_settings_key'), 'system_settings', ['key'], unique=True)
+    create_index_if_not_exists(op.f('ix_system_settings_key'), 'system_settings', ['key'], unique=True)
 
 
 def downgrade() -> None:

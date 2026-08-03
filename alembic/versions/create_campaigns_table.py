@@ -14,7 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "create_campaigns_table"
@@ -45,8 +45,8 @@ def upgrade() -> None:
     # auto-generate these same indexes and collide with the explicit calls
     # below - verified against DuplicateTableError while testing this
     # migration).
-    op.create_index("ix_campaigns_tenant_id", "campaigns", ["tenant_id"])
-    op.create_index("ix_campaigns_status", "campaigns", ["status"])
+    create_index_if_not_exists("ix_campaigns_tenant_id", "campaigns", ["tenant_id"])
+    create_index_if_not_exists("ix_campaigns_status", "campaigns", ["status"])
 
 
 def downgrade() -> None:

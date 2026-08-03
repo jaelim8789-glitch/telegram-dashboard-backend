@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists, add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         'accounts',
         sa.Column('ai_fallback_reply_enabled', sa.Boolean(), server_default=sa.false(), nullable=False),
     )
@@ -39,8 +39,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_auto_reply_suggestions_account_id', 'auto_reply_suggestions', ['account_id'])
-    op.create_index('ix_auto_reply_suggestions_created_at', 'auto_reply_suggestions', ['created_at'])
+    create_index_if_not_exists('ix_auto_reply_suggestions_account_id', 'auto_reply_suggestions', ['account_id'])
+    create_index_if_not_exists('ix_auto_reply_suggestions_created_at', 'auto_reply_suggestions', ['created_at'])
 
     create_table_if_not_exists(
         'ai_ops_reports',
@@ -50,7 +50,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_ops_reports_created_at', 'ai_ops_reports', ['created_at'])
+    create_index_if_not_exists('ix_ai_ops_reports_created_at', 'ai_ops_reports', ['created_at'])
 
 
 def downgrade() -> None:

@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = "e6f7a8b9c0d1"
@@ -32,16 +33,16 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     if not column_exists(conn, "accounts", "last_error"):
-        op.add_column("accounts", sa.Column("last_error", sa.Text(), nullable=True))
+        add_column_if_not_exists("accounts", sa.Column("last_error", sa.Text(), nullable=True))
 
     if not column_exists(conn, "accounts", "last_error_at"):
-        op.add_column("accounts", sa.Column("last_error_at", sa.DateTime(), nullable=True))
+        add_column_if_not_exists("accounts", sa.Column("last_error_at", sa.DateTime(), nullable=True))
 
     if not column_exists(conn, "accounts", "last_success_at"):
-        op.add_column("accounts", sa.Column("last_success_at", sa.DateTime(), nullable=True))
+        add_column_if_not_exists("accounts", sa.Column("last_success_at", sa.DateTime(), nullable=True))
 
     if not column_exists(conn, "accounts", "health_checked_at"):
-        op.add_column("accounts", sa.Column("health_checked_at", sa.DateTime(), nullable=True))
+        add_column_if_not_exists("accounts", sa.Column("health_checked_at", sa.DateTime(), nullable=True))
 
 
 def downgrade() -> None:

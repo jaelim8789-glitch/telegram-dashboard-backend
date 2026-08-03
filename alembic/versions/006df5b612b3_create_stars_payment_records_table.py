@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "006df5b612b3"
@@ -27,10 +27,10 @@ def upgrade() -> None:
         sa.Column("stars_amount", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
     )
-    op.create_index(
+    create_index_if_not_exists(
         "ix_stars_payment_records_tenant_id", "stars_payment_records", ["tenant_id"]
     )
-    op.create_index(
+    create_index_if_not_exists(
         "ix_stars_payment_records_telegram_payment_charge_id",
         "stars_payment_records",
         ["telegram_payment_charge_id"],

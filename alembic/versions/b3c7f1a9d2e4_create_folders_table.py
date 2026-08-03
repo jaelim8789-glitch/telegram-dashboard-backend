@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -41,8 +41,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["parent_id"], ["folders.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_folders_account_id"), "folders", ["account_id"], unique=False)
-    op.create_index(op.f("ix_folders_parent_id"), "folders", ["parent_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_folders_account_id"), "folders", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_folders_parent_id"), "folders", ["parent_id"], unique=False)
 
 
 def downgrade() -> None:

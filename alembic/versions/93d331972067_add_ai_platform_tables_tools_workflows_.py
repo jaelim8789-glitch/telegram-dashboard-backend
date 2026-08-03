@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 # revision identifiers, used by Alembic.
 revision: str = '93d331972067'
@@ -40,9 +40,9 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_api_call_logs_correlation_id'), 'ai_api_call_logs', ['correlation_id'], unique=False)
-    op.create_index(op.f('ix_ai_api_call_logs_provider'), 'ai_api_call_logs', ['provider'], unique=False)
-    op.create_index(op.f('ix_ai_api_call_logs_tenant_id'), 'ai_api_call_logs', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_api_call_logs_correlation_id'), 'ai_api_call_logs', ['correlation_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_api_call_logs_provider'), 'ai_api_call_logs', ['provider'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_api_call_logs_tenant_id'), 'ai_api_call_logs', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_api_provider_configs',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -62,7 +62,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_api_provider_configs_tenant_id'), 'ai_api_provider_configs', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_api_provider_configs_tenant_id'), 'ai_api_provider_configs', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_event_logs',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -76,10 +76,10 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_event_logs_correlation_id'), 'ai_event_logs', ['correlation_id'], unique=False)
-    op.create_index(op.f('ix_ai_event_logs_created_at'), 'ai_event_logs', ['created_at'], unique=False)
-    op.create_index(op.f('ix_ai_event_logs_event_type'), 'ai_event_logs', ['event_type'], unique=False)
-    op.create_index(op.f('ix_ai_event_logs_tenant_id'), 'ai_event_logs', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_logs_correlation_id'), 'ai_event_logs', ['correlation_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_logs_created_at'), 'ai_event_logs', ['created_at'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_logs_event_type'), 'ai_event_logs', ['event_type'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_logs_tenant_id'), 'ai_event_logs', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_event_subscriptions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -96,8 +96,8 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_event_subscriptions_event_type'), 'ai_event_subscriptions', ['event_type'], unique=False)
-    op.create_index(op.f('ix_ai_event_subscriptions_tenant_id'), 'ai_event_subscriptions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_subscriptions_event_type'), 'ai_event_subscriptions', ['event_type'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_event_subscriptions_tenant_id'), 'ai_event_subscriptions', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_plugin_registrations',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -120,7 +120,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name')
     )
-    op.create_index(op.f('ix_ai_plugin_registrations_tenant_id'), 'ai_plugin_registrations', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_plugin_registrations_tenant_id'), 'ai_plugin_registrations', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_schedule_definitions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -141,7 +141,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_schedule_definitions_tenant_id'), 'ai_schedule_definitions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_schedule_definitions_tenant_id'), 'ai_schedule_definitions', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_schedule_executions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('schedule_id', sa.String(length=36), nullable=False),
@@ -154,8 +154,8 @@ def upgrade() -> None:
     sa.Column('completed_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_schedule_executions_schedule_id'), 'ai_schedule_executions', ['schedule_id'], unique=False)
-    op.create_index(op.f('ix_ai_schedule_executions_tenant_id'), 'ai_schedule_executions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_schedule_executions_schedule_id'), 'ai_schedule_executions', ['schedule_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_schedule_executions_tenant_id'), 'ai_schedule_executions', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_task_logs',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('task_id', sa.String(length=36), nullable=False),
@@ -166,8 +166,8 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_task_logs_task_id'), 'ai_task_logs', ['task_id'], unique=False)
-    op.create_index(op.f('ix_ai_task_logs_tenant_id'), 'ai_task_logs', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_task_logs_task_id'), 'ai_task_logs', ['task_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_task_logs_tenant_id'), 'ai_task_logs', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_tasks',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -185,12 +185,12 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_tasks_created_at'), 'ai_tasks', ['created_at'], unique=False)
-    op.create_index(op.f('ix_ai_tasks_priority'), 'ai_tasks', ['priority'], unique=False)
-    op.create_index(op.f('ix_ai_tasks_schedule_at'), 'ai_tasks', ['schedule_at'], unique=False)
-    op.create_index(op.f('ix_ai_tasks_status'), 'ai_tasks', ['status'], unique=False)
-    op.create_index(op.f('ix_ai_tasks_task_type'), 'ai_tasks', ['task_type'], unique=False)
-    op.create_index(op.f('ix_ai_tasks_tenant_id'), 'ai_tasks', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_created_at'), 'ai_tasks', ['created_at'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_priority'), 'ai_tasks', ['priority'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_schedule_at'), 'ai_tasks', ['schedule_at'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_status'), 'ai_tasks', ['status'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_task_type'), 'ai_tasks', ['task_type'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tasks_tenant_id'), 'ai_tasks', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_tool_definitions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -209,8 +209,8 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_tool_definitions_name'), 'ai_tool_definitions', ['name'], unique=True)
-    op.create_index(op.f('ix_ai_tool_definitions_tenant_id'), 'ai_tool_definitions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_definitions_name'), 'ai_tool_definitions', ['name'], unique=True)
+    create_index_if_not_exists(op.f('ix_ai_tool_definitions_tenant_id'), 'ai_tool_definitions', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_tool_execution_logs',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -229,11 +229,11 @@ def upgrade() -> None:
     sa.Column('completed_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_tool_execution_logs_session_id'), 'ai_tool_execution_logs', ['session_id'], unique=False)
-    op.create_index(op.f('ix_ai_tool_execution_logs_task_id'), 'ai_tool_execution_logs', ['task_id'], unique=False)
-    op.create_index(op.f('ix_ai_tool_execution_logs_tenant_id'), 'ai_tool_execution_logs', ['tenant_id'], unique=False)
-    op.create_index(op.f('ix_ai_tool_execution_logs_tool_name'), 'ai_tool_execution_logs', ['tool_name'], unique=False)
-    op.create_index(op.f('ix_ai_tool_execution_logs_workflow_execution_id'), 'ai_tool_execution_logs', ['workflow_execution_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_execution_logs_session_id'), 'ai_tool_execution_logs', ['session_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_execution_logs_task_id'), 'ai_tool_execution_logs', ['task_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_execution_logs_tenant_id'), 'ai_tool_execution_logs', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_execution_logs_tool_name'), 'ai_tool_execution_logs', ['tool_name'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_tool_execution_logs_workflow_execution_id'), 'ai_tool_execution_logs', ['workflow_execution_id'], unique=False)
     create_table_if_not_exists('ai_workflow_definitions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -252,8 +252,8 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_workflow_definitions_name'), 'ai_workflow_definitions', ['name'], unique=False)
-    op.create_index(op.f('ix_ai_workflow_definitions_tenant_id'), 'ai_workflow_definitions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_definitions_name'), 'ai_workflow_definitions', ['name'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_definitions_tenant_id'), 'ai_workflow_definitions', ['tenant_id'], unique=False)
     create_table_if_not_exists('ai_workflow_executions',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -270,9 +270,9 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_workflow_executions_status'), 'ai_workflow_executions', ['status'], unique=False)
-    op.create_index(op.f('ix_ai_workflow_executions_tenant_id'), 'ai_workflow_executions', ['tenant_id'], unique=False)
-    op.create_index(op.f('ix_ai_workflow_executions_workflow_id'), 'ai_workflow_executions', ['workflow_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_executions_status'), 'ai_workflow_executions', ['status'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_executions_tenant_id'), 'ai_workflow_executions', ['tenant_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_executions_workflow_id'), 'ai_workflow_executions', ['workflow_id'], unique=False)
     create_table_if_not_exists('ai_workflow_steps',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('execution_id', sa.String(length=36), nullable=False),
@@ -289,7 +289,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_ai_workflow_steps_execution_id'), 'ai_workflow_steps', ['execution_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_ai_workflow_steps_execution_id'), 'ai_workflow_steps', ['execution_id'], unique=False)
     # ### end Alembic commands ###
     # NOTE: autogenerate also picked up spurious drops/alters for ai_chat_v2,
     # ai_reply_v2, admin_audit_logs, broadcasts, message_logs and payment_records 

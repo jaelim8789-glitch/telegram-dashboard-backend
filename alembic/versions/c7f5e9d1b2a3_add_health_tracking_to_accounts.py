@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = "c7f5e9d1b2a3"
@@ -18,10 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("accounts", sa.Column("last_error", sa.Text(), nullable=True))
-    op.add_column("accounts", sa.Column("last_error_at", sa.DateTime(), nullable=True))
-    op.add_column("accounts", sa.Column("last_success_at", sa.DateTime(), nullable=True))
-    op.add_column("accounts", sa.Column("health_checked_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("accounts", sa.Column("last_error", sa.Text(), nullable=True))
+    add_column_if_not_exists("accounts", sa.Column("last_error_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("accounts", sa.Column("last_success_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("accounts", sa.Column("health_checked_at", sa.DateTime(), nullable=True))
 
 
 def downgrade() -> None:

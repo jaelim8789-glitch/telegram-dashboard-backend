@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -19,39 +20,39 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         'broadcasts',
         sa.Column('recurring_interval_minutes', sa.Integer(), nullable=True, default=None),
     )
-    op.add_column(
+    add_column_if_not_exists(
         'broadcasts',
         sa.Column('cancelled_at', sa.DateTime(), nullable=True, default=None),
     )
-    op.add_column(
+    add_column_if_not_exists(
         'broadcasts',
         sa.Column('next_scheduled_at', sa.DateTime(), nullable=True, default=None),
     )
-    op.add_column(
+    add_column_if_not_exists(
         'broadcasts',
         sa.Column('parent_broadcast_id', sa.String(length=36), nullable=True, default=None),
     )
-    op.add_column(
+    add_column_if_not_exists(
         'broadcasts',
         sa.Column('is_recurring_paused', sa.Boolean(), nullable=False, server_default=sa.text('false')),
     )
-    op.create_index(
+    create_index_if_not_exists(
         op.f('ix_broadcasts_parent_broadcast_id'),
         'broadcasts',
         ['parent_broadcast_id'],
         unique=False,
     )
-    op.create_index(
+    create_index_if_not_exists(
         op.f('ix_broadcasts_recurring_interval_minutes'),
         'broadcasts',
         ['recurring_interval_minutes'],
         unique=False,
     )
-    op.create_index(
+    create_index_if_not_exists(
         op.f('ix_broadcasts_next_scheduled_at'),
         'broadcasts',
         ['next_scheduled_at'],

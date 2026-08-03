@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -30,8 +30,8 @@ def upgrade() -> None:
         sa.Column('last_login', sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(op.f('ix_users_phone'), 'users', ['phone'], unique=True)
-    op.create_index(op.f('ix_users_api_key_hash'), 'users', ['api_key_hash'], unique=True)
+    create_index_if_not_exists(op.f('ix_users_phone'), 'users', ['phone'], unique=True)
+    create_index_if_not_exists(op.f('ix_users_api_key_hash'), 'users', ['api_key_hash'], unique=True)
 
     create_table_if_not_exists(
         'phone_verifications',
@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(op.f('ix_phone_verifications_phone'), 'phone_verifications', ['phone'], unique=True)
+    create_index_if_not_exists(op.f('ix_phone_verifications_phone'), 'phone_verifications', ['phone'], unique=True)
 
 
 def downgrade() -> None:

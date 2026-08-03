@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
 
 
 revision: str = "a3f9c1d7e6b2"
@@ -18,11 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         "broadcasts",
         sa.Column("distribution_batch_id", sa.String(length=36), nullable=True),
     )
-    op.create_index(
+    create_index_if_not_exists(
         "ix_broadcasts_distribution_batch_id",
         "broadcasts",
         ["distribution_batch_id"],
