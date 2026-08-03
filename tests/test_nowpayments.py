@@ -4,6 +4,7 @@ NOWPayments
 
 import json
 import pytest
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +92,27 @@ def test_verify_webhook_signature():
     assert service.verify_webhook_signature(payload, "invalid_signature") == False
 
 
+def _make_txn(**overrides):
+    """Build a minimal NowPaymentsTransaction-like object."""
+    defaults = {
+        "payment_id": "test_payment_123",
+        "tenant_id": "testtenant123",
+        "plan_id": "pro",
+        "payment_status": "waiting",
+        "paid_amount": None,
+        "pay_currency": "usdt",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890",
+        "fulfilled": False,
+        "fulfilled_at": None,
+        "note": None,
+    }
+    defaults.update(overrides)
+    txn = MagicMock()
+    for k, v in defaults.items():
+        setattr(txn, k, v)
+    return txn
+
+
 @pytest.mark.asyncio
 async def test_process_webhook_success():
     """   """
@@ -101,37 +123,96 @@ async def test_process_webhook_success():
         "pay_currency": "usdt",
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
-    
-    # Mock  
+
+    # Mock
     mock_db = AsyncMock(spec=AsyncSession)
-    
-    #     
-    mock_transaction = MagicMock()
-    mock_transaction.payment_status = "waiting"
-    mock_transaction.paid_amount = None
-    mock_transaction.pay_currency = "usdt"
-    
-    # select   
+    mock_transaction = _make_txn()
+
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
-    
-    mock_tenant_result = MagicMock()
-    mock_tenant_result.scalar_one_or_none.return_value = MagicMock()
+
+    mock_tenant = MagicMock()
     mock_plan = {"prices_usdt": {"monthly": 99.99}}
 
-    with patch.object(mock_db, 'execute', side_effect=[mock_execute_result, mock_tenant_result]), \
+    api_status = {
+        "payment_status": "finished",
+        "actually_paid": 99.99,
+        "pay_currency": "usdt",
+    }
+
+    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
          patch.object(mock_db, 'commit'), \
+         patch.object(mock_db, 'get', return_value=mock_tenant), \
          patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
-         patch('app.services.nowpayments.activate_tenant_plan') as mock_activate_plan:
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock(return_value={"success": True, "api_key": "sk-test"})) as mock_activate_plan, \
+         patch('app.services.nowpayments.create_commission', new=AsyncMock()) as mock_commission:
 
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
 
-        #    
-        mock_db.commit.assert_called_once()
+        #     -  ( , )
+        mock_activate_plan.assert_awaited_once()
+        mock_commission.assert_awaited_once()
+        assert mock_transaction.fulfilled is True
+        assert mock_transaction.fulfilled_at is not None
 
-        #    
-        mock_activate_plan.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_process_webhook_success_rejects_when_verify_fails():
+    """Server-side re-verification failure must NOT fulfill the payment."""
+    webhook_data = {
+        "payment_id": "test_payment_123",
+        "payment_status": "finished",
+        "paid_amount": 99.99,
+        "pay_currency": "usdt",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890"
+    }
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_transaction = _make_txn()
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar_one_or_none.return_value = mock_transaction
+
+    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+         patch.object(mock_db, 'commit'), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=None)), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock()) as mock_activate_plan:
+
+        service = NOWPaymentsService()
+        await service.process_webhook(webhook_data, mock_db)
+
+        mock_activate_plan.assert_not_called()
+        assert mock_transaction.fulfilled is not True
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_success_rejects_when_api_status_not_finished():
+    """Re-verification status mismatch must NOT fulfill the payment."""
+    webhook_data = {
+        "payment_id": "test_payment_123",
+        "payment_status": "finished",
+        "paid_amount": 99.99,
+        "pay_currency": "usdt",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890"
+    }
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_transaction = _make_txn()
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar_one_or_none.return_value = mock_transaction
+
+    api_status = {"payment_status": "waiting", "actually_paid": 99.99}
+
+    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+         patch.object(mock_db, 'commit'), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock()) as mock_activate_plan:
+
+        service = NOWPaymentsService()
+        await service.process_webhook(webhook_data, mock_db)
+
+        mock_activate_plan.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -144,25 +225,24 @@ async def test_process_webhook_duplicate():
         "pay_currency": "usdt",
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
-    
-    # Mock  
+
+    # Mock
     mock_db = AsyncMock(spec=AsyncSession)
-    
-    #   
-    mock_transaction = MagicMock()
-    mock_transaction.payment_status = "finished"
-    mock_transaction.paid_amount = 99.99
-    mock_transaction.pay_currency = "usdt"
-    
-    # select   
+
+    #    ( fulfilled=True )
+    mock_transaction = _make_txn(fulfilled=True, payment_status="finished")
+
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
-    
-    with patch.object(mock_db, 'execute', return_value=mock_execute_result):
+
+    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock()) as mock_activate_plan:
+
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
-        
-        #        
+
+        #       ->   (  )
+        mock_activate_plan.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -175,25 +255,27 @@ async def test_process_webhook_amount_mismatch():
         "pay_currency": "usdt",
         "order_id": "tenant_testtenant123_plan_pro_1234567890"
     }
-    
-    # Mock  
+
+    # Mock
     mock_db = AsyncMock(spec=AsyncSession)
-    
-    #     
-    mock_transaction = MagicMock()
-    mock_transaction.payment_status = "waiting"
-    mock_transaction.paid_amount = None
-    mock_transaction.pay_currency = "usdt"
-    
-    # select   
+    mock_transaction = _make_txn()
+
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
 
     mock_plan = {"prices_usdt": {"monthly": 99.99}}
 
+    api_status = {
+        "payment_status": "finished",
+        "actually_paid": 80.00,
+        "pay_currency": "usdt",
+    }
+
     with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
          patch.object(mock_db, 'commit'), \
-         patch('app.services.nowpayments.get_plan', return_value=mock_plan):
+         patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock()) as mock_activate_plan:
 
         service = NOWPaymentsService()
         await service.process_webhook(webhook_data, mock_db)
@@ -201,6 +283,61 @@ async def test_process_webhook_amount_mismatch():
         #     
         assert mock_transaction.note is not None
         assert "Amount mismatch" in mock_transaction.note
+        #       ( )
+        assert mock_transaction.fulfilled is not True
+        mock_activate_plan.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_non_usdt_currency_uses_rate():
+    """BTC (non-1:1) payment should be validated via the USD exchange rate."""
+    webhook_data = {
+        "payment_id": "btc_payment_1",
+        "payment_status": "finished",
+        "paid_amount": 0.0015,  # BTC
+        "pay_currency": "btc",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890"
+    }
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_transaction = _make_txn(payment_id="btc_payment_1", pay_currency="btc")
+
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar_one_or_none.return_value = mock_transaction
+
+    mock_tenant = MagicMock()
+    mock_plan = {"prices_usdt": {"monthly": 99.99}}
+
+    api_status = {
+        "payment_status": "finished",
+        "actually_paid": 0.0015,
+        "pay_currency": "btc",
+    }
+
+    # 0.0015 BTC at 66660 USD/BTC == 99.99 USD
+    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+         patch.object(mock_db, 'commit'), \
+         patch.object(mock_db, 'get', return_value=mock_tenant), \
+         patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)), \
+         patch.object(NOWPaymentsService, '_get_usd_rate', new=AsyncMock(return_value=Decimal("66660.00"))), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock(return_value={"success": True, "api_key": "sk-test"})) as mock_activate_plan, \
+         patch('app.services.nowpayments.create_commission', new=AsyncMock()):
+
+        service = NOWPaymentsService()
+        await service.process_webhook(webhook_data, mock_db)
+
+        mock_activate_plan.assert_awaited_once()
+        assert mock_transaction.fulfilled is True
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_parse_order_id_with_underscores():
+    """order_id parsing must survive tenant ids that contain underscores."""
+    service = NOWPaymentsService()
+    tenant, plan = service._parse_order_id("tenant_tenant_abc_123_plan_pro_98765")
+    assert tenant == "tenant_abc_123"
+    assert plan == "pro"
 
 
 def test_nowpayments_service_initialization():
