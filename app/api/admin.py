@@ -31,6 +31,8 @@ from app.schemas.admin import (
     AdminSetupRequest,
     AdminSetupResponse,
     AdminTokenResponse,
+    AdminVerifyPasswordRequest,
+    AdminVerifyPasswordResponse,
     AdminStats,
     AdminSystemHealth,
     AdminRecentActivityEvent,
@@ -181,6 +183,45 @@ async def rotate_admin_password(payload: AdminRotatePasswordRequest, db: AsyncSe
 
     logger.info("admin_password_rotated", username=db_user.value)
     return AdminRotatePasswordResponse()
+
+
+@router.post(
+    "/verify-password",
+    response_model=AdminVerifyPasswordResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def verify_admin_password(
+    payload: AdminVerifyPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-verify the admin's current password (step-up auth).
+
+    Called by the frontend before high-risk actions (API key issue/rotate/
+    revoke, user billing changes). Requires the admin JWT in addition to the
+    password so a stolen session token alone can't authorize destructive
+    actions. Supports both the DB-backed bcrypt credential and the env-based
+    ADMIN_PASSWORD fallback.
+    """
+    # Layer 1: DB-backed bcrypt credential.
+    user_result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_username"))
+    pass_result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_password_hash"))
+    db_user = user_result.scalar_one_or_none()
+    db_pass = pass_result.scalar_one_or_none()
+    if db_user and db_pass:
+        if verify_admin_credentials_hash(db_user.value, payload.password, db_user.value, db_pass.value):
+            return AdminVerifyPasswordResponse(ok=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="비밀번호가 올바르지 않습니다.")
+
+    # Layer 2: env-based ADMIN_PASSWORD fallback.
+    if settings.admin_username and settings.admin_password:
+        if verify_admin_credentials(settings.admin_username, payload.password):
+            return AdminVerifyPasswordResponse(ok=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="비밀번호가 올바르지 않습니다.")
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="관리자 비밀번호가 설정되어 있지 않습니다.",
+    )
 
 
 @router.get("/me", response_model=AdminMeResponse, dependencies=[Depends(require_admin)])

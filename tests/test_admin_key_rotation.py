@@ -253,3 +253,51 @@ async def test_setup_stores_login_keys(unauthenticated_client, db_session):
         assert verify_password_stored("dbpass123", pass_row.value) is True
     finally:
         _unwire_db(app)
+
+
+#  4. Password re-verification (step-up auth for high-risk actions)
+
+
+async def test_verify_password_rejects_unauthenticated(unauthenticated_client):
+    res = await unauthenticated_client.post(
+        "/api/admin/verify-password",
+        json={"password": "whatever"},
+    )
+    assert res.status_code == 401
+
+
+async def test_verify_password_wrong_401(unauthenticated_client, db_session):
+    from app.models.system_setting import SystemSetting
+
+    app = await _wire_db(unauthenticated_client, db_session)
+    db_session.add(SystemSetting(key="admin_username", value="admin"))
+    db_session.add(SystemSetting(key="admin_password_hash", value=hash_password("correctpw123")))
+    await db_session.commit()
+    try:
+        res = await unauthenticated_client.post(
+            "/api/admin/verify-password",
+            json={"password": "wrongpw"},
+            headers=_admin_headers(),
+        )
+        assert res.status_code == 401
+    finally:
+        _unwire_db(app)
+
+
+async def test_verify_password_success(unauthenticated_client, db_session):
+    from app.models.system_setting import SystemSetting
+
+    app = await _wire_db(unauthenticated_client, db_session)
+    db_session.add(SystemSetting(key="admin_username", value="admin"))
+    db_session.add(SystemSetting(key="admin_password_hash", value=hash_password("correctpw123")))
+    await db_session.commit()
+    try:
+        res = await unauthenticated_client.post(
+            "/api/admin/verify-password",
+            json={"password": "correctpw123"},
+            headers=_admin_headers(),
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["ok"] is True
+    finally:
+        _unwire_db(app)
