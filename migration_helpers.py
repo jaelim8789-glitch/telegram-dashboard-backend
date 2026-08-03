@@ -28,3 +28,12 @@ def add_column_if_not_exists(table_name: str, column: sa.Column):
     columns = [c["name"] for c in insp.get_columns(table_name)]
     if column.name not in columns:
         op.add_column(table_name, column)
+
+
+def drop_column_if_exists(table_name: str, column_name: str):
+    """Drop a column only if it exists."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    columns = [c["name"] for c in insp.get_columns(table_name)]
+    if column_name in columns:
+        op.drop_column(table_name, column_name)
