@@ -799,7 +799,7 @@ async def upsert_chat_meta(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_chat_meta_table(db)
-    await require_account_tenant_access(account_id, identity, db)
+    await require_account_tenant_access(account_id, db, identity)
     from sqlalchemy import select
     from app.models.chat_meta import CHAT_STATUSES, ChatMeta
     import uuid
