@@ -71,8 +71,8 @@ async def read_accounts(
         db, tenant_id=tenant_id, filters=filters, sort=sort, page=page, page_size=page_size
     )
 
-    # Enrich with health status
-    health_items = await get_account_health(identity)
+    # Enrich with health status – reuse already-fetched accounts to avoid N+1
+    health_items = await get_account_health(identity, preloaded_accounts=accounts)
     health_map = {h.account_id: h for h in health_items}
 
     items = []
@@ -168,7 +168,8 @@ async def export_accounts(
         filters=filters, sort=sort, page=page, page_size=page_size,
     )
 
-    health_items = await get_account_health(identity)
+    # Reuse already-fetched accounts to avoid N+1
+    health_items = await get_account_health(identity, preloaded_accounts=accounts)
     health_map = {h.account_id: h for h in health_items}
     items = []
     for a in accounts:
@@ -350,7 +351,8 @@ async def read_account(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
 
-    health_items = await get_account_health(identity, account_id=account_id)
+    # Pass pre-fetched account to avoid redundant query inside get_account_health
+    health_items = await get_account_health(identity, preloaded_accounts=[account])
     health = health_items[0] if health_items else None
 
     return AccountRead(
@@ -461,7 +463,8 @@ async def get_account_runtime_metrics(
     if account is None:
         raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
 
-    health_items = await get_account_health(identity, account_id=account_id)
+    # Pass pre-fetched account to avoid redundant query inside get_account_health
+    health_items = await get_account_health(identity, preloaded_accounts=[account])
     health = health_items[0] if health_items else None
 
     now = datetime.now(timezone.utc)
