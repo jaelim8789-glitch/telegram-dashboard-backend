@@ -49,7 +49,14 @@ async def test_get_account(client):
     account_id = created.json()["id"]
     res = await client.get(f"/api/accounts/{account_id}")
     assert res.status_code == 200
-    assert res.json()["id"] == account_id
+    body = res.json()
+    assert body["id"] == account_id
+    assert body["health_status"] == "not_configured"
+    assert body["health_score"] == 0
+    assert body["has_session"] is False
+    assert body["recent_success_count"] == 0
+    assert body["recent_failure_count"] == 0
+    assert body["total_delivery_attempts"] == 0
 
 
 @pytest.mark.asyncio
@@ -106,7 +113,7 @@ async def test_list_accounts_returns_created_accounts(client):
 async def test_search_accounts_by_phone(client):
     await client.post("/api/accounts", json={"phone": "+821011111111", "name": "Alice"})
     await client.post("/api/accounts", json={"phone": "+821022222222", "name": "Bob"})
-    res = await client.get("/api/accountssearch=Alice")
+    res = await client.get("/api/accounts?search=Alice")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] == 1
@@ -114,11 +121,24 @@ async def test_search_accounts_by_phone(client):
 
 
 @pytest.mark.asyncio
+async def test_list_accounts_health_fields(client):
+    await client.post("/api/accounts", json={"phone": "+821011111111", "name": "Alice"})
+    res = await client.get("/api/accounts")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["items"]
+    item = body["items"][0]
+    assert item["health_status"] == "not_configured"
+    assert item["health_score"] == 0
+    assert item["has_session"] is False
+
+
+@pytest.mark.asyncio
 async def test_filter_accounts_by_status(client):
     a1 = await client.post("/api/accounts", json={"phone": "+821033333333"})
     await client.put(f"/api/accounts/{a1.json()['id']}", json={"status": "active"})
     await client.post("/api/accounts", json={"phone": "+821044444444"})
-    res = await client.get("/api/accountsstatus=active")
+    res = await client.get("/api/accounts?status=active")
     assert res.status_code == 200
     body = res.json()
     assert body["total"] >= 1
@@ -130,7 +150,7 @@ async def test_filter_accounts_by_status(client):
 async def test_paginated_accounts(client):
     for i in range(5):
         await client.post("/api/accounts", json={"phone": f"+8210{i:06d}0000"})
-    res = await client.get("/api/accountspage=1&page_size=2")
+    res = await client.get("/api/accounts?page=1&page_size=2")
     assert res.status_code == 200
     body = res.json()
     assert len(body["items"]) == 2
@@ -211,13 +231,67 @@ async def test_bulk_unknown_action(client):
 
 
 @pytest.mark.asyncio
+async def test_bulk_rename_accounts(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821011122233"})
+    res = await client.post("/api/accounts/bulk", json={
+        "account_ids": [a1.json()["id"]],
+        "action": "rename",
+        "value": "Renamed Account",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_processed"] == 1
+    assert body["total_failed"] == 0
+
+    get_back = await client.get(f"/api/accounts/{a1.json()['id']}")
+    assert get_back.status_code == 200
+    assert get_back.json()["name"] == "Renamed Account"
+
+
+@pytest.mark.asyncio
+async def test_export_accounts_json_and_csv(client):
+    a1 = await client.post("/api/accounts", json={"phone": "+821011133344", "name": "Export One"})
+    a2 = await client.post("/api/accounts", json={"phone": "+821011155566", "name": "Export Two"})
+
+    json_res = await client.get("/api/accounts/export?format=json&page_size=100")
+    assert json_res.status_code == 200
+    json_body = json_res.json()
+    assert isinstance(json_body, list)
+    assert any(item["id"] == a1.json()["id"] for item in json_body)
+    assert any(item["id"] == a2.json()["id"] for item in json_body)
+
+    csv_res = await client.get("/api/accounts/export?format=csv&page_size=100")
+    assert csv_res.status_code == 200
+    assert csv_res.headers["content-type"].startswith("text/csv")
+    csv_text = await csv_res.aread() if hasattr(csv_res, "aread") else csv_res.text
+    if isinstance(csv_text, bytes):
+        csv_text = csv_text.decode("utf-8")
+    assert "id,phone,name,status" in csv_text
+    assert "+821011133344" in csv_text
+    assert "+821011155566" in csv_text
+
+
+@pytest.mark.asyncio
 async def test_sort_accounts_by_phone(client):
     await client.post("/api/accounts", json={"phone": "+8210AAAAAA", "name": "Z"})
     await client.post("/api/accounts", json={"phone": "+8210BBBBBB", "name": "A"})
-    res = await client.get("/api/accountssort_by=phone&sort_dir=asc&page_size=100")
+    res = await client.get("/api/accounts?sort_by=phone&sort_dir=asc&page_size=100")
     body = res.json()
     phones = [item["phone"] for item in body["items"]]
     assert phones == sorted(phones)
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_endpoint(client, monkeypatch):
+    class FakeManager:
+        _initialized = True
+        def get_metrics(self):
+            return {"connected_accounts": 1, "event_count": 2}
+
+    monkeypatch.setattr("app.api.runtime.SessionManager", lambda: FakeManager())
+    res = await client.get("/api/runtime/metrics")
+    assert res.status_code == 200
+    assert res.json() == {"connected_accounts": 1, "event_count": 2}
 
 
 @pytest.mark.asyncio

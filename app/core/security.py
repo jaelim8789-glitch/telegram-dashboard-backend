@@ -90,6 +90,17 @@ def decode_user_access_token(token: str) -> dict | None:
     return None
 
 
+def decode_user_id_from_token(token: str) -> str | None:
+    payload = decode_user_access_token(token)
+    if payload is None:
+        return None
+
+    sub = payload.get("sub", "")
+    if isinstance(sub, str) and sub.startswith(USER_JWT_SUBJECT_PREFIX):
+        return sub[len(USER_JWT_SUBJECT_PREFIX):]
+    return None
+
+
 def generate_otp_code() -> str:
     return f"{secrets.randbelow(10**OTP_CODE_LENGTH):0{OTP_CODE_LENGTH}d}"
 

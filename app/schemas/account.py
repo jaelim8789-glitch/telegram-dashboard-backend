@@ -30,6 +30,9 @@ class AccountRead(BaseModel):
     phone: str
     name: str | None
     status: AccountStatus
+    health_status: HealthStatus | None = None
+    health_score: int = 0
+    has_session: bool = False
     today_sent: int
     group_count: int
     last_activity: datetime | None
@@ -38,6 +41,9 @@ class AccountRead(BaseModel):
     last_error_at: datetime | None
     last_success_at: datetime | None
     health_checked_at: datetime | None
+    recent_success_count: int = 0
+    recent_failure_count: int = 0
+    total_delivery_attempts: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -50,6 +56,7 @@ class AccountWithHealth(BaseModel):
     name: str | None
     status: AccountStatus
     health_status: HealthStatus
+    health_score: int
     has_session: bool
     today_sent: int
     group_count: int
@@ -104,7 +111,8 @@ class PaginatedAccounts(BaseModel):
 
 class BulkActionRequest(BaseModel):
     account_ids: list[str] = Field(min_length=1, max_length=100)
-    action: str = Field(description="activate, deactivate, delete, reset_session")
+    action: str = Field(description="activate, deactivate, delete, reset_session, rename")
+    value: str | None = Field(default=None, description="Optional value for rename action")
 
 
 class BulkActionResult(BaseModel):

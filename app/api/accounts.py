@@ -1,4 +1,9 @@
+import csv
+from datetime import datetime, timezone
+from io import StringIO
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -80,6 +85,7 @@ async def read_accounts(
             name=a.name,
             status=a.status,
             health_status=health_status_val,
+            health_score=health.health_score if health else 0,
             has_session=a.session_data is not None,
             today_sent=a.today_sent,
             group_count=a.group_count,
@@ -102,6 +108,117 @@ async def read_accounts(
 
     total_pages = max(1, (total + page_size - 1) // page_size)
     return PaginatedAccounts(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
+
+
+def _account_with_health_to_dict(account: AccountWithHealth) -> dict:
+    return {
+        "id": account.id,
+        "phone": account.phone,
+        "name": account.name,
+        "status": account.status,
+        "health_status": account.health_status,
+        "health_score": account.health_score,
+        "has_session": account.has_session,
+        "today_sent": account.today_sent,
+        "group_count": account.group_count,
+        "last_activity": account.last_activity.isoformat() if account.last_activity else None,
+        "last_error": account.last_error,
+        "last_error_at": account.last_error_at.isoformat() if account.last_error_at else None,
+        "last_success_at": account.last_success_at.isoformat() if account.last_success_at else None,
+        "health_checked_at": account.health_checked_at.isoformat() if account.health_checked_at else None,
+        "auto_reply_enabled": account.auto_reply_enabled,
+        "recent_success_count": account.recent_success_count,
+        "recent_failure_count": account.recent_failure_count,
+        "total_delivery_attempts": account.total_delivery_attempts,
+        "created_at": account.created_at.isoformat(),
+        "updated_at": account.updated_at.isoformat(),
+    }
+
+
+@router.get("/export")
+async def export_accounts(
+    format: str = Query(default="json", description="json or csv"),
+    search: str | None = Query(default=None, description="Search phone or name"),
+    status: str | None = Query(default=None),
+    health_status: str | None = Query(default=None),
+    has_session: bool | None = Query(default=None),
+    has_error: bool | None = Query(default=None),
+    auto_reply_enabled: bool | None = Query(default=None),
+    phone: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=1000, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Export accounts in JSON or CSV format."""
+    filters = AccountFilterParams(
+        search=search,
+        status=status,
+        has_session=has_session,
+        has_error=has_error,
+        auto_reply_enabled=auto_reply_enabled,
+        phone=phone,
+    )
+    sort = AccountSortParams(sort_by=sort_by, sort_dir=sort_dir)
+
+    accounts, _ = await account_crud.query_accounts(
+        db, tenant_id=identity.tenant_id if identity.kind != "admin" else None,
+        filters=filters, sort=sort, page=page, page_size=page_size,
+    )
+
+    health_items = await get_account_health(identity)
+    health_map = {h.account_id: h for h in health_items}
+    items = []
+    for a in accounts:
+        health = health_map.get(a.id)
+        items.append(AccountWithHealth(
+            id=a.id,
+            phone=a.phone,
+            name=a.name,
+            status=a.status,
+            health_status=health.status if health else "unknown",
+            health_score=health.health_score if health else 0,
+            has_session=a.session_data is not None,
+            today_sent=a.today_sent,
+            group_count=a.group_count,
+            last_activity=a.last_activity,
+            last_error=a.last_error,
+            last_error_at=a.last_error_at,
+            last_success_at=a.last_success_at,
+            health_checked_at=a.health_checked_at,
+            auto_reply_enabled=a.auto_reply_enabled,
+            recent_success_count=health.recent_success_count if health else 0,
+            recent_failure_count=health.recent_failure_count if health else 0,
+            total_delivery_attempts=health.total_delivery_attempts if health else 0,
+            created_at=a.created_at,
+            updated_at=a.updated_at,
+        ))
+
+    rows = [ _account_with_health_to_dict(item) for item in items ]
+
+    if format.lower() == "csv":
+        buf = StringIO()
+        writer = csv.writer(buf)
+        header = [
+            "id", "phone", "name", "status", "health_status", "health_score",
+            "has_session", "today_sent", "group_count", "last_activity", "last_error",
+            "last_error_at", "last_success_at", "health_checked_at", "auto_reply_enabled",
+            "recent_success_count", "recent_failure_count", "total_delivery_attempts",
+            "created_at", "updated_at",
+        ]
+        writer.writerow(header)
+        for row in rows:
+            writer.writerow([row[h] for h in header])
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=accounts.csv"},
+        )
+
+    return rows
 
 
 @router.get("/summary", response_model=AccountSummary)
@@ -143,7 +260,7 @@ async def bulk_account_action(
 ):
     """Execute a bulk action on multiple accounts.
 
-    Supported actions: activate, deactivate, delete, reset_session.
+    Supported actions: activate, deactivate, connect, disconnect, delete, reset_session, rename.
     """
     results = []
     total_processed = 0
@@ -166,6 +283,16 @@ async def bulk_account_action(
                 await account_crud.mark_account_session_invalid(db, account)
             elif payload.action == "delete":
                 await account_crud.delete_account(db, account)
+            elif payload.action == "rename":
+                if not payload.value:
+                    results.append(BulkActionResult(account_id=account_id, success=False, error="Rename value is required."))
+                    total_failed += 1
+                    continue
+                await account_crud.update_account(db, account, AccountUpdate(name=payload.value))
+            elif payload.action == "connect":
+                await account_crud.update_account(db, account, AccountUpdate(status="active"))
+            elif payload.action == "disconnect":
+                await account_crud.update_account(db, account, AccountUpdate(status="inactive"))
             else:
                 results.append(BulkActionResult(account_id=account_id, success=False, error=f"Unknown action: {payload.action}"))
                 total_failed += 1
@@ -207,7 +334,7 @@ async def create_account(
             await db.refresh(account)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미 등록된 전화번호입니다.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 등록된 전화번호입니다.")
     logger.info("account_created", account_id=account.id)
     return account
 
@@ -222,7 +349,32 @@ async def read_account(
     account = await account_crud.get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
-    return account
+
+    health_items = await get_account_health(identity, account_id=account_id)
+    health = health_items[0] if health_items else None
+
+    return AccountRead(
+        id=account.id,
+        phone=account.phone,
+        name=account.name,
+        status=account.status,
+        health_status=health.status if health else None,
+        health_score=health.health_score if health else 0,
+        has_session=account.session_data is not None,
+        today_sent=account.today_sent,
+        group_count=account.group_count,
+        last_activity=account.last_activity,
+        auto_reply_enabled=account.auto_reply_enabled,
+        last_error=account.last_error,
+        last_error_at=account.last_error_at,
+        last_success_at=account.last_success_at,
+        health_checked_at=account.health_checked_at,
+        recent_success_count=health.recent_success_count if health else 0,
+        recent_failure_count=health.recent_failure_count if health else 0,
+        total_delivery_attempts=health.total_delivery_attempts if health else 0,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
 
 
 @router.put("/{account_id}", response_model=AccountRead)
@@ -295,3 +447,66 @@ async def delete_account(
             detail=str(exc),
         ) from exc
     logger.info("account_deleted", account_id=account_id)
+
+
+@router.get("/{account_id}/runtime-metrics")
+async def get_account_runtime_metrics(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get operational runtime metrics for a single account."""
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+
+    health_items = await get_account_health(identity, account_id=account_id)
+    health = health_items[0] if health_items else None
+
+    now = datetime.now(timezone.utc)
+    connected_time = None
+    if account.last_activity:
+        delta = now - account.last_activity.replace(tzinfo=timezone.utc) if account.last_activity.tzinfo is None else now - account.last_activity
+        connected_time = int(delta.total_seconds())
+
+    flood_wait = False
+    if health and health.last_error_status:
+        flood_wait = "flood" in (health.last_error_status or "").lower()
+
+    return {
+        "account_id": account_id,
+        "status": account.status,
+        "has_session": account.session_data is not None,
+        "health_score": health.health_score if health else 0,
+        "health_status": health.status if health else "unknown",
+        "connected_seconds_ago": connected_time,
+        "flood_wait": flood_wait,
+        "last_error": account.last_error,
+        "last_error_at": account.last_error_at.isoformat() if account.last_error_at else None,
+        "last_success_at": account.last_success_at.isoformat() if account.last_success_at else None,
+        "last_activity": account.last_activity.isoformat() if account.last_activity else None,
+        "today_sent": account.today_sent,
+        "group_count": account.group_count,
+        "recent_success_count": health.recent_success_count if health else 0,
+        "recent_failure_count": health.recent_failure_count if health else 0,
+        "total_delivery_attempts": health.total_delivery_attempts if health else 0,
+        "auto_reply_enabled": account.auto_reply_enabled,
+        "created_at": account.created_at.isoformat() if account.created_at else None,
+    }
+
+
+@router.get("/{account_id}/events")
+async def get_account_session_events(
+    account_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get session event history for an account."""
+    await require_account_tenant_access(account_id, db, identity)
+    from app.services.session_manager import SessionManager
+    manager = SessionManager()
+    if not manager._initialized:
+        return []
+    return await manager.get_events(account_id, limit)

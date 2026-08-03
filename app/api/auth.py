@@ -83,7 +83,7 @@ def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
     )
 
 
-@router.post("/send-code", response_model=SendCodeResponse)
+@router.post("/send-code", response_model=SendCodeResponse, response_model_exclude_none=True)
 async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession = Depends(get_db)):
     # Layer 1: per-IP rate limit
     client_ip = get_client_ip(request)
@@ -121,11 +121,7 @@ async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession
         )
 
     logger.info("verification_code_sent", phone=payload.phone)
-    resp = SendCodeResponse(sent=True)
-    # Dev mode: include code in response when using console SMS provider
-    if settings.sms_provider == "console":
-        resp = SendCodeResponse(sent=True, code=code)
-    return resp
+    return SendCodeResponse(sent=True)
 
 
 @router.post("/verify-code", response_model=VerifyCodeResponse)
@@ -169,7 +165,7 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
         code_ok = await user_crud.verify_code(db, payload.phone, payload.code)
         if not code_ok:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="인증번호가 올바르지 않습니다. 다시 시도해주세요.",
             )
     elif payload.telegram_verification_token is not None:
@@ -178,7 +174,7 @@ async def verify_code(payload: VerifyCodeRequest, request: Request, db: AsyncSes
         )
         if not token_ok:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="인증에 실패했습니다. 다시 시도해주세요.",
             )
     else:

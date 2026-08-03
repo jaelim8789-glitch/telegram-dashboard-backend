@@ -511,4 +511,12 @@ async def api_metrics():
 # thing that can reach uvicorn directly (not internet-exposed itself).
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware  # noqa: E402
 
-app = ProxyHeadersMiddleware(app, trusted_hosts="*")  # safe: only reachable via internal nginx/Cloudflare
+
+class ProxyHeadersApp(ProxyHeadersMiddleware):
+    """ASGI wrapper that forwards FastAPI attributes for tests and dependency overrides."""
+
+    def __getattr__(self, name: str):
+        return getattr(self.app, name)
+
+
+app = ProxyHeadersApp(app, trusted_hosts="*")  # safe: only reachable via internal nginx/Cloudflare

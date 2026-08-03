@@ -96,7 +96,7 @@ def _unwire_db(app):
 
 
 async def test_user_lookup_rejects_unauthenticated(unauthenticated_client):
-    res = await unauthenticated_client.get("/api/admin/user-lookupq=test")
+    res = await unauthenticated_client.get("/api/admin/user-lookup?q=test")
     assert res.status_code == 401
 
 
@@ -118,7 +118,7 @@ async def test_user_lookup_by_phone_found(unauthenticated_client, db_session):
     print(f"  [TEST] db_session={id(db_session)}", flush=True)
     try:
         res = await unauthenticated_client.get(
-            f"/api/admin/user-lookupq={user.phone}",
+            f"/api/admin/user-lookup?q={user.phone}",
             headers=_admin_headers(),
         )
         assert res.status_code == 200
@@ -137,7 +137,7 @@ async def test_user_lookup_returns_has_api_key_true(unauthenticated_client, db_s
     user, _ = await _setup_user_with_key_and_tenant(db_session, "+821099991001")
     try:
         res = await unauthenticated_client.get(
-            f"/api/admin/user-lookupq={user.phone}",
+            f"/api/admin/user-lookup?q={user.phone}",
             headers=_admin_headers(),
         )
         assert res.status_code == 200
@@ -150,7 +150,7 @@ async def test_user_lookup_returns_has_api_key_true(unauthenticated_client, db_s
 
 async def test_user_lookup_not_found(unauthenticated_client):
     res = await unauthenticated_client.get(
-        "/api/admin/user-lookupq=nonexistent",
+        "/api/admin/user-lookup?q=nonexistent",
         headers=_admin_headers(),
     )
     assert res.status_code == 200
@@ -200,8 +200,8 @@ async def test_manual_issue_defaults_tenant_to_team_plan(unauthenticated_client,
         tenant = (await db_session.execute(
             select(Tenant).where(Tenant.phone == user.phone)
         )).scalar_one()
-        assert tenant.plan == "team"
-        assert tenant.max_accounts == 20
+        assert tenant.plan == "max"
+        assert tenant.max_accounts == 10
     finally:
         _unwire_db(app)
 

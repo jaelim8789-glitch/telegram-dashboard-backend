@@ -6,6 +6,7 @@ from app.api.deps import get_current_identity, Identity, require_account_tenant_
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.database import get_db
+from app.services.session_manager import SessionManager
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
@@ -58,6 +59,17 @@ async def list_inspector_summary(
         "error": error,
         "runtimes": runtimes,
     }
+
+
+@router.get("/metrics")
+async def runtime_metrics(
+    identity: Identity = Depends(get_current_identity),
+):
+    """Return current SessionManager runtime metrics."""
+    manager = SessionManager()
+    if not manager._initialized:
+        return {"status": "not_initialized"}
+    return manager.get_metrics()
 
 
 @router.get("/inspector/{account_id}")

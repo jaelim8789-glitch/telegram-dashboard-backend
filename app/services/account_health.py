@@ -50,6 +50,36 @@ class AccountHealthItem:
     recent_success_count: int = 0
     recent_failure_count: int = 0
     total_delivery_attempts: int = 0
+    health_score: int = 0
+
+
+def _is_proxy_error(error_message: str | None) -> bool:
+    if not error_message:
+        return False
+    emsg = error_message.lower()
+    return any(token in emsg for token in ("proxy", "socks", "http proxy", "socks5", "socks4"))
+
+
+def _health_score_for(status_val: str, error_message: str | None = None) -> int:
+    if status_val == "healthy":
+        return 100
+    if status_val == "not_configured":
+        return 0
+    if status_val == "banned":
+        return 0
+    if status_val == "rate_limited":
+        return 20
+    if status_val == "unauthorized":
+        return 10
+    if status_val == "restricted":
+        return 25
+    if status_val == "unknown":
+        return 60
+    if status_val == "error":
+        if _is_proxy_error(error_message):
+            return 5
+        return 40
+    return 50
 
 
 @dataclass
@@ -139,6 +169,7 @@ async def get_account_health(
         recent_success = acct_counts["successful"]
         recent_failures = acct_counts["total"] - acct_counts["successful"]
 
+        last_error_status: str | None = None
         if account.status == "banned":
             status_val = "banned"
         elif account.status == "suspended":
@@ -146,12 +177,15 @@ async def get_account_health(
         elif not has_session:
             status_val = "not_configured"
         elif latest and not latest.success:
-            if latest.status == "session_expired":
+            if latest.status == "session_expired" or latest.status == "expired":
                 status_val = "unauthorized"
             elif latest.status == "banned":
                 status_val = "banned"
             elif latest.status == "flood_wait":
                 status_val = "rate_limited"
+            elif _is_proxy_error(latest.error_message):
+                status_val = "error"
+                last_error_status = "proxy_error"
             elif latest.status in ("network_error", "internal_error"):
                 status_val = "error"
             else:
@@ -159,15 +193,13 @@ async def get_account_health(
         elif latest and latest.success:
             status_val = "healthy"
         elif has_session:
-            if account.status == "active":
-                status_val = "healthy"
-            else:
-                status_val = "unknown"
+            status_val = "unknown"
         else:
             status_val = "not_configured"
 
         last_error = latest.error_message if latest and not latest.success else None
-        last_error_status = latest.status if latest and not latest.success else None
+        if latest and not latest.success and last_error_status is None:
+            last_error_status = latest.status
 
         items.append(AccountHealthItem(
             account_id=account.id,
@@ -184,6 +216,7 @@ async def get_account_health(
             recent_success_count=recent_success,
             recent_failure_count=recent_failures,
             total_delivery_attempts=acct_counts["total"],
+            health_score=_health_score_for(status_val, latest.error_message if latest else None),
         ))
 
     return items

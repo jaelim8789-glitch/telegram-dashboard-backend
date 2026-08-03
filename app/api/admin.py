@@ -109,7 +109,7 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
             logger.info("admin_login_success_db")
             return AdminTokenResponse(access_token=create_access_token())
     logger.warning("admin_login_failed", username=payload.username)
-    raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
 
 @router.post("/setup", response_model=AdminSetupResponse, status_code=status.HTTP_201_CREATED)
