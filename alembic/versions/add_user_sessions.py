@@ -4,6 +4,7 @@ from typing import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from alembic.utils import create_table_if_not_exists
 
 revision: str = "add_user_sessions"
 down_revision: str | None = "a1c3e5f7b9d1"
@@ -12,7 +13,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "user_sessions",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("token_hash", sa.String(64), unique=True, nullable=False, index=True),

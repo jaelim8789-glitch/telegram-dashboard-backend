@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "f6a7b8c9d0e1"
@@ -31,7 +32,7 @@ def upgrade() -> None:
         pass
 
     if "referral_config" not in existing_tables:
-        op.create_table(
+        create_table_if_not_exists(
             "referral_config",
             sa.Column("id", sa.String(length=36), nullable=False),
             sa.Column("key", sa.String(length=50), nullable=False),
@@ -42,7 +43,7 @@ def upgrade() -> None:
         op.create_index(op.f("ix_referral_config_key"), "referral_config", ["key"], unique=True)
 
     if "referral_audit_logs" not in existing_tables:
-        op.create_table(
+        create_table_if_not_exists(
             "referral_audit_logs",
             sa.Column("id", sa.String(length=36), nullable=False),
             sa.Column("action", sa.String(length=50), nullable=False),

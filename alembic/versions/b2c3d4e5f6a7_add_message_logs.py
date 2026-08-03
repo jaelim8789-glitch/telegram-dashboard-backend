@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "b2c3d4e5f6a7"
@@ -18,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "message_logs",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("account_id", sa.String(36), nullable=False, index=True),

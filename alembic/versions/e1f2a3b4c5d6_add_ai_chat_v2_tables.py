@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -21,7 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     #  ai_chat_sessions_v2 
-    op.create_table(
+    create_table_if_not_exists(
         'ai_chat_sessions_v2',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('tenant_id', sa.String(length=36), nullable=False),
@@ -44,7 +45,7 @@ def upgrade() -> None:
     op.create_index('ix_ai_chat_sessions_v2_created_at', 'ai_chat_sessions_v2', ['created_at'])
 
     #  ai_chat_messages_v2 
-    op.create_table(
+    create_table_if_not_exists(
         'ai_chat_messages_v2',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('session_id', sa.String(length=36), nullable=False),
@@ -69,7 +70,7 @@ def upgrade() -> None:
     op.create_index('ix_ai_chat_messages_v2_created_at', 'ai_chat_messages_v2', ['created_at'])
 
     #  ai_chat_prompt_templates 
-    op.create_table(
+    create_table_if_not_exists(
         'ai_chat_prompt_templates',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('tenant_id', sa.String(length=36), nullable=False),

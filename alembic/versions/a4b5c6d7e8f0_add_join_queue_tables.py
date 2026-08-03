@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "a4b5c6d7e8f0"
@@ -19,7 +20,7 @@ depends_on: Union[str, None] = None
 
 def upgrade() -> None:
     #  join_queue_items 
-    op.create_table(
+    create_table_if_not_exists(
         "join_queue_items",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True),
@@ -39,7 +40,7 @@ def upgrade() -> None:
     )
 
     #  join_queue_configs 
-    op.create_table(
+    create_table_if_not_exists(
         "join_queue_configs",
         sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("is_paused", sa.Boolean(), nullable=False, server_default="false"),

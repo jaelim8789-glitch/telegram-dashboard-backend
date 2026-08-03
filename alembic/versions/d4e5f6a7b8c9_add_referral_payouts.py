@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "d4e5f6a7b8c9"
@@ -24,7 +25,7 @@ def upgrade() -> None:
     existing = inspector.get_table_names()
 
     if "referral_payouts" not in existing:
-        op.create_table(
+        create_table_if_not_exists(
             "referral_payouts",
             sa.Column("id", sa.String(length=36), nullable=False),
             sa.Column("referrer_id", sa.String(length=36), nullable=False),

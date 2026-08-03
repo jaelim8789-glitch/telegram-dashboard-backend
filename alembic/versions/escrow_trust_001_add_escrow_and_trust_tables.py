@@ -7,6 +7,7 @@ Create Date: 2026-08-03
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers
@@ -18,7 +19,7 @@ depends_on = None
 
 def upgrade() -> None:
     # Escrow
-    op.create_table(
+    create_table_if_not_exists(
         "escrows",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), index=True),
@@ -43,7 +44,7 @@ def upgrade() -> None:
     )
 
     # Escrow Milestones
-    op.create_table(
+    create_table_if_not_exists(
         "escrow_milestones",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("escrow_id", sa.String(36), sa.ForeignKey("escrows.id", ondelete="CASCADE"), index=True),
@@ -58,7 +59,7 @@ def upgrade() -> None:
     )
 
     # Escrow Messages
-    op.create_table(
+    create_table_if_not_exists(
         "escrow_messages",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("escrow_id", sa.String(36), sa.ForeignKey("escrows.id", ondelete="CASCADE"), index=True),
@@ -69,7 +70,7 @@ def upgrade() -> None:
     )
 
     # Trust Profiles
-    op.create_table(
+    create_table_if_not_exists(
         "trust_profiles",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), index=True),
@@ -87,7 +88,7 @@ def upgrade() -> None:
     )
 
     # Transaction Reviews
-    op.create_table(
+    create_table_if_not_exists(
         "transaction_reviews",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("escrow_id", sa.String(36), sa.ForeignKey("escrows.id", ondelete="CASCADE"), index=True),

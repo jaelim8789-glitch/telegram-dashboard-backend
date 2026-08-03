@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "2b68d1568159"
@@ -19,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "ai_agents",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("owner_id", sa.String(length=36), nullable=False),
@@ -39,7 +40,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_ai_agents_owner_id"), "ai_agents", ["owner_id"], unique=False)
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_chats",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("agent_id", sa.String(length=36), nullable=False),
@@ -52,7 +53,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_ai_chats_agent_id"), "ai_chats", ["agent_id"], unique=False)
     op.create_index(op.f("ix_ai_chats_tenant_id"), "ai_chats", ["tenant_id"], unique=False)
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_messages",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("chat_id", sa.String(length=36), nullable=False),

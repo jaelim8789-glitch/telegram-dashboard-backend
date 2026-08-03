@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -22,7 +23,7 @@ def upgrade() -> None:
     op.add_column('tenants', sa.Column('monthly_ai_chat_limit', sa.Integer(), server_default='20', nullable=False))
     op.add_column('tenants', sa.Column('ai_chat_credit_balance', sa.Integer(), server_default='0', nullable=False))
 
-    op.create_table(
+    create_table_if_not_exists(
         'ai_chat_messages',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('tenant_id', sa.String(length=36), nullable=False),

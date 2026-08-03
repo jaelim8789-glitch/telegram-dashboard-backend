@@ -7,6 +7,7 @@ depends_on: str | None = None
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 def upgrade() -> None:
@@ -18,7 +19,7 @@ def upgrade() -> None:
     existing_tables = inspector.get_table_names()
     
     if "referral_codes" not in existing_tables:
-        op.create_table(
+        create_table_if_not_exists(
             "referral_codes",
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("code", sa.String(30), nullable=False, unique=True, index=True),
@@ -28,7 +29,7 @@ def upgrade() -> None:
         )
     
     if "referral_commissions" not in existing_tables:
-        op.create_table(
+        create_table_if_not_exists(
             "referral_commissions",
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("referrer_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True),

@@ -15,6 +15,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from alembic.utils import create_table_if_not_exists
 
 
 revision: str = "add_ai_platform_tables"
@@ -24,7 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_not_exists(
         "ai_chat_logs",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), nullable=False),
@@ -40,7 +41,7 @@ def upgrade() -> None:
     op.create_index("ix_ai_chat_logs_session_id", "ai_chat_logs", ["session_id"])
     op.create_index("ix_ai_chat_logs_created_at", "ai_chat_logs", ["created_at"])
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_reply_assistant_logs",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), nullable=False),
@@ -59,7 +60,7 @@ def upgrade() -> None:
     op.create_index("ix_ai_reply_assistant_logs_account_id", "ai_reply_assistant_logs", ["account_id"])
     op.create_index("ix_ai_reply_assistant_logs_created_at", "ai_reply_assistant_logs", ["created_at"])
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_broadcast_assistant_logs",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), nullable=False),
@@ -78,7 +79,7 @@ def upgrade() -> None:
     op.create_index("ix_ai_broadcast_assistant_logs_tenant_id", "ai_broadcast_assistant_logs", ["tenant_id"])
     op.create_index("ix_ai_broadcast_assistant_logs_created_at", "ai_broadcast_assistant_logs", ["created_at"])
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_operations_reports",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), nullable=False),
@@ -96,7 +97,7 @@ def upgrade() -> None:
     op.create_index("ix_ai_operations_reports_tenant_id", "ai_operations_reports", ["tenant_id"])
     op.create_index("ix_ai_operations_reports_created_at", "ai_operations_reports", ["created_at"])
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_usage_records",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("tenant_id", sa.String(36), nullable=False),
@@ -110,7 +111,7 @@ def upgrade() -> None:
     op.create_index("ix_ai_usage_records_feature", "ai_usage_records", ["feature"])
     op.create_index("ix_ai_usage_records_created_at", "ai_usage_records", ["created_at"])
 
-    op.create_table(
+    create_table_if_not_exists(
         "ai_plan_limits",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("plan", sa.String(50), nullable=False),
