@@ -27,6 +27,7 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
+COPY migration_helpers.py .
 
 RUN mkdir -p /app/media/broadcasts /app/logs && chown -R appuser:appuser /app /home/appuser/.local
 USER appuser
