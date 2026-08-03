@@ -820,7 +820,7 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
     # Monthly revenue from payment records
     month_start = today_start.replace(day=1)
     revenue_result = await db.execute(
-        select(func.coalesce(func.sum(PaymentRecord.amount_cents), 0)).where(
+        select(func.coalesce(func.sum(PaymentRecord.amount_usdt), 0)).where(
             PaymentRecord.created_at >= month_start
         )
     )
@@ -961,7 +961,7 @@ async def list_referral_commissions(
                 "referrer_id": c.referrer_id,
                 "referred_id": c.referred_id,
                 "payment_id": c.payment_id,
-                "amount_cents": c.amount_cents,
+                "commission_amount": c.commission_amount,
                 "rate": c.rate,
                 "status": c.status,
                 "payment_tx_id": c.payment_tx_id,
