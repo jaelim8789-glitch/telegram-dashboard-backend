@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 import secrets
 from sqlalchemy import case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta, timezone
 
 from app.api.deps import get_current_identity, require_admin
 from app.config import settings
@@ -12,9 +13,12 @@ from app.core.time import utcnow_naive
 from app.crud import api_key as api_key_crud
 from app.crud import user as user_crud
 from app.database import get_db
+from app.models.account import Account
 from app.models.audit_log import AdminAuditLog
 from app.models.tenant import Tenant
 from app.models.system_setting import SystemSetting
+from app.models.api_key import APIKey
+from app.models.user import User
 from app.schemas.admin import (
     AdminAuditLogListResponse,
     AdminAuditLogRead,
@@ -28,6 +32,9 @@ from app.schemas.admin import (
     AdminTokenResponse,
     AdminSetupRequest,
     AdminSetupResponse,
+    AdminStats,
+    AdminSystemHealth,
+    AdminRecentActivityEvent,
     GuideHubPublishResponse,
     ManualIssueRequest,
     ManualIssueResponse,
@@ -46,7 +53,6 @@ from app.models.referral import ReferralCommission, ReferralPayout
 from app.models.telegram_verification import TelegramChannelVerification
 from app.models.tenant import PaymentRecord, StarsPaymentRecord, Tenant
 from app.models.token import TokenBalance, TokenTransaction
-from datetime import timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger(__name__)
@@ -768,6 +774,143 @@ async def get_admin_dashboard_status(db: AsyncSession = Depends(get_db), identit
             failure_rate=failure_rate,
         ),
     )
+
+
+@router.get("/stats", response_model=AdminStats, dependencies=[Depends(require_admin)])
+async def get_admin_stats(db: AsyncSession = Depends(get_db)):
+    """Aggregate stats for the new admin dashboard."""
+    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+    total_accounts = (await db.execute(select(func.count(Account.id)))).scalar() or 0
+    total_api_keys = (await db.execute(select(func.count(APIKey.id)))).scalar() or 0
+    total_messages_sent = (await db.execute(select(func.count(MessageLog.id)))).scalar() or 0
+
+    active_accounts = (await db.execute(
+        select(func.count(Account.id)).where(Account.status == "active")
+    )).scalar() or 0
+
+    banned_accounts = (await db.execute(
+        select(func.count(Account.id)).where(Account.status == "banned")
+    )).scalar() or 0
+
+    today_start = utcnow_naive().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_messages_sent = (await db.execute(
+        select(func.count(MessageLog.id)).where(MessageLog.created_at >= today_start)
+    )).scalar() or 0
+
+    one_hour_ago = utcnow_naive() - timedelta(hours=1)
+    recent_errors = (await db.execute(
+        select(func.count(MessageLog.id)).where(
+            MessageLog.created_at >= one_hour_ago,
+            MessageLog.success.is_(False),
+        )
+    )).scalar() or 0
+
+    week_ago = utcnow_naive() - timedelta(days=7)
+    weekly_users = (await db.execute(
+        select(func.count(User.id)).where(User.created_at >= week_ago)
+    )).scalar() or 0
+
+    # Unhealthy accounts: health status != "healthy" (from account_health logic)
+    unhealthy_accounts = (await db.execute(
+        select(func.count(Account.id)).where(
+            Account.status.in_(["suspended", "session_corrupted"])
+        )
+    )).scalar() or 0
+
+    # Monthly revenue from payment records
+    month_start = today_start.replace(day=1)
+    revenue_result = await db.execute(
+        select(func.coalesce(func.sum(PaymentRecord.amount_cents), 0)).where(
+            PaymentRecord.created_at >= month_start
+        )
+    )
+    monthly_revenue = (revenue_result.scalar() or 0) / 100.0
+
+    return AdminStats(
+        total_users=total_users,
+        total_accounts=total_accounts,
+        total_messages_sent=total_messages_sent,
+        total_api_keys=total_api_keys,
+        active_accounts=active_accounts,
+        unhealthy_accounts=unhealthy_accounts,
+        banned_accounts=banned_accounts,
+        recent_errors=recent_errors,
+        today_messages_sent=today_messages_sent,
+        weekly_users=weekly_users,
+        monthly_revenue=monthly_revenue,
+        system_status={"backend": "healthy", "db": "healthy"},
+    )
+
+
+@router.get("/health", response_model=AdminSystemHealth, dependencies=[Depends(require_admin)])
+async def system_health(db: AsyncSession = Depends(get_db)):
+    """System health check: backend + database status."""
+    db_status = "healthy"
+    try:
+        await db.execute(sa_text("SELECT 1"))
+    except Exception:
+        db_status = "error"
+
+    return AdminSystemHealth(
+        backend="healthy",
+        database=db_status,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@router.get("/recent-activity", response_model=list[AdminRecentActivityEvent], dependencies=[Depends(require_admin)])
+async def recent_activity(limit: int = Query(default=20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
+    """Recent system activity: message deliveries, account health changes, user registrations."""
+    events: list[AdminRecentActivityEvent] = []
+
+    # Recent message logs (last 24h)
+    since = utcnow_naive() - timedelta(hours=24)
+    msg_result = await db.execute(
+        select(MessageLog)
+        .where(MessageLog.created_at >= since)
+        .order_by(MessageLog.created_at.desc())
+        .limit(limit)
+    )
+    for log in msg_result.scalars().all():
+        events.append(AdminRecentActivityEvent(
+            event_type="message",
+            detail=f"Message to {log.recipient}: {log.status}",
+            created_at=log.created_at.isoformat() if log.created_at else "",
+            metadata={"account_id": log.account_id, "success": log.success, "source": log.source},
+        ))
+
+    # Recent user registrations (last 24h)
+    user_result = await db.execute(
+        select(User)
+        .where(User.created_at >= since)
+        .order_by(User.created_at.desc())
+        .limit(limit)
+    )
+    for u in user_result.scalars().all():
+        events.append(AdminRecentActivityEvent(
+            event_type="user_registered",
+            detail=f"New user {u.phone}",
+            created_at=u.created_at.isoformat() if u.created_at else "",
+            metadata={"user_id": u.id},
+        ))
+
+    # Recent audit log entries
+    audit_result = await db.execute(
+        select(AdminAuditLog)
+        .where(AdminAuditLog.created_at >= since)
+        .order_by(AdminAuditLog.created_at.desc())
+        .limit(limit)
+    )
+    for a in audit_result.scalars().all():
+        events.append(AdminRecentActivityEvent(
+            event_type="admin_action",
+            detail=f"{a.action}: {a.detail}",
+            created_at=a.created_at.isoformat() if a.created_at else "",
+            metadata={"target_type": a.target_type, "result": a.result},
+        ))
+
+    events.sort(key=lambda e: e.created_at, reverse=True)
+    return events[:limit]
 
 
 @router.get("/audit-logs", response_model=AdminAuditLogListResponse, dependencies=[Depends(require_admin)])

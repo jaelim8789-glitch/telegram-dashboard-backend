@@ -138,3 +138,31 @@ class AdminSetupRequest(BaseModel):
 class AdminSetupResponse(BaseModel):
     ok: bool = True
     message: str = "관리자 계정이 생성되었습니다."
+
+
+class AdminStats(BaseModel):
+    total_users: int = 0
+    total_accounts: int = 0
+    total_messages_sent: int = 0
+    total_api_keys: int = 0
+    active_accounts: int = 0
+    unhealthy_accounts: int = 0
+    banned_accounts: int = 0
+    recent_errors: int = 0
+    today_messages_sent: int = 0
+    weekly_users: int = 0
+    monthly_revenue: float = 0.0
+    system_status: dict = {}
+
+
+class AdminSystemHealth(BaseModel):
+    backend: str = "healthy"
+    database: str = "healthy"
+    timestamp: str = ""
+
+
+class AdminRecentActivityEvent(BaseModel):
+    event_type: str
+    detail: str
+    created_at: str
+    metadata: dict = {}
