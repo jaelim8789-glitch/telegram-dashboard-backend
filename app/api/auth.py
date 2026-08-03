@@ -990,7 +990,8 @@ async def prepare_account(
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+        logger.error("telegram_client_init_failed", account_id=account.id, error=str(exc))
+        raise HTTPException(status_code=500, detail="Telegram 클라이언트 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
     # Send code with FloodWait retry
     _SHORT_FLOOD_WAIT = 10
@@ -1022,7 +1023,7 @@ async def prepare_account(
             await account_crud.mark_account_session_invalid(db, account)
             raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
         logger.error("prepare_account_error", phone=phone, error=error_str)
-        raise HTTPException(status_code=500, detail=f"인증번호 발송 실패: {error_str}")
+        raise HTTPException(status_code=500, detail="인증번호 발송 실패. 잠시 후 다시 시도해주세요.")
 
     # Persist session + pending auth
     await account_crud.save_session_snapshot(db, account, encrypt_session(client.session.save()))
@@ -1086,7 +1087,8 @@ async def verify_telegram_code(
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+        logger.error("telegram_client_init_failed", account_id=account.id, error=str(exc))
+        raise HTTPException(status_code=500, detail="Telegram 클라이언트 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
     try:
         await client.sign_in(phone=account.phone, code=payload.code, phone_code_hash=pending.phone_code_hash)
@@ -1107,7 +1109,7 @@ async def verify_telegram_code(
             await account_crud.mark_account_session_invalid(db, account)
             raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
         logger.error("verify_telegram_code_error", account_id=account.id, error=error_str)
-        raise HTTPException(status_code=400, detail=f"인증 실패: {error_str}")
+        raise HTTPException(status_code=400, detail="인증에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
     # Success
     session_str = client.session.save()
@@ -1168,7 +1170,8 @@ async def verify_telegram_2fa(
     try:
         client = await pool.get_client(account.id, session_string, require_authorized=False)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=f"Telegram 클라이언트 초기화 실패: {exc}")
+        logger.error("telegram_client_init_failed", account_id=account.id, error=str(exc))
+        raise HTTPException(status_code=500, detail="Telegram 클라이언트 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
     try:
         await client.sign_in(password=payload.password)
@@ -1181,7 +1184,7 @@ async def verify_telegram_2fa(
             await account_crud.mark_account_session_invalid(db, account)
             raise HTTPException(status_code=400, detail="세션이 만료되었습니다. 다시 시도해주세요.")
         logger.error("verify_telegram_2fa_error", account_id=account.id, error=error_str)
-        raise HTTPException(status_code=400, detail=f"2FA 인증 실패: {error_str}")
+        raise HTTPException(status_code=400, detail="2FA 인증에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
     session_str = client.session.save()
     account = await account_crud.set_auth_state(
