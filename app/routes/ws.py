@@ -34,14 +34,13 @@ async def _validate_ws_identity(token: str | None, headers) -> "Identity | None"
 
 
 async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> bool:
-    """Soft-enforcement auth gate for WebSocket connections.
+    """Hard-enforcement auth gate for WebSocket connections.
 
-    Validates the supplied token (query param, X-Session-Token header, or
-    Authorization Bearer). A present-but-invalid token closes the connection
-    with 4401 (unauthorized). A missing token is allowed for now (the frontend
-    is being migrated to send one) but logged — this becomes a hard requirement
-    in a later tightening step. Returns True when the handler should proceed,
-    False when the connection has been closed and the handler must return.
+    Every /ws/* connection must present valid credentials (via the token query
+    param, X-Session-Token header, or Authorization Bearer JWT). Missing or
+    invalid credentials close the connection with 4401 (unauthorized). Returns
+    True when the handler should proceed, False when the connection has been
+    closed and the handler must return.
     """
     identity = await _validate_ws_identity(token, websocket.headers)
     if identity is not None:
@@ -52,14 +51,13 @@ async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> bool:
         or websocket.headers.get("X-Session-Token")
         or websocket.headers.get("Authorization")
     )
-    if supplied:
+    if not supplied:
+        logger.warning("ws_auth_missing_token", path=websocket.url.path)
+    else:
         logger.warning("ws_auth_rejected", path=websocket.url.path)
-        await websocket.accept()
-        await websocket.close(code=4401)
-        return False
-
-    logger.warning("ws_auth_missing_token", path=websocket.url.path)
-    return True
+    await websocket.accept()
+    await websocket.close(code=4401)
+    return False
 
 
 async def broadcast_to_account(account_id: str, message: dict) -> None:
