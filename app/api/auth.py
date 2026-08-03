@@ -67,7 +67,7 @@ def _verify_telegram_widget(data: TelegramLoginRequest, bot_token: str) -> bool:
     check_string = "\n".join(check_string_parts)
     secret_key = hashlib.sha256(bot_token.encode()).digest()
     computed = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
-    return computed == data.hash
+    return hmac.compare_digest(computed, data.hash)
 
 
 def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
