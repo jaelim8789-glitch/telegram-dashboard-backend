@@ -113,6 +113,13 @@ def _make_txn(**overrides):
     return txn
 
 
+def _mock_claim_success():
+    """A mock execute result whose rowcount==1 (the atomic claim succeeds)."""
+    r = MagicMock()
+    r.rowcount = 1
+    return r
+
+
 @pytest.mark.asyncio
 async def test_process_webhook_success():
     """   """
@@ -128,6 +135,8 @@ async def test_process_webhook_success():
     mock_db = AsyncMock(spec=AsyncSession)
     mock_transaction = _make_txn()
 
+    # execute() is called for: select txn, then claim UPDATE. First returns the
+    # transaction; the claim UPDATE must return rowcount 1.
     mock_execute_result = MagicMock()
     mock_execute_result.scalar_one_or_none.return_value = mock_transaction
 
@@ -140,7 +149,7 @@ async def test_process_webhook_success():
         "pay_currency": "usdt",
     }
 
-    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+    with patch.object(mock_db, 'execute', side_effect=[mock_execute_result, _mock_claim_success(), _mock_claim_success()]), \
          patch.object(mock_db, 'commit'), \
          patch.object(mock_db, 'get', return_value=mock_tenant), \
          patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
@@ -289,6 +298,47 @@ async def test_process_webhook_amount_mismatch():
 
 
 @pytest.mark.asyncio
+async def test_process_webhook_concurrent_claim_lost():
+    """A second concurrent webhook (claim UPDATE rowcount 0) must not re-fulfill."""
+    webhook_data = {
+        "payment_id": "race_payment_1",
+        "payment_status": "finished",
+        "paid_amount": 99.99,
+        "pay_currency": "usdt",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890"
+    }
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    # ORM-level check passes (fulfilled=False), but the atomic claim UPDATE
+    # returns rowcount 0 because another concurrent webhook claimed it first.
+    mock_transaction = _make_txn(payment_id="race_payment_1")
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar_one_or_none.return_value = mock_transaction
+
+    mock_tenant = MagicMock()
+    mock_plan = {"prices_usdt": {"monthly": 99.99}}
+    api_status = {"payment_status": "finished", "actually_paid": 99.99, "pay_currency": "usdt"}
+
+    claim_lost = MagicMock()
+    claim_lost.rowcount = 0
+
+    with patch.object(mock_db, 'execute', side_effect=[mock_execute_result, claim_lost]), \
+         patch.object(mock_db, 'commit'), \
+         patch.object(mock_db, 'get', return_value=mock_tenant), \
+         patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)), \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock()) as mock_activate_plan, \
+         patch('app.services.nowpayments.create_commission', new=AsyncMock()) as mock_commission:
+
+        service = NOWPaymentsService()
+        await service.process_webhook(webhook_data, mock_db)
+
+        # The losing webhook must NOT issue a second API key / commission.
+        mock_activate_plan.assert_not_called()
+        mock_commission.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_process_webhook_non_usdt_currency_uses_rate():
     """BTC (non-1:1) payment should be validated via the USD exchange rate."""
     webhook_data = {
@@ -315,7 +365,7 @@ async def test_process_webhook_non_usdt_currency_uses_rate():
     }
 
     # 0.0015 BTC at 66660 USD/BTC == 99.99 USD
-    with patch.object(mock_db, 'execute', return_value=mock_execute_result), \
+    with patch.object(mock_db, 'execute', side_effect=[mock_execute_result, _mock_claim_success(), _mock_claim_success()]), \
          patch.object(mock_db, 'commit'), \
          patch.object(mock_db, 'get', return_value=mock_tenant), \
          patch('app.services.nowpayments.get_plan', return_value=mock_plan), \

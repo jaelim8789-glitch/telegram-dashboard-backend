@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -339,8 +339,30 @@ class NOWPaymentsService:
             logger.error(f"Tenant not found: {tenant_id}")
             return False
 
+        # 4) Atomic claim — the ONLY thing that decides who fulfills this
+        #    payment. Two concurrent webhooks may both pass the ORM-level
+        #    `fulfilled` check above (both read False before either commits);
+        #    this conditional UPDATE serializes them: only one row is flipped
+        #    to fulfilled=true, the other gets rowcount 0 and bails.
+        claimed = await db.execute(
+            update(NowPaymentsTransaction)
+            .where(NowPaymentsTransaction.payment_id == payment_id)
+            .where(NowPaymentsTransaction.fulfilled.is_(False))
+            .values(fulfilled=True, fulfilled_at=utcnow_naive())
+        )
+        if claimed.rowcount != 1:
+            transaction.note = "Concurrent webhook already claimed this payment; skipped."
+            logger.warning(f"nowpayments_claim_lost", payment_id=payment_id)
+            return False
+
         result = await activate_tenant_plan(db, tenant_id, plan_id)
         if not result.get("success"):
+            # Release the claim so a later webhook / reconciliation can retry.
+            await db.execute(
+                update(NowPaymentsTransaction)
+                .where(NowPaymentsTransaction.payment_id == payment_id)
+                .values(fulfilled=False, fulfilled_at=None)
+            )
             transaction.note = f"Plan activation failed: {result.get('error', 'unknown')}"
             logger.error(f"nowpayments_activation_failed", tenant_id=tenant_id, error=result.get('error'))
             return False
@@ -413,18 +435,13 @@ class NOWPaymentsService:
                         paid = api_status.get('actually_paid') or api_status.get('pay_amount')
                         paid_amount = float(paid) if paid is not None else 0.0
                         currency = (api_status.get('pay_currency') or txn.pay_currency or '').lower()
-                        webhook = {
-                            "payment_id": txn.payment_id,
-                            "payment_status": state,
-                            "paid_amount": paid_amount,
-                            "pay_currency": currency,
-                            "order_id": txn.order_id,
-                        }
                         if await self._fulfill_transaction(
                             db, txn, txn.tenant_id, txn.plan_id, paid_amount, currency
                         ):
                             fulfilled += 1
-                            await db.commit()
+                        # Commit regardless: success persists the fulfilled claim,
+                        # failure persists the diagnostic note on the transaction.
+                        await db.commit()
                     else:
                         # Record non-terminal state for observability.
                         txn.payment_status = state
