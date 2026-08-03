@@ -371,12 +371,13 @@ class AdminPlatform:
         resource_id: str,
         details: dict[str, Any] | None = None,
     ) -> None:
+        conn = None
         try:
             conn = _get_conn()
             conn.execute(
                 """INSERT INTO audit_logs
                    (id, timestamp, user_id, username, action, resource_type, resource_id, details, success)
-                   VALUES (, , , , , , , , 1)""",
+                   VALUES (?,?,?,?,?,?,?,?,1)""",
                 (
                     str(uuid.uuid4()),
                     datetime.now(timezone.utc).isoformat(),
@@ -402,7 +403,7 @@ class AdminPlatform:
         try:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
-                "UPDATE users SET plan = , updated_at =  WHERE id = ",
+                "UPDATE users SET plan = ?, updated_at = ? WHERE id = ?",
                 (new_plan, now, user_id),
             )
             conn.commit()
@@ -417,7 +418,7 @@ class AdminPlatform:
             conn.execute(
                 """INSERT INTO subscriptions
                    (id, user_id, plan, status, created_at, updated_at)
-                   VALUES (, , , 'active', , )""",
+                    VALUES (?,?,?, 'active', ?,?)""",
                 (str(uuid.uuid4()), user_id, plan, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
@@ -432,9 +433,9 @@ class AdminPlatform:
             conn.execute(
                 """INSERT INTO usage_records
                    (id, user_id, date, api_calls, created_at)
-                   VALUES (, , , , )
-                   ON CONFLICT(user_id, date) DO UPDATE SET
-                   api_calls = api_calls + """,
+                    VALUES (?,?,?,?,?)
+                    ON CONFLICT(user_id, date) DO UPDATE SET
+                    api_calls = api_calls + ?""",
                 (str(uuid.uuid4()), user_id, today, api_calls, now, api_calls),
             )
             conn.commit()
@@ -452,7 +453,7 @@ class AdminPlatform:
             conn.execute(
                 """INSERT INTO invoices
                    (id, user_id, amount_cents, stripe_invoice_id, status, currency, created_at)
-                   VALUES (, , , , 'pending', 'usd', )""",
+                    VALUES (?,?,?,?, 'pending', 'usd', ?)""",
                 (
                     str(uuid.uuid4()),
                     user_id,
