@@ -60,6 +60,23 @@ async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> "Identity | 
     return None
 
 
+async def _deny_ws(websocket: WebSocket) -> None:
+    """Close a WebSocket with 4401, accepting first only if not already
+    connected. Callers use this both before the initial accept() (new
+    connection rejected during the auth/ownership handshake) and from inside
+    an already-open connection's message loop (e.g. a `reconnect` message
+    naming an account the caller doesn't own) — calling accept() a second
+    time on an already-CONNECTED socket raises a RuntimeError in Starlette,
+    since "websocket.accept" is only a valid ASGI message while still in the
+    CONNECTING state.
+    """
+    from starlette.websockets import WebSocketState
+
+    if websocket.application_state == WebSocketState.CONNECTING:
+        await websocket.accept()
+    await websocket.close(code=4401)
+
+
 async def _verify_account_access(
     websocket: WebSocket,
     identity: "Identity",
@@ -74,8 +91,7 @@ async def _verify_account_access(
     """
     if account_id is None:
         logger.warning("ws_account_denied_no_account", path=websocket.url.path)
-        await websocket.accept()
-        await websocket.close(code=4401)
+        await _deny_ws(websocket)
         return False
 
     if identity.kind == "admin":
@@ -87,8 +103,7 @@ async def _verify_account_access(
             account_id=account_id,
             identity_kind=identity.kind,
         )
-        await websocket.accept()
-        await websocket.close(code=4401)
+        await _deny_ws(websocket)
         return False
 
     try:
@@ -106,8 +121,7 @@ async def _verify_account_access(
             account_id=account_id,
             identity_kind=identity.kind,
         )
-        await websocket.accept()
-        await websocket.close(code=4401)
+        await _deny_ws(websocket)
         return False
 
     return True

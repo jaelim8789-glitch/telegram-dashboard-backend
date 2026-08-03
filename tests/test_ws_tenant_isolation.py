@@ -14,12 +14,21 @@ _verify_account_access:
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from starlette.websockets import WebSocketState
+
 from app.api.deps import Identity
 from app.routes.ws import _verify_account_access
 
 
-def _fake_ws():
-    return AsyncMock()
+def _fake_ws(connected: bool = False):
+    """A fresh (pre-accept) fake WebSocket by default, matching the initial
+    connection handshake where _verify_account_access is normally called.
+    Pass connected=True to simulate calling it from inside an already-open
+    connection's message loop (e.g. a `reconnect` message) — accept() must
+    NOT be called again in that case (Starlette raises if it is)."""
+    ws = AsyncMock()
+    ws.application_state = WebSocketState.CONNECTED if connected else WebSocketState.CONNECTING
+    return ws
 
 
 def _account_row(tenant_id: str | None):
@@ -65,6 +74,21 @@ async def test_denies_cross_tenant(monkeypatch):
     result = await _verify_account_access(ws, identity, "acc-1")
     assert result is False
     ws.accept.assert_awaited_once()
+    ws.close.assert_awaited_once_with(code=4401)
+
+
+@pytest.mark.asyncio
+async def test_denies_cross_tenant_on_already_open_connection(monkeypatch):
+    """The /ws/sessions `reconnect` message path calls this on an
+    already-accepted socket. accept() must be skipped there — Starlette
+    raises if "websocket.accept" is sent outside the CONNECTING state."""
+    identity = Identity(kind="user", tenant_id="tenant-a")
+    _patch_account_crud(monkeypatch, _account_row("tenant-b"))
+    ws = _fake_ws(connected=True)
+
+    result = await _verify_account_access(ws, identity, "acc-1")
+    assert result is False
+    ws.accept.assert_not_called()
     ws.close.assert_awaited_once_with(code=4401)
 
 
