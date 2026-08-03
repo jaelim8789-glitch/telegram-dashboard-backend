@@ -27,11 +27,11 @@ from app.schemas.admin import (
     AdminDashboardStatusResponse,
     AdminLoginRequest,
     AdminMeResponse,
+    AdminRotatePasswordRequest,
+    AdminRotatePasswordResponse,
     AdminSetupRequest,
     AdminSetupResponse,
     AdminTokenResponse,
-    AdminSetupRequest,
-    AdminSetupResponse,
     AdminStats,
     AdminSystemHealth,
     AdminRecentActivityEvent,
@@ -122,17 +122,61 @@ async def login(payload: AdminLoginRequest, request: Request, db: AsyncSession =
 async def admin_setup(payload: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
     """One-time creation of a DB-backed admin account, for when ADMIN_USERNAME/
     ADMIN_PASSWORD env vars aren't set on the host. Fails once an account already
-    exists — use the (future) admin credential-rotation flow to change it after."""
-    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_db_username"))
+    exists — rotate the password via POST /api/admin/rotate-password instead."""
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_username"))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="관리자 계정이 이미 설정되어 있습니다.")
     if not payload.username.strip() or len(payload.password) < 8:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="아이디를 입력하고 비밀번호는 8자 이상으로 설정해주세요.")
-    db.add(SystemSetting(key="admin_db_username", value=payload.username.strip(), description="DB-backed admin login username"))
-    db.add(SystemSetting(key="admin_db_password_hash", value=hash_password(payload.password), description="DB-backed admin login password hash"))
+    db.add(SystemSetting(key="admin_username", value=payload.username.strip(), description="DB-backed admin login username"))
+    db.add(SystemSetting(key="admin_password_hash", value=hash_password(payload.password), description="DB-backed admin login password hash"))
     await db.commit()
     logger.info("admin_setup_completed", username=payload.username)
     return AdminSetupResponse()
+
+
+@router.post(
+    "/rotate-password",
+    response_model=AdminRotatePasswordResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def rotate_admin_password(payload: AdminRotatePasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Rotate the DB-backed admin password. Requires the current password to
+    prove authorization (in addition to the admin JWT) so a stolen admin token
+    alone can't silently hijack the account.
+
+    Only affects the DB-backed account (set via /api/admin/setup). If the
+    deployment still uses ADMIN_PASSWORD env vars, set the new value there and
+    redeploy instead — this endpoint targets the bcrypt DB credential.
+    """
+    user_result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_username"))
+    pass_result = await db.execute(select(SystemSetting).where(SystemSetting.key == "admin_password_hash"))
+    db_user = user_result.scalar_one_or_none()
+    db_pass = pass_result.scalar_one_or_none()
+
+    if db_user is None or db_pass is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DB-backed 관리자 계정이 없습니다. 먼저 POST /api/admin/setup으로 생성해주세요.",
+        )
+    if not verify_admin_credentials_hash(db_user.value, payload.current_password, db_user.value, db_pass.value):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="현재 비밀번호가 올바르지 않습니다.")
+
+    db_pass.value = hash_password(payload.new_password)
+    await db.commit()
+
+    await append_admin_audit(
+        db,
+        action="admin_password_rotate",
+        target_type="admin",
+        target_id=db_user.value,
+        target_phone=None,
+        detail="Admin password rotated (DB-backed bcrypt credential)",
+    )
+    await db.commit()
+
+    logger.info("admin_password_rotated", username=db_user.value)
+    return AdminRotatePasswordResponse()
 
 
 @router.get("/me", response_model=AdminMeResponse, dependencies=[Depends(require_admin)])
@@ -207,6 +251,59 @@ async def delete_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
                 await db.flush()
     await api_key_crud.revoke_api_key(db, api_key)
     logger.info("api_key_revoked", api_key_id=api_key_id)
+
+
+@router.post(
+    "/api-keys/{api_key_id}/rotate",
+    response_model=APIKeyCreated,
+    dependencies=[Depends(require_admin)],
+)
+async def rotate_api_key(api_key_id: str, db: AsyncSession = Depends(get_db)):
+    """Rotate an API key: issue a fresh key and revoke the old one atomically.
+
+    The old key is deactivated the moment the new key is issued, so a leaked
+    key stops working immediately. The User.api_key_hash bridge is updated so
+    login-with-api-key keeps working with the new key. Audit-logged (never
+    stores the raw key value).
+    """
+    api_key = await api_key_crud.get_api_key(db, api_key_id)
+    if api_key is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API 키를 찾을 수 없습니다.")
+
+    # Issue the replacement first so there's never a window with no active key.
+    new_key = await api_key_crud.create_api_key(
+        db,
+        name=f"{api_key.name} (rotated)",
+        tenant_id=api_key.tenant_id,
+        purpose=api_key.purpose,
+    )
+
+    # Update the User.api_key_hash bridge so login-with-api-key uses the new key.
+    user = None
+    if api_key.tenant_id:
+        tenant_row = await db.execute(select(Tenant).where(Tenant.id == api_key.tenant_id))
+        tenant = tenant_row.scalar_one_or_none()
+        if tenant is not None:
+            user = await user_crud.get_user_by_phone(db, tenant.phone)
+            if user is not None:
+                user.api_key_hash = hash_api_key(new_key.key)
+                await db.flush()
+
+    # Revoke the old key now that the replacement is live.
+    await api_key_crud.revoke_api_key(db, api_key)
+
+    await append_admin_audit(
+        db,
+        action="api_key_rotate",
+        target_type="api_key",
+        target_id=api_key_id,
+        target_phone=user.phone if user else None,
+        detail=f"Rotated API key '{api_key.name}' for tenant {api_key.tenant_id}",
+    )
+    await db.commit()
+
+    logger.info("api_key_rotated", api_key_id=api_key_id, new_api_key_id=new_key.id)
+    return APIKeyCreated(id=new_key.id, key=new_key.key, name=new_key.name, created_at=new_key.created_at)
 
 
 @router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])
