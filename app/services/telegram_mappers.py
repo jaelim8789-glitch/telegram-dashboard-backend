@@ -12,6 +12,10 @@ from telethon.tl.types import (
     PeerUser, PeerChat, PeerChannel,
 )
 
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def peer_id(peer) -> int | None:
     if isinstance(peer, PeerUser):
@@ -23,39 +27,44 @@ def peer_id(peer) -> int | None:
     return None
 
 
-def dialog_to_dict(dialog: Dialog) -> dict:
-    entity = dialog.entity
-    title = ""
-    dtype = "unknown"
-    username = None
-    participants = 0
+def dialog_to_dict(dialog: Dialog) -> dict | None:
+    try:
+        entity = dialog.entity
+        title = ""
+        dtype = "unknown"
+        username = None
+        participants = 0
 
-    if isinstance(entity, User):
-        title = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or entity.username or "Unknown"
-        dtype = "private"
-        username = entity.username
-    elif isinstance(entity, Chat):
-        title = entity.title or "Group"
-        dtype = "group"
-        participants = entity.participants_count or 0
-    elif isinstance(entity, Channel):
-        title = entity.title or "Channel"
-        dtype = "megagroup" if entity.megagroup else "channel"
-        username = entity.username
-        participants = entity.participants_count or 0
+        if isinstance(entity, User):
+            title = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or entity.username or "Unknown"
+            dtype = "private"
+            username = entity.username
+        elif isinstance(entity, Chat):
+            title = entity.title or "Group"
+            dtype = "group"
+            participants = entity.participants_count or 0
+        elif isinstance(entity, Channel):
+            title = entity.title or "Channel"
+            dtype = "megagroup" if entity.megagroup else "channel"
+            username = entity.username
+            participants = entity.participants_count or 0
 
-    return {
-        "id": entity.id if hasattr(entity, "id") else 0,
-        "title": title,
-        "type": dtype,
-        "unread_count": dialog.unread_count,
-        "last_message": dialog.message.message[:200] if dialog.message and not isinstance(dialog.message, MessageService) else None,
-        "last_message_date": dialog.message.date.replace(tzinfo=None).isoformat() if dialog.message and dialog.message.date else None,
-        "pinned": dialog.pinned or False,
-        "photo": None,
-        "participants_count": participants,
-        "username": username,
-    }
+        return {
+            "id": entity.id if hasattr(entity, "id") else 0,
+            "title": title,
+            "type": dtype,
+            "unread_count": dialog.unread_count,
+            "last_message": dialog.message.message[:200] if dialog.message and not isinstance(dialog.message, MessageService) and getattr(dialog.message, "message", None) else None,
+            "last_message_date": dialog.message.date.replace(tzinfo=None).isoformat() if dialog.message and dialog.message.date else None,
+            "pinned": dialog.pinned or False,
+            "photo": None,
+            "participants_count": participants,
+            "username": username,
+        }
+    except Exception as exc:
+        logger = get_logger(__name__)
+        logger.warning("dialog_to_dict_failed", error=str(exc), dialog_id=getattr(dialog, "id", "unknown"))
+        return None
 
 
 def message_to_dict(msg: Message, my_user_id: int | None = None) -> dict | None:
