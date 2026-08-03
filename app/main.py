@@ -191,24 +191,36 @@ async def lifespan(app: FastAPI):
         logger.info("realtime_update_handlers_skipped", reason="another_worker_running")
 
     #  Telegram bot (optional)
-    try:
-        await start_bot()
-    except Exception as exc:
-        logger.error("telegram_bot_startup_failed", error=str(exc))
+    # Same per-worker duplication risk as the scheduler above: getUpdates polling
+    # is exclusive per bot token, so every worker starting it fights the others
+    # for the long-poll connection (visible as repeated "Conflict: terminated by
+    # other getUpdates request" errors). Only the singleton-lock winner starts it.
+    if await acquire_singleton_lock("telegram_bot"):
+        try:
+            await start_bot()
+        except Exception as exc:
+            logger.error("telegram_bot_startup_failed", error=str(exc))
+    else:
+        logger.info("telegram_bot_skipped", reason="another_worker_running")
 
-    #  AI Platform Startup 
+    #  AI Platform Startup
     try:
         register_builtin_tools()
         logger.info("ai_builtin_tools_registered")
     except Exception as exc:
         logger.error("ai_builtin_tools_registration_failed", error=str(exc))
 
-    try:
-        worker = get_task_worker()
-        worker.start()
-        logger.info("ai_task_worker_started")
-    except Exception as exc:
-        logger.error("ai_task_worker_startup_failed", error=str(exc))
+    # Same per-worker duplication risk as the main scheduler above: every worker
+    # polling ai_tasks on its own 1s timer multiplies query load by worker count.
+    if await acquire_singleton_lock("ai_task_worker"):
+        try:
+            worker = get_task_worker()
+            worker.start()
+            logger.info("ai_task_worker_started")
+        except Exception as exc:
+            logger.error("ai_task_worker_startup_failed", error=str(exc))
+    else:
+        logger.info("ai_task_worker_skipped", reason="another_worker_running")
 
     # Same per-worker duplication risk as the main scheduler above.
     if await acquire_singleton_lock("ai_scheduler"):
