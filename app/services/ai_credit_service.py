@@ -11,11 +11,12 @@ Credit costs (all multiplied by 2 for sensitive content):
   - operations:      20cr
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import utcnow_naive
 from app.models.tenant import Tenant
 
 FREE_REFILL_INTERVAL = timedelta(hours=5)
@@ -47,7 +48,7 @@ SENSITIVE_MULTIPLIER = 2
 
 async def ensure_initial_credits(tenant: Tenant, db: AsyncSession) -> None:
     """Initialize credits when a tenant is first created or plan changes."""
-    now = datetime.now(timezone.utc)
+    now = utcnow_naive()
     if tenant.plan == "free" and tenant.ai_credits_remaining <= 0:
         tenant.ai_credits_remaining = FREE_REFILL_AMOUNT
         tenant.ai_last_refill_at = now
@@ -108,7 +109,7 @@ async def reset_credits(tenant: Tenant, db: AsyncSession) -> tuple[bool, int]:
 
 async def bulk_sync_credits(db: AsyncSession) -> int:
     """Background task: refill free tenants whose 5h window has passed."""
-    now = datetime.now(timezone.utc)
+    now = utcnow_naive()
     cutoff = now - FREE_REFILL_INTERVAL
     result = await db.execute(
         select(Tenant).where(
@@ -119,7 +120,7 @@ async def bulk_sync_credits(db: AsyncSession) -> int:
     )
     refilled = 0
     for t in result.scalars().all():
-        if t.ai_last_refill_at is None or t.ai_last_refill_at.replace(tzinfo=timezone.utc) < cutoff:
+        if t.ai_last_refill_at is None or t.ai_last_refill_at < cutoff:
             t.ai_credits_remaining = FREE_REFILL_AMOUNT
             t.ai_last_refill_at = now
             refilled += 1
@@ -133,12 +134,12 @@ def _refill_if_needed(tenant: Tenant) -> None:
         return
     if tenant.ai_credits_remaining >= FREE_REFILL_AMOUNT:
         return
-    now = datetime.now(timezone.utc)
+    now = utcnow_naive()
     if tenant.ai_last_refill_at is None:
         tenant.ai_credits_remaining = FREE_REFILL_AMOUNT
         tenant.ai_last_refill_at = now
         return
-    last = tenant.ai_last_refill_at.replace(tzinfo=timezone.utc) if tenant.ai_last_refill_at.tzinfo is None else tenant.ai_last_refill_at
+    last = tenant.ai_last_refill_at
     if now - last >= FREE_REFILL_INTERVAL:
         tenant.ai_credits_remaining = FREE_REFILL_AMOUNT
         tenant.ai_last_refill_at = now
