@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = "d5a1c2b3e4f0"
@@ -17,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("tenants", sa.Column("trial_expires_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("tenants", sa.Column("trial_expires_at", sa.DateTime(), nullable=True))
 
 
 def downgrade() -> None:

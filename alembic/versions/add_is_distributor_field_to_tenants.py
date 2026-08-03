@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     #  is_distributor  
-    op.add_column('tenants', sa.Column('is_distributor', sa.Boolean(), nullable=True))
+    add_column_if_not_exists('tenants', sa.Column('is_distributor', sa.Boolean(), nullable=True))
     
     #     False 
     op.execute("UPDATE tenants SET is_distributor = FALSE WHERE is_distributor IS NULL")

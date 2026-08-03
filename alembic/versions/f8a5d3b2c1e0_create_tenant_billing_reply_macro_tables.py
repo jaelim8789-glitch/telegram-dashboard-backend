@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -73,7 +73,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("tx_id"),
     )
-    op.create_index(op.f("ix_payment_records_tenant_id"), "payment_records", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_payment_records_tenant_id"), "payment_records", ["tenant_id"], unique=False)
 
     #  Usage Records 
     create_table_if_not_exists(
@@ -85,9 +85,9 @@ def upgrade() -> None:
         sa.Column("recorded_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_usage_records_tenant_id"), "usage_records", ["tenant_id"], unique=False)
-    op.create_index(op.f("ix_usage_records_action"), "usage_records", ["action"], unique=False)
-    op.create_index(op.f("ix_usage_records_recorded_at"), "usage_records", ["recorded_at"], unique=False)
+    create_index_if_not_exists(op.f("ix_usage_records_tenant_id"), "usage_records", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_usage_records_action"), "usage_records", ["action"], unique=False)
+    create_index_if_not_exists(op.f("ix_usage_records_recorded_at"), "usage_records", ["recorded_at"], unique=False)
 
     #  Leads (CRM) 
     create_table_if_not_exists(
@@ -111,8 +111,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_leads_tenant_id"), "leads", ["tenant_id"], unique=False)
-    op.create_index(op.f("ix_leads_account_id"), "leads", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_leads_tenant_id"), "leads", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_leads_account_id"), "leads", ["account_id"], unique=False)
 
     #  Reply Macros 
     create_table_if_not_exists(
@@ -134,7 +134,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["account_id"], ["accounts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_reply_macros_account_id"), "reply_macros", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_reply_macros_account_id"), "reply_macros", ["account_id"], unique=False)
 
     create_table_if_not_exists(
         "reply_macro_logs",
@@ -150,10 +150,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["account_id"], ["accounts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_reply_macro_logs_macro_id"), "reply_macro_logs", ["macro_id"], unique=False)
-    op.create_index(op.f("ix_reply_macro_logs_account_id"), "reply_macro_logs", ["account_id"], unique=False)
-    op.create_index(op.f("ix_reply_macro_logs_status"), "reply_macro_logs", ["status"], unique=False)
-    op.create_index(op.f("ix_reply_macro_logs_created_at"), "reply_macro_logs", ["created_at"], unique=False)
+    create_index_if_not_exists(op.f("ix_reply_macro_logs_macro_id"), "reply_macro_logs", ["macro_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_reply_macro_logs_account_id"), "reply_macro_logs", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_reply_macro_logs_status"), "reply_macro_logs", ["status"], unique=False)
+    create_index_if_not_exists(op.f("ix_reply_macro_logs_created_at"), "reply_macro_logs", ["created_at"], unique=False)
 
     #  Message Templates 
     create_table_if_not_exists(
@@ -170,7 +170,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_message_templates_tenant_id"), "message_templates", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_message_templates_tenant_id"), "message_templates", ["tenant_id"], unique=False)
 
     #  Follow-up Rules 
     create_table_if_not_exists(
@@ -188,8 +188,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_follow_up_rules_tenant_id"), "follow_up_rules", ["tenant_id"], unique=False)
-    op.create_index(op.f("ix_follow_up_rules_account_id"), "follow_up_rules", ["account_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_follow_up_rules_tenant_id"), "follow_up_rules", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_follow_up_rules_account_id"), "follow_up_rules", ["account_id"], unique=False)
 
     #  Team Members 
     create_table_if_not_exists(
@@ -203,7 +203,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_team_members_tenant_id"), "team_members", ["tenant_id"], unique=False)
+    create_index_if_not_exists(op.f("ix_team_members_tenant_id"), "team_members", ["tenant_id"], unique=False)
 
 
 def downgrade() -> None:

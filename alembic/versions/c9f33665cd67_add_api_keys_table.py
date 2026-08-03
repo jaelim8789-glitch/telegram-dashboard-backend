@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -30,7 +30,7 @@ def upgrade() -> None:
     sa.Column('last_used', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_api_keys_key'), 'api_keys', ['key'], unique=True)
+    create_index_if_not_exists(op.f('ix_api_keys_key'), 'api_keys', ['key'], unique=True)
     # ### end Alembic commands ###
 
 

@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -30,7 +30,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_broadcast_drafts_created_at', 'ai_broadcast_drafts', ['created_at'])
+    create_index_if_not_exists('ix_ai_broadcast_drafts_created_at', 'ai_broadcast_drafts', ['created_at'])
 
 
 def downgrade() -> None:

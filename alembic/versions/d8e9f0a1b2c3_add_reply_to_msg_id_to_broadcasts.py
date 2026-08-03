@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = "d8e9f0a1b2c3"
@@ -18,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         "broadcasts",
         sa.Column("reply_to_msg_id", sa.Integer(), nullable=True, default=None),
     )

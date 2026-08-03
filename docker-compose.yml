@@ -51,6 +51,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
       interval: 10s
@@ -62,12 +64,13 @@ services:
       - full
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://telegram_dashboard:${POSTGRES_PASSWORD:-telegram_dashboard_password}@db:5432/telegram_dashboard}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-telegram_dashboard_password}@redis:6379/0}
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: telemmon2026
-      NOWPAYMENTS_API_KEY: VZG2PB2-JFQ4NW7-NHYJARD-VV49XEJ
-      NOWPAYMENTS_IPN_SECRET: csI5GHanjgI+v9IO+oWShkBwM6pI49Vf
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      NOWPAYMENTS_API_KEY: ${NOWPAYMENTS_API_KEY:-}
+      NOWPAYMENTS_IPN_SECRET: ${NOWPAYMENTS_IPN_SECRET:-}
       NOWPAYMENTS_PUBLIC_KEY: ""
     volumes:
       - media_data:/app/media
@@ -162,6 +165,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-telegram_dashboard_password}"]
     logging:
       driver: json-file
       options:
@@ -172,7 +176,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-telegram_dashboard_password} ping"]
       interval: 5s
       timeout: 3s
       retries: 5

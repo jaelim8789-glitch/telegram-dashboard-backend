@@ -37,3 +37,12 @@ def drop_column_if_exists(table_name: str, column_name: str):
     columns = [c["name"] for c in insp.get_columns(table_name)]
     if column_name in columns:
         op.drop_column(table_name, column_name)
+
+
+def create_index_if_not_exists(index_name: str, table_name: str, columns, **kwargs):
+    """Create an index only if it doesn't already exist."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    existing = [ix["name"] for ix in insp.get_indexes(table_name)]
+    if index_name not in existing:
+        op.create_index(index_name, table_name, columns, **kwargs)

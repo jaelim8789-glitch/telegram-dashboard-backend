@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -41,8 +41,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_chat_sessions_v2_tenant_id', 'ai_chat_sessions_v2', ['tenant_id'])
-    op.create_index('ix_ai_chat_sessions_v2_created_at', 'ai_chat_sessions_v2', ['created_at'])
+    create_index_if_not_exists('ix_ai_chat_sessions_v2_tenant_id', 'ai_chat_sessions_v2', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_chat_sessions_v2_created_at', 'ai_chat_sessions_v2', ['created_at'])
 
     #  ai_chat_messages_v2 
     create_table_if_not_exists(
@@ -65,9 +65,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_chat_messages_v2_session_id', 'ai_chat_messages_v2', ['session_id'])
-    op.create_index('ix_ai_chat_messages_v2_tenant_id', 'ai_chat_messages_v2', ['tenant_id'])
-    op.create_index('ix_ai_chat_messages_v2_created_at', 'ai_chat_messages_v2', ['created_at'])
+    create_index_if_not_exists('ix_ai_chat_messages_v2_session_id', 'ai_chat_messages_v2', ['session_id'])
+    create_index_if_not_exists('ix_ai_chat_messages_v2_tenant_id', 'ai_chat_messages_v2', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_chat_messages_v2_created_at', 'ai_chat_messages_v2', ['created_at'])
 
     #  ai_chat_prompt_templates 
     create_table_if_not_exists(
@@ -85,7 +85,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index('ix_ai_chat_prompt_templates_tenant_id', 'ai_chat_prompt_templates', ['tenant_id'])
+    create_index_if_not_exists('ix_ai_chat_prompt_templates_tenant_id', 'ai_chat_prompt_templates', ['tenant_id'])
 
 
 def downgrade() -> None:

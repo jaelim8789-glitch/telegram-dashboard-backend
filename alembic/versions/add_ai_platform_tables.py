@@ -15,7 +15,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "add_ai_platform_tables"
@@ -37,9 +37,9 @@ def upgrade() -> None:
         sa.Column("model", sa.String(50), nullable=True, server_default="deepseek-chat"),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_ai_chat_logs_tenant_id", "ai_chat_logs", ["tenant_id"])
-    op.create_index("ix_ai_chat_logs_session_id", "ai_chat_logs", ["session_id"])
-    op.create_index("ix_ai_chat_logs_created_at", "ai_chat_logs", ["created_at"])
+    create_index_if_not_exists("ix_ai_chat_logs_tenant_id", "ai_chat_logs", ["tenant_id"])
+    create_index_if_not_exists("ix_ai_chat_logs_session_id", "ai_chat_logs", ["session_id"])
+    create_index_if_not_exists("ix_ai_chat_logs_created_at", "ai_chat_logs", ["created_at"])
 
     create_table_if_not_exists(
         "ai_reply_assistant_logs",
@@ -56,9 +56,9 @@ def upgrade() -> None:
         sa.Column("sent_at", sa.DateTime, nullable=True),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_ai_reply_assistant_logs_tenant_id", "ai_reply_assistant_logs", ["tenant_id"])
-    op.create_index("ix_ai_reply_assistant_logs_account_id", "ai_reply_assistant_logs", ["account_id"])
-    op.create_index("ix_ai_reply_assistant_logs_created_at", "ai_reply_assistant_logs", ["created_at"])
+    create_index_if_not_exists("ix_ai_reply_assistant_logs_tenant_id", "ai_reply_assistant_logs", ["tenant_id"])
+    create_index_if_not_exists("ix_ai_reply_assistant_logs_account_id", "ai_reply_assistant_logs", ["account_id"])
+    create_index_if_not_exists("ix_ai_reply_assistant_logs_created_at", "ai_reply_assistant_logs", ["created_at"])
 
     create_table_if_not_exists(
         "ai_broadcast_assistant_logs",
@@ -76,8 +76,8 @@ def upgrade() -> None:
         sa.Column("sent_at", sa.DateTime, nullable=True),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_ai_broadcast_assistant_logs_tenant_id", "ai_broadcast_assistant_logs", ["tenant_id"])
-    op.create_index("ix_ai_broadcast_assistant_logs_created_at", "ai_broadcast_assistant_logs", ["created_at"])
+    create_index_if_not_exists("ix_ai_broadcast_assistant_logs_tenant_id", "ai_broadcast_assistant_logs", ["tenant_id"])
+    create_index_if_not_exists("ix_ai_broadcast_assistant_logs_created_at", "ai_broadcast_assistant_logs", ["created_at"])
 
     create_table_if_not_exists(
         "ai_operations_reports",
@@ -94,8 +94,8 @@ def upgrade() -> None:
         sa.Column("tokens_used", sa.Integer, nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_ai_operations_reports_tenant_id", "ai_operations_reports", ["tenant_id"])
-    op.create_index("ix_ai_operations_reports_created_at", "ai_operations_reports", ["created_at"])
+    create_index_if_not_exists("ix_ai_operations_reports_tenant_id", "ai_operations_reports", ["tenant_id"])
+    create_index_if_not_exists("ix_ai_operations_reports_created_at", "ai_operations_reports", ["created_at"])
 
     create_table_if_not_exists(
         "ai_usage_records",
@@ -107,9 +107,9 @@ def upgrade() -> None:
         sa.Column("cost_credits", sa.Float, nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_ai_usage_records_tenant_id", "ai_usage_records", ["tenant_id"])
-    op.create_index("ix_ai_usage_records_feature", "ai_usage_records", ["feature"])
-    op.create_index("ix_ai_usage_records_created_at", "ai_usage_records", ["created_at"])
+    create_index_if_not_exists("ix_ai_usage_records_tenant_id", "ai_usage_records", ["tenant_id"])
+    create_index_if_not_exists("ix_ai_usage_records_feature", "ai_usage_records", ["feature"])
+    create_index_if_not_exists("ix_ai_usage_records_created_at", "ai_usage_records", ["created_at"])
 
     create_table_if_not_exists(
         "ai_plan_limits",

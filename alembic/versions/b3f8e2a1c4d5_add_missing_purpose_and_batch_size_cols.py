@@ -15,6 +15,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = 'b3f8e2a1c4d5'
@@ -24,11 +25,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         "api_keys",
         sa.Column("purpose", sa.String(length=20), nullable=False, server_default="payment_issued"),
     )
-    op.add_column(
+    add_column_if_not_exists(
         "broadcasts",
         sa.Column("batch_size", sa.Integer(), nullable=True),
     )

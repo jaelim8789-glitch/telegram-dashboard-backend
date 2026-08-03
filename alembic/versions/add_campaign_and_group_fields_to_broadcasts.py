@@ -14,6 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
 
 
 revision: str = "add_campaign_fields_broadcasts"
@@ -23,13 +24,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_not_exists(
         "broadcasts",
         sa.Column("campaign_id", sa.String(36), sa.ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True),
     )
-    op.create_index("ix_broadcasts_campaign_id", "broadcasts", ["campaign_id"])
-    op.add_column("broadcasts", sa.Column("group_ids", sa.JSON(), nullable=True))
-    op.add_column(
+    create_index_if_not_exists("ix_broadcasts_campaign_id", "broadcasts", ["campaign_id"])
+    add_column_if_not_exists("broadcasts", sa.Column("group_ids", sa.JSON(), nullable=True))
+    add_column_if_not_exists(
         "broadcasts",
         sa.Column("groups_resolved", sa.Boolean(), nullable=False, server_default="0"),
     )

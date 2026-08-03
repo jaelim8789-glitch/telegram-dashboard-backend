@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 revision: str = "a5b6c7d8e9f0"
@@ -33,9 +33,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_admin_audit_logs_action"), "admin_audit_logs", ["action"])
-    op.create_index(op.f("ix_admin_audit_logs_target_id"), "admin_audit_logs", ["target_id"])
-    op.create_index(op.f("ix_admin_audit_logs_created_at"), "admin_audit_logs", ["created_at"])
+    create_index_if_not_exists(op.f("ix_admin_audit_logs_action"), "admin_audit_logs", ["action"])
+    create_index_if_not_exists(op.f("ix_admin_audit_logs_target_id"), "admin_audit_logs", ["target_id"])
+    create_index_if_not_exists(op.f("ix_admin_audit_logs_created_at"), "admin_audit_logs", ["created_at"])
 
 
 def downgrade() -> None:

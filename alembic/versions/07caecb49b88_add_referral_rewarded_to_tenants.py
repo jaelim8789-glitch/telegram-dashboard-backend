@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 revision: str = "07caecb49b88"
@@ -18,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("tenants", sa.Column("referral_rewarded", sa.Boolean(), server_default=sa.false(), nullable=False))
+    add_column_if_not_exists("tenants", sa.Column("referral_rewarded", sa.Boolean(), server_default=sa.false(), nullable=False))
 
 
 def downgrade() -> None:

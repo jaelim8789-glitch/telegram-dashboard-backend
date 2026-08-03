@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -20,14 +21,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add new columns to existing team_members table
-    op.add_column("team_members", sa.Column("display_name", sa.String(100), nullable=True))
-    op.add_column("team_members", sa.Column("phone", sa.String(50), nullable=True))
-    op.add_column("team_members", sa.Column("invited_by", sa.String(36), nullable=True))
-    op.add_column("team_members", sa.Column("invite_token", sa.String(64), nullable=True, unique=True))
-    op.add_column("team_members", sa.Column("invite_expires_at", sa.DateTime(), nullable=True))
-    op.add_column("team_members", sa.Column("invited_at", sa.DateTime(), nullable=True))
-    op.add_column("team_members", sa.Column("joined_at", sa.DateTime(), nullable=True))
-    op.add_column("team_members", sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False))
+    add_column_if_not_exists("team_members", sa.Column("display_name", sa.String(100), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("phone", sa.String(50), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("invited_by", sa.String(36), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("invite_token", sa.String(64), nullable=True, unique=True))
+    add_column_if_not_exists("team_members", sa.Column("invite_expires_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("invited_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("joined_at", sa.DateTime(), nullable=True))
+    add_column_if_not_exists("team_members", sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False))
 
     # Update existing role values: 'operator' -> 'member', 'admin' stays, 'viewer' -> 'member'
     op.execute("UPDATE team_members SET role = 'member' WHERE role = 'operator'")

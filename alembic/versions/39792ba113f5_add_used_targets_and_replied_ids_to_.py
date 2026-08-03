@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -19,10 +20,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('reply_macros', sa.Column('used_targets', sa.Text(), server_default='[]', nullable=False))
-    op.add_column('reply_macro_logs', sa.Column('replied_user_id', sa.String(length=100), nullable=True))
-    op.add_column('reply_macro_logs', sa.Column('replied_msg_id', sa.Integer(), nullable=True))
-    op.create_index(op.f('ix_reply_macro_logs_replied_user_id'), 'reply_macro_logs', ['replied_user_id'], unique=False)
+    add_column_if_not_exists('reply_macros', sa.Column('used_targets', sa.Text(), server_default='[]', nullable=False))
+    add_column_if_not_exists('reply_macro_logs', sa.Column('replied_user_id', sa.String(length=100), nullable=True))
+    add_column_if_not_exists('reply_macro_logs', sa.Column('replied_msg_id', sa.Integer(), nullable=True))
+    create_index_if_not_exists(op.f('ix_reply_macro_logs_replied_user_id'), 'reply_macro_logs', ['replied_user_id'], unique=False)
 
 
 def downgrade() -> None:

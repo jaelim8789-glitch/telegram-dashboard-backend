@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists, create_index_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -34,9 +34,9 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_broadcasts_account_id'), 'broadcasts', ['account_id'], unique=False)
-    op.create_index(op.f('ix_broadcasts_created_at'), 'broadcasts', ['created_at'], unique=False)
-    op.create_index(op.f('ix_broadcasts_status'), 'broadcasts', ['status'], unique=False)
+    create_index_if_not_exists(op.f('ix_broadcasts_account_id'), 'broadcasts', ['account_id'], unique=False)
+    create_index_if_not_exists(op.f('ix_broadcasts_created_at'), 'broadcasts', ['created_at'], unique=False)
+    create_index_if_not_exists(op.f('ix_broadcasts_status'), 'broadcasts', ['status'], unique=False)
     # ### end Alembic commands ###
 
 
