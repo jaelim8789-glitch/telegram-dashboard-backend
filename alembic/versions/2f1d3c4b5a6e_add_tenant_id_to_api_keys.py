@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from migration_helpers import create_index_if_not_exists, add_column_if_not_exists
+from migration_helpers import create_index_if_not_exists, add_column_if_not_exists, create_foreign_key_if_not_exists
 
 
 # revision identifiers, used by Alembic.
@@ -22,7 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     add_column_if_not_exists("api_keys", sa.Column("tenant_id", sa.String(length=36), nullable=True))
     create_index_if_not_exists(op.f("ix_api_keys_tenant_id"), "api_keys", ["tenant_id"], unique=False)
-    op.create_foreign_key(
+    create_foreign_key_if_not_exists(
         "fk_api_keys_tenant_id",
         "api_keys",
         "tenants",
