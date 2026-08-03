@@ -1,4 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MenuButtonWebApp, Update, WebAppInfo
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -969,7 +970,18 @@ async def start_bot() -> None:
     # start_polling() makes internally) aborts start_polling() entirely and leaves
     # the bot never polling for the rest of the container's life — the /start
     # command then silently goes unanswered until the next restart. Retry instead.
-    await application.updater.start_polling(bootstrap_retries=3)
+    _MAX_POLLING_CONFLICT_RETRIES = 5
+    for attempt in range(1, _MAX_POLLING_CONFLICT_RETRIES + 1):
+        try:
+            await application.updater.start_polling(bootstrap_retries=3)
+            break
+        except Conflict as exc:
+            if attempt < _MAX_POLLING_CONFLICT_RETRIES:
+                logger.warning("telegram_bot_polling_conflict_retry", attempt=attempt, max_attempts=_MAX_POLLING_CONFLICT_RETRIES, error=str(exc))
+                await asyncio.sleep(2 ** attempt)
+            else:
+                logger.error("telegram_bot_polling_conflict_exhausted", error=str(exc))
+                raise
     _application = application
 
     # Auto-set menu button to TeleMon Mini App
