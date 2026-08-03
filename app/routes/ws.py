@@ -23,6 +23,18 @@ async def broadcast_to_account(account_id: str, message: dict) -> None:
         chat_clients.get(account_id, set()).discard(client)
 
 
+async def broadcast_dialog_update(account_id: str) -> None:
+    """Send a dialog_update event to every open /ws/chat connection for this account."""
+    dead: list[WebSocket] = []
+    for client in chat_clients.get(account_id, set()):
+        try:
+            await client.send_json({"type": "dialog_update"})
+        except Exception:
+            dead.append(client)
+    for client in dead:
+        chat_clients.get(account_id, set()).discard(client)
+
+
 @ws_router.websocket("/ws/chat")
 async def chat_websocket(
     websocket: WebSocket,

@@ -79,7 +79,13 @@ services:
   frontend:
     image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-frontend:${TAG:-latest}
     build:
-      context: ../telegram-dashboard
+      # ../telegram-dashboard doesn't exist on this machine (removed/renamed
+      # at some point) — TeleMon-kiro is a checkout of the exact same GitHub
+      # repo (jaelim8789-glitch/telegram-dashboard) and is the one actually
+      # kept up to date, so point the build there instead. The stale-context
+      # path meant `docker compose build frontend` silently kept reusing
+      # whatever image was last built long ago instead of failing loudly.
+      context: ../TeleMon-kiro
       args:
         NEXT_PUBLIC_API_BASE_URL: "${NEXT_PUBLIC_API_BASE_URL:-http://backend:8000}"
         NEXT_PUBLIC_SITE_URL: "https://telemon.online"

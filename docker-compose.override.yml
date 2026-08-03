@@ -12,4 +12,8 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 512M
+          # 512M started crash-looping the worker with no traceback (kernel
+          # OOM-killing the child process, not the container's own PID 1 —
+          # Docker's OOMKilled flag doesn't catch that) once escrow/trust/
+          # translation/realtime were all added on top of the base app.
+          memory: 900M

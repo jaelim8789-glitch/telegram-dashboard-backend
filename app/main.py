@@ -86,7 +86,7 @@ from app.services.auto_reply_service import attach_all_active_listeners
 from app.services.telegram_bot_service import start_bot, stop_bot
 from app.services.telethon_pool import pool
 from app.realtime.dispatcher import dispatcher as realtime_dispatcher
-from app.realtime.broadcast import register_broadcast_consumer
+from app.realtime.broadcast import register_broadcast_consumer, register_dialog_update_consumer
 from app.realtime.handlers import attach_all_account_realtime_listeners
 from app.services.session_manager import SessionManager
 
@@ -178,6 +178,7 @@ async def lifespan(app: FastAPI):
     # workers + the broadcast consumer since those only act on this worker's own
     # in-memory chat_clients websocket set, not shared state.
     register_broadcast_consumer()
+    register_dialog_update_consumer()
     realtime_dispatcher.start()
     if await acquire_singleton_lock("realtime_update_handlers"):
         try:
