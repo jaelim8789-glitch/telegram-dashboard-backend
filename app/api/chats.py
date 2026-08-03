@@ -711,3 +711,127 @@ async def remove_bookmark(
     )
     await db.commit()
     return {"status": "removed"}
+
+
+_CHAT_META_TABLE_ENSURED = False
+
+
+async def _ensure_chat_meta_table(db: AsyncSession) -> None:
+    """Create the chat_meta table if it does not exist (see _ensure_bookmarks_table:
+    this app's alembic history has two disconnected chains and a DB stamped ahead of
+    where its physical schema actually is, so migrations silently no-op on this deploy
+    — self-healing DDL here is the reliable path until that gets untangled)."""
+    global _CHAT_META_TABLE_ENSURED
+    if _CHAT_META_TABLE_ENSURED:
+        return
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS chat_meta (
+            id VARCHAR(36) PRIMARY KEY,
+            tenant_id VARCHAR(36) NOT NULL,
+            account_id VARCHAR(36) NOT NULL,
+            chat_id VARCHAR(36) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'new',
+            assignee_id VARCHAR(36),
+            note TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_chat_meta_chat UNIQUE (tenant_id, account_id, chat_id)
+        )
+    """))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_meta_tenant_id ON chat_meta (tenant_id)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_meta_account_id ON chat_meta (account_id)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_meta_chat_id ON chat_meta (chat_id)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_meta_assignee_id ON chat_meta (assignee_id)"))
+    await db.commit()
+    _CHAT_META_TABLE_ENSURED = True
+
+
+@router.get("/chat-meta")
+async def list_chat_meta(
+    account_id: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    assignee_id: str | None = Query(default=None),
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """List CRM metadata for every chat that has any, optionally filtered — powers
+    cross-account/cross-status filters in the chat list without a per-chat round trip."""
+    await _ensure_chat_meta_table(db)
+    from sqlalchemy import select
+    from app.models.chat_meta import ChatMeta
+
+    tenant_id = identity.tenant_id or "default"
+    conditions = [ChatMeta.tenant_id == tenant_id]
+    if account_id:
+        conditions.append(ChatMeta.account_id == account_id)
+    if status_filter:
+        conditions.append(ChatMeta.status == status_filter)
+    if assignee_id:
+        conditions.append(ChatMeta.assignee_id == assignee_id)
+
+    result = await db.execute(select(ChatMeta).where(*conditions))
+    rows = result.scalars().all()
+    return [
+        {
+            "account_id": r.account_id,
+            "chat_id": r.chat_id,
+            "status": r.status,
+            "assignee_id": r.assignee_id,
+            "note": r.note,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+class ChatMetaUpdate(BaseModel):
+    status: str | None = None
+    assignee_id: str | None = None
+    note: str | None = None
+
+
+@router.put("/chat-meta/{account_id}/{chat_id}")
+async def upsert_chat_meta(
+    account_id: str,
+    chat_id: str,
+    body: ChatMetaUpdate,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_chat_meta_table(db)
+    await require_account_tenant_access(account_id, db, identity)
+    from sqlalchemy import select
+    from app.models.chat_meta import CHAT_STATUSES, ChatMeta
+    import uuid
+
+    if body.status is not None and body.status not in CHAT_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {CHAT_STATUSES}")
+
+    tenant_id = identity.tenant_id or "default"
+    result = await db.execute(
+        select(ChatMeta).where(
+            ChatMeta.tenant_id == tenant_id,
+            ChatMeta.account_id == account_id,
+            ChatMeta.chat_id == chat_id,
+        )
+    )
+    meta = result.scalar_one_or_none()
+    if meta is None:
+        meta = ChatMeta(id=str(uuid.uuid4()), tenant_id=tenant_id, account_id=account_id, chat_id=chat_id)
+        db.add(meta)
+
+    if body.status is not None:
+        meta.status = body.status
+    if body.assignee_id is not None:
+        meta.assignee_id = body.assignee_id or None
+    if body.note is not None:
+        meta.note = body.note or None
+
+    await db.commit()
+    return {
+        "account_id": meta.account_id,
+        "chat_id": meta.chat_id,
+        "status": meta.status,
+        "assignee_id": meta.assignee_id,
+        "note": meta.note,
+    }
