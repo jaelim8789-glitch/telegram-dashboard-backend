@@ -78,7 +78,7 @@ def upsert_session(
     try:
         conn.execute(
             """INSERT INTO bot_sessions (chat_id, token, telegram_user_id, telegram_username, created_at, updated_at)
-               VALUES (, , , , , )
+               VALUES (?,?,?,?,?,?)
                ON CONFLICT(chat_id) DO UPDATE SET
                  token = excluded.token,
                  telegram_user_id = excluded.telegram_user_id,
@@ -96,7 +96,7 @@ def get_session(chat_id: str) -> dict[str, Any] | None:
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT * FROM bot_sessions WHERE chat_id = ", (chat_id,)
+            "SELECT * FROM bot_sessions WHERE chat_id = ?", (chat_id,)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -109,7 +109,7 @@ def log_admin_notify(event_type: str, message: str, delivered: bool) -> None:
     try:
         conn.execute(
             """INSERT INTO bot_admin_notify_log (id, event_type, message, delivered, created_at)
-               VALUES (, , , , )""",
+               VALUES (?,?,?,?,?)""",
             (str(uuid.uuid4()), event_type, message, 1 if delivered else 0, now),
         )
         conn.commit()
@@ -179,7 +179,7 @@ def upsert_group_style_profile(
         if actions_json:
             conn.execute(
                 """INSERT INTO ai_group_style_profiles (chat_id, style_profile_id, available_actions, updated_at)
-                   VALUES (, , , )
+                   VALUES (?,?,?,?)
                    ON CONFLICT(chat_id) DO UPDATE SET
                      style_profile_id = excluded.style_profile_id,
                      available_actions = excluded.available_actions,
@@ -189,7 +189,7 @@ def upsert_group_style_profile(
         else:
             conn.execute(
                 """INSERT INTO ai_group_style_profiles (chat_id, style_profile_id, updated_at)
-                   VALUES (, , )
+                   VALUES (?,?,?)
                    ON CONFLICT(chat_id) DO UPDATE SET
                      style_profile_id = excluded.style_profile_id,
                      updated_at = excluded.updated_at""",
@@ -206,7 +206,7 @@ def get_group_style_profile(chat_id: int) -> dict[str, Any] | None:
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT * FROM ai_group_style_profiles WHERE chat_id = ", (chat_id,)
+            "SELECT * FROM ai_group_style_profiles WHERE chat_id = ?", (chat_id,)
         ).fetchone()
         if row:
             result = dict(row)
@@ -237,7 +237,7 @@ def insert_scheduled_message(
     try:
         conn.execute(
             """INSERT INTO ai_scheduled_messages (id, chat_id, text, parse_mode, send_at, status, created_at)
-               VALUES (, , , , , 'pending', )""",
+               VALUES (?,?,?,?,?, 'pending', ?)""",
             (msg_id, chat_id, text, parse_mode, send_at, now),
         )
         conn.commit()
@@ -253,7 +253,7 @@ def get_pending_scheduled_messages() -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT * FROM ai_scheduled_messages WHERE status = 'pending' AND send_at <=  ORDER BY send_at ASC",
+            "SELECT * FROM ai_scheduled_messages WHERE status = 'pending' AND send_at <= ? ORDER BY send_at ASC",
             (now,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -267,7 +267,7 @@ def mark_scheduled_message_sent(msg_id: str) -> None:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         conn.execute(
-            "UPDATE ai_scheduled_messages SET status = 'sent', sent_at =  WHERE id = ",
+            "UPDATE ai_scheduled_messages SET status = 'sent', sent_at = ? WHERE id = ?",
             (now, msg_id),
         )
         conn.commit()
@@ -280,7 +280,7 @@ def mark_scheduled_message_failed(msg_id: str, error: str) -> None:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         conn.execute(
-            "UPDATE ai_scheduled_messages SET status = 'failed', error_message =  WHERE id = ",
+            "UPDATE ai_scheduled_messages SET status = 'failed', error_message = ? WHERE id = ?",
             (error, msg_id),
         )
         conn.commit()
@@ -293,7 +293,7 @@ def cancel_scheduled_message(msg_id: str) -> bool:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         cur = conn.execute(
-            "UPDATE ai_scheduled_messages SET status = 'cancelled' WHERE id =  AND status = 'pending'",
+            "UPDATE ai_scheduled_messages SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
             (msg_id,),
         )
         conn.commit()
@@ -312,12 +312,12 @@ def get_scheduled_messages(
     try:
         if status:
             rows = conn.execute(
-                "SELECT * FROM ai_scheduled_messages WHERE status =  ORDER BY created_at DESC LIMIT ",
+                "SELECT * FROM ai_scheduled_messages WHERE status = ? ORDER BY created_at DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM ai_scheduled_messages ORDER BY created_at DESC LIMIT ",
+                "SELECT * FROM ai_scheduled_messages ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -335,7 +335,7 @@ def save_custom_command(name: str, system_prompt: str) -> None:
     try:
         conn.execute(
             """INSERT INTO ai_custom_commands (name, system_prompt, created_at)
-               VALUES (, , )
+               VALUES (?,?,?)
                ON CONFLICT(name) DO UPDATE SET
                  system_prompt = excluded.system_prompt,
                  created_at = excluded.created_at""",
@@ -364,7 +364,7 @@ def delete_custom_command(name: str) -> bool:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         cur = conn.execute(
-            "DELETE FROM ai_custom_commands WHERE name = ", (name.lower(),),
+            "DELETE FROM ai_custom_commands WHERE name = ?", (name.lower(),),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -389,7 +389,7 @@ def delete_group_style_profile(chat_id: int) -> bool:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         cur = conn.execute(
-            "DELETE FROM ai_group_style_profiles WHERE chat_id = ", (chat_id,),
+            "DELETE FROM ai_group_style_profiles WHERE chat_id = ?", (chat_id,),
         )
         conn.commit()
         return cur.rowcount > 0

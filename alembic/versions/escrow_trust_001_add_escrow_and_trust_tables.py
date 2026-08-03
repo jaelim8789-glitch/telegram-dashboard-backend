@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers
 revision = "escrow_trust_001"
-down_revision = "merge_folders_and_reply_macro_heads"
+down_revision = "f7a8b9c0d1e2"
 branch_labels = None
 depends_on = None
 

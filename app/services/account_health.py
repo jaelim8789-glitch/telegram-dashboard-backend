@@ -103,23 +103,32 @@ class HealthSummary:
 async def get_account_health(
     identity: Identity,
     account_id: str | None = None,
+    preloaded_accounts: list[Account] | None = None,
 ) -> list[AccountHealthItem]:
-    """Get health status for all authorized accounts."""
-    async with async_session_maker() as db:
-        if identity.kind == "admin":
-            query = select(Account)
-            if account_id:
-                query = query.where(Account.id == account_id)
-        elif identity.tenant_id:
-            query = select(Account).where(Account.tenant_id == identity.tenant_id)
-            if account_id:
-                query = query.where(Account.id == account_id)
-        else:
-            return []
+    """Get health status for all authorized accounts.
 
-        query = query.order_by(Account.created_at.desc())
-        result = await db.execute(query)
-        accounts = list(result.scalars().all())
+    When *preloaded_accounts* is supplied the function skips its own
+    account query and uses the provided list directly.  This avoids the
+    N+1 pattern where the caller already fetched the same accounts.
+    """
+    if preloaded_accounts is not None:
+        accounts = preloaded_accounts
+    else:
+        async with async_session_maker() as db:
+            if identity.kind == "admin":
+                query = select(Account)
+                if account_id:
+                    query = query.where(Account.id == account_id)
+            elif identity.tenant_id:
+                query = select(Account).where(Account.tenant_id == identity.tenant_id)
+                if account_id:
+                    query = query.where(Account.id == account_id)
+            else:
+                return []
+
+            query = query.order_by(Account.created_at.desc())
+            result = await db.execute(query)
+            accounts = list(result.scalars().all())
 
     if not accounts:
         return []
