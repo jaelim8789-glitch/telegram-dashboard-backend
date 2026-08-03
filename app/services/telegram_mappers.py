@@ -49,7 +49,7 @@ def dialog_to_dict(dialog: Dialog) -> dict:
         "title": title,
         "type": dtype,
         "unread_count": dialog.unread_count,
-        "last_message": dialog.message.message[:200] if dialog.message and not isinstance(dialog.message, MessageService) else None,
+        "last_message": (dialog.message.message or "")[:200] if dialog.message and not isinstance(dialog.message, MessageService) else None,
         "last_message_date": dialog.message.date.replace(tzinfo=None).isoformat() if dialog.message and dialog.message.date else None,
         "pinned": dialog.pinned or False,
         "photo": None,

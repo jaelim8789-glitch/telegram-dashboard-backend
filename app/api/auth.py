@@ -121,7 +121,10 @@ async def send_code(payload: SendCodeRequest, request: Request, db: AsyncSession
         )
 
     logger.info("verification_code_sent", phone=payload.phone)
-    return SendCodeResponse(sent=True)
+    # console provider never actually delivers the code anywhere reachable by the
+    # user (it only logs server-side) — echo it back so the schema's documented
+    # dev-mode contract (and the frontend's auto-fill of it) actually works.
+    return SendCodeResponse(sent=True, code=code if settings.sms_provider == "console" else None)
 
 
 @router.post("/verify-code", response_model=VerifyCodeResponse)
