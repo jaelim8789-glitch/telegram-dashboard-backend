@@ -10,6 +10,8 @@ from telethon.tl.types import (
     MessageService, MessageMediaPhoto, MessageMediaDocument,
     MessageMediaWebPage,
     PeerUser, PeerChat, PeerChannel,
+    UserStatusOnline, UserStatusOffline, UserStatusRecently,
+    UserStatusLastWeek, UserStatusLastMonth,
 )
 
 from app.core.logging import get_logger
@@ -27,6 +29,28 @@ def peer_id(peer) -> int | None:
     return None
 
 
+def user_online_status(user: User) -> bool | None:
+    """Best-effort online status from a Telethon User's `status` field.
+
+    Telegram only reports presence for users you have some form of contact
+    with (mutual contacts, recent chats, etc.) — for many users `status` is
+    `UserStatusEmpty`/`None` and true presence is unknowable without extra
+    per-user calls (e.g. GetFullUser), which we deliberately avoid here to
+    not add N+1 requests per dialog. This only surfaces status Telegram
+    already includes for free in the `iter_dialogs`/`get_dialogs` response.
+
+    Returns True/False when Telegram gives a concrete online/offline status,
+    or None when presence is unknown/hidden (privacy settings, no data,
+    non-user entities like groups/channels).
+    """
+    status = getattr(user, "status", None)
+    if isinstance(status, UserStatusOnline):
+        return True
+    if isinstance(status, (UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth)):
+        return False
+    return None
+
+
 def dialog_to_dict(dialog: Dialog) -> dict | None:
     try:
         entity = dialog.entity
@@ -34,11 +58,13 @@ def dialog_to_dict(dialog: Dialog) -> dict | None:
         dtype = "unknown"
         username = None
         participants = 0
+        is_online = None
 
         if isinstance(entity, User):
             title = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or entity.username or "Unknown"
             dtype = "private"
             username = entity.username
+            is_online = user_online_status(entity)
         elif isinstance(entity, Chat):
             title = entity.title or "Group"
             dtype = "group"
@@ -60,6 +86,7 @@ def dialog_to_dict(dialog: Dialog) -> dict | None:
             "photo": None,
             "participants_count": participants,
             "username": username,
+            "is_online": is_online,
         }
     except Exception as exc:
         logger.warning("dialog_to_dict_failed", error=str(exc), dialog_id=getattr(dialog, "id", "unknown"))

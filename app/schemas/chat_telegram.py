@@ -14,6 +14,12 @@ class TelegramDialog(BaseModel):
     photo: str | None = None
     participants_count: int = 0
     username: str | None = None
+    # Best-effort presence for 1:1 (private) dialogs only, sourced from the
+    # Telethon User.status Telegram already includes in the dialogs response
+    # (no extra per-user API calls). True = online now, False = known
+    # offline/recently-seen, None = unknown (privacy settings, groups /
+    # channels, or Telegram simply didn't report a status).
+    is_online: bool | None = None
 
     model_config = {"from_attributes": True}
 
