@@ -344,6 +344,24 @@ async def send_message_reaction(client, chat_id: int, message_id: int, emoji: st
     await client.send_reaction(entity, msg, emoji)
 
 
+async def pin_chat_message(client, chat_id: int, message_id: int, notify: bool = False) -> None:
+    """Pin an individual message within a chat."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.get_messages(entity, ids=message_id)
+    if msg is None:
+        raise ValueError("Message not found")
+    await client.pin_message(entity, msg, notify=notify)
+
+
+async def unpin_chat_message(client, chat_id: int, message_id: int) -> None:
+    """Unpin an individual message within a chat."""
+    entity = await client.get_entity(chat_id)
+    msg = await client.get_messages(entity, ids=message_id)
+    if msg is None:
+        raise ValueError("Message not found")
+    await client.unpin_message(entity, msg)
+
+
 async def get_chat_details(client, chat_id: int) -> dict:
     """Get detailed chat info including members."""
     entity = await client.get_entity(chat_id)

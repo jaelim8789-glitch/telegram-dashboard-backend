@@ -63,3 +63,7 @@ class ForwardMessageRequest(BaseModel):
 
 class ReactRequest(BaseModel):
     emoji: str
+
+
+class PinMessageRequest(BaseModel):
+    notify: bool = False
