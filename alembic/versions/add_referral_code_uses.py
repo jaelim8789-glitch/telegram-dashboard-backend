@@ -7,7 +7,7 @@ depends_on: str | None = None
 
 from alembic import op
 import sqlalchemy as sa
-from alembic.utils import create_table_if_not_exists
+from alembic.idempotent import create_table_if_not_exists
 
 
 def upgrade() -> None:

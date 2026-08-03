@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.engine import reflection
-from alembic.utils import create_table_if_not_exists
+from alembic.idempotent import create_table_if_not_exists
 
 
 revision: str = "a7b8c9d0e1f2"

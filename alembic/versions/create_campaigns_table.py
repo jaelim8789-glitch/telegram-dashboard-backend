@@ -14,7 +14,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from alembic.utils import create_table_if_not_exists
+from alembic.idempotent import create_table_if_not_exists
 
 
 revision: str = "create_campaigns_table"

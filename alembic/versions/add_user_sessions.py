@@ -4,7 +4,7 @@ from typing import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from alembic.utils import create_table_if_not_exists
+from alembic.idempotent import create_table_if_not_exists
 
 revision: str = "add_user_sessions"
 down_revision: str | None = "a1c3e5f7b9d1"
