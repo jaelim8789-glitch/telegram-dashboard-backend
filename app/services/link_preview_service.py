@@ -41,6 +41,9 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 _ALLOWED_SCHEMES = {"http", "https"}
+# RFC 6598 carrier-grade NAT shared space — not covered by is_private, but
+# used internally by some cloud providers, so treat it as internal too.
+_CGNAT_RANGE = ipaddress.ip_network("100.64.0.0/10")
 _MAX_REDIRECTS = 5
 _CONNECT_TIMEOUT = 3.0
 _READ_TIMEOUT = 3.0
@@ -69,6 +72,11 @@ def _is_blocked_ip(ip_str: str) -> bool:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return True  # unparseable -> reject, fail closed
+    # is_site_local (deprecated IPv6 site-local) only exists on IPv6Address —
+    # ip.is_site_local raises AttributeError on every IPv4Address, which
+    # meant this crashed on ANY public IPv4 target (i.e. virtually every real
+    # URL) instead of returning False. Only check it for IPv6.
+    site_local = isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local
     return (
         ip.is_private
         or ip.is_loopback
@@ -76,7 +84,8 @@ def _is_blocked_ip(ip_str: str) -> bool:
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
-        or ip.is_site_local  # deprecated IPv6 site-local, treat as internal
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_RANGE)
+        or site_local
     )
 
 
