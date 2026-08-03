@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
+from telethon import utils
 from telethon.tl.types import MessageService, User
 from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
 
@@ -366,13 +367,19 @@ async def unpin_chat_message(client, chat_id: int, message_id: int) -> None:
 async def block_user(client, chat_id: int) -> None:
     """Block a user (1:1 chat peer)."""
     entity = await client.get_entity(chat_id)
-    await client(BlockRequest(id=entity))
+    # BlockRequest.id is typed TypeInputPeer, not a full User — passing the
+    # entity directly serializes the WRONG bytes on the wire (verified: the
+    # entity's own TL constructor gets serialized in place of an InputPeer,
+    # producing a malformed request Telegram would reject/misinterpret).
+    # utils.get_input_peer() does the required User -> InputPeerUser (etc.)
+    # conversion, same as Telethon's own convenience methods do internally.
+    await client(BlockRequest(id=utils.get_input_peer(entity)))
 
 
 async def unblock_user(client, chat_id: int) -> None:
     """Unblock a user (1:1 chat peer)."""
     entity = await client.get_entity(chat_id)
-    await client(UnblockRequest(id=entity))
+    await client(UnblockRequest(id=utils.get_input_peer(entity)))
 
 
 async def get_chat_details(client, chat_id: int) -> dict:
