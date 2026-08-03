@@ -328,8 +328,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=[
+        "Authorization",
+        "X-Session-Token",
+        "X-API-Key",
+        "Content-Type",
+        "Accept",
+        "X-Real-IP",
+        "X-Forwarded-For",
+        "X-Request-Id",
+        "X-Idempotency-Key",
+    ],
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -427,7 +437,7 @@ app.include_router(knowledge_base_router)
 app.include_router(translate_router)
 app.include_router(escrow_router, dependencies=_auth_required)
 app.include_router(trust_router, dependencies=_auth_required)
-app.include_router(automation_router)
+app.include_router(automation_router, dependencies=_auth_required)
 
 
 @app.get("/metrics")
@@ -531,4 +541,8 @@ class ProxyHeadersApp(ProxyHeadersMiddleware):
         return getattr(self.app, name)
 
 
-app = ProxyHeadersApp(app, trusted_hosts="*")  # safe: only reachable via internal nginx/Cloudflare
+# nginx is the only thing that can reach uvicorn directly (not internet-exposed
+# itself). Only trust X-Forwarded-* headers when the direct TCP peer is our own
+# nginx container (or a localhost/dev caller) — arbitrary clients can no longer
+# spoof proxy headers to forge their client IP.
+app = ProxyHeadersApp(app, trusted_hosts=["nginx", "127.0.0.1", "localhost"])

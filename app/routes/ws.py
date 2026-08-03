@@ -4,10 +4,62 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
+from app.core.logging import get_logger
+
 ws_router = APIRouter()
+logger = get_logger(__name__)
 
 # In-memory chat WebSocket connections: account_id → set of WebSocket clients
 chat_clients: dict[str, set[WebSocket]] = {}
+
+
+async def _validate_ws_identity(token: str | None, headers) -> "Identity | None":
+    """Validate an auth token supplied on a WebSocket connection.
+
+    Accepts the session token via the ``token`` query parameter or the
+    X-Session-Token header, or a Bearer JWT via the Authorization header.
+    Returns the resolved Identity, or None when no credentials were supplied
+    or they could not be validated.
+    """
+    try:
+        from app.api.deps import _resolve_identity
+        from app.database import async_session_maker
+
+        x_session_token = token or (headers.get("X-Session-Token") if headers else None)
+        authorization = headers.get("Authorization") if headers else None
+        async with async_session_maker() as db:
+            return await _resolve_identity(None, authorization, x_session_token, db)
+    except Exception:
+        return None
+
+
+async def _ws_auth_gate(websocket: WebSocket, token: str | None) -> bool:
+    """Soft-enforcement auth gate for WebSocket connections.
+
+    Validates the supplied token (query param, X-Session-Token header, or
+    Authorization Bearer). A present-but-invalid token closes the connection
+    with 4401 (unauthorized). A missing token is allowed for now (the frontend
+    is being migrated to send one) but logged — this becomes a hard requirement
+    in a later tightening step. Returns True when the handler should proceed,
+    False when the connection has been closed and the handler must return.
+    """
+    identity = await _validate_ws_identity(token, websocket.headers)
+    if identity is not None:
+        return True
+
+    supplied = bool(
+        token
+        or websocket.headers.get("X-Session-Token")
+        or websocket.headers.get("Authorization")
+    )
+    if supplied:
+        logger.warning("ws_auth_rejected", path=websocket.url.path)
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return False
+
+    logger.warning("ws_auth_missing_token", path=websocket.url.path)
+    return True
 
 
 async def broadcast_to_account(account_id: str, message: dict) -> None:
@@ -39,7 +91,10 @@ async def broadcast_dialog_update(account_id: str) -> None:
 async def chat_websocket(
     websocket: WebSocket,
     account_id: str = Query(...),
+    token: Optional[str] = Query(default=None),
 ):
+    if not await _ws_auth_gate(websocket, token):
+        return
     await websocket.accept()
     if account_id not in chat_clients:
         chat_clients[account_id] = set()
@@ -95,7 +150,10 @@ async def chat_websocket(
 async def dashboard_websocket(
     websocket: WebSocket,
     account_id: Optional[str] = Query(None),
+    token: Optional[str] = Query(default=None),
 ):
+    if not await _ws_auth_gate(websocket, token):
+        return
     await websocket.accept()
 
     async def send_periodic_stats():
@@ -130,8 +188,13 @@ session_clients: set[WebSocket] = set()
 
 
 @ws_router.websocket("/ws/sessions")
-async def sessions_websocket(websocket: WebSocket):
+async def sessions_websocket(
+    websocket: WebSocket,
+    token: Optional[str] = Query(default=None),
+):
     """Real-time session state updates over WebSocket."""
+    if not await _ws_auth_gate(websocket, token):
+        return
     await websocket.accept()
     session_clients.add(websocket)
 
