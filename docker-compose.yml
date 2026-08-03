@@ -64,13 +64,13 @@ services:
       - full
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://telegram_dashboard:${POSTGRES_PASSWORD:-telegram_dashboard_password}@db:5432/telegram_dashboard}
       REDIS_URL: redis://redis:6379/0
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: ADMIN2026
-      NOWPAYMENTS_API_KEY: VZG2PB2-JFQ4NW7-NHYJARD-VV49XEJ
-      NOWPAYMENTS_IPN_SECRET: csI5GHanjgI+v9IO+oWShkBwM6pI49Vf
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      NOWPAYMENTS_API_KEY: ${NOWPAYMENTS_API_KEY:-}
+      NOWPAYMENTS_IPN_SECRET: ${NOWPAYMENTS_IPN_SECRET:-}
       NOWPAYMENTS_PUBLIC_KEY: ""
     volumes:
       - media_data:/app/media
