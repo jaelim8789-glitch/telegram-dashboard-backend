@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.core.rate_limiter import get_client_ip
 from app.core.security import decode_access_token, decode_user_access_token
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
@@ -22,22 +23,25 @@ class Identity:
     kind: Literal["admin", "api_key", "user"]
     user: User | None = None
     tenant_id: str | None = None
+    requires_reauth: bool = False
 
 
 async def get_current_identity(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> Identity:
     """Returns a fully-resolved Identity including tenant_id."""
-    identity = await _resolve_identity(x_api_key, authorization, x_session_token, db)
+    identity = await _resolve_identity(x_api_key, authorization, x_session_token, db, request=request)
     if identity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="인증이 필요합니다.")
     return identity
 
 
 async def get_optional_identity(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
@@ -47,7 +51,7 @@ async def get_optional_identity(
     valid credentials are present. For endpoints that must stay reachable
     without auth (public onboarding) but should still attach the caller's
     tenant when they happen to already be logged in."""
-    return await _resolve_identity(x_api_key, authorization, x_session_token, db)
+    return await _resolve_identity(x_api_key, authorization, x_session_token, db, request=request)
 
 
 async def get_current_tenant_id(
@@ -125,7 +129,7 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않거나 만료된 토큰입니다.")
 
 
-async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_session_token: str | None, db: AsyncSession) -> Identity | None:
+async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_session_token: str | None, db: AsyncSession, *, request: Request | None = None) -> Identity | None:
     # Authorization Bearer first — explicit login beats stored session to prevent
     # "old session overwrites new login" bugs when a browser sends both headers.
     if authorization and authorization.startswith("Bearer "):
@@ -152,10 +156,18 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_
 
     # Session token (opaque persistent token, survives browser restart)
     if x_session_token:
-        session = await session_crud.get_session_by_token(db, x_session_token)
+        user_agent = request.headers.get("user-agent") if request else None
+        client_ip = get_client_ip(request) if request else None
+        session = await session_crud.get_session_by_token(
+            db, x_session_token, user_agent=user_agent, client_ip=client_ip,
+        )
         if session is not None:
             await session_crud.touch_session(db, session)
-            return Identity(kind="user", tenant_id=session.tenant_id)
+            return Identity(
+                kind="user",
+                tenant_id=session.tenant_id,
+                requires_reauth=session.requires_reauth,
+            )
 
     if x_api_key:
         key_row = await api_key_crud.get_by_key(db, x_api_key)
@@ -176,13 +188,14 @@ async def _resolve_tenant_by_phone(db: AsyncSession, phone: str) -> str | None:
 
 
 async def require_api_key_or_admin(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Guards the main /api/* routes."""
-    if await _resolve_identity(x_api_key, authorization, x_session_token, db) is None:
+    if await _resolve_identity(x_api_key, authorization, x_session_token, db, request=request) is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
 
 

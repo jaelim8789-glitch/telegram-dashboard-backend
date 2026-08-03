@@ -70,7 +70,7 @@ def _verify_telegram_widget(data: TelegramLoginRequest, bot_token: str) -> bool:
     return hmac.compare_digest(computed, data.hash)
 
 
-def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
+def _public_me_response(user: User, tenant: Tenant | None, requires_reauth: bool = False) -> MeResponse:
     return MeResponse(
         role="user",
         phone=user.phone,
@@ -80,6 +80,7 @@ def _public_me_response(user: User, tenant: Tenant | None) -> MeResponse:
         telegram_username=user.telegram_username or None,
         telegram_photo_url=user.telegram_photo_url or None,
         stars_balance=tenant.stars_balance if tenant else 0,
+        requires_reauth=requires_reauth,
     )
 
 
@@ -253,6 +254,8 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
         tenant_id = await _resolve_tenant_id_by_user(db, user)
         raw_token, _ = await session_crud.create_session(
             db, user_id=user.id, tenant_id=tenant_id,
+            user_agent=request.headers.get("user-agent"),
+            client_ip=get_client_ip(request),
         )
         await db.commit()
         logger.info("user_login_success", user_id=user.id)
@@ -266,6 +269,8 @@ async def login_with_api_key(payload: LoginWithApiKeyRequest, request: Request, 
     if key_record is not None and key_record.is_active:
         raw_token, _ = await session_crud.create_session(
             db, api_key_id=key_record.id, tenant_id=key_record.tenant_id,
+            user_agent=request.headers.get("user-agent"),
+            client_ip=get_client_ip(request),
         )
         await db.commit()
         logger.info("api_key_login_success", api_key_id=key_record.id)
@@ -345,6 +350,8 @@ async def telegram_login(
 
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant.id,
+        user_agent=request.headers.get("user-agent"),
+        client_ip=get_client_ip(request),
     )
     await db.commit()
 
@@ -365,21 +372,22 @@ async def me(
         from sqlalchemy import select
         result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
         tenant = result.scalar_one_or_none()
-        return _public_me_response(identity.user, tenant)
+        return _public_me_response(identity.user, tenant, requires_reauth=identity.requires_reauth)
     if identity.tenant_id:
         from sqlalchemy import select
         result = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
         tenant = result.scalar_one_or_none()
         if identity.user:
-            return _public_me_response(identity.user, tenant)
+            return _public_me_response(identity.user, tenant, requires_reauth=identity.requires_reauth)
         return MeResponse(
             role=identity.kind,
             subscription_status=tenant.subscription_status if tenant else None,
             plan=tenant.plan if tenant else None,
             trial_expires_at=tenant.trial_expires_at if tenant else None,
             stars_balance=tenant.stars_balance if tenant else 0,
+            requires_reauth=identity.requires_reauth,
         )
-    return MeResponse(role=identity.kind)
+    return MeResponse(role=identity.kind, requires_reauth=identity.requires_reauth)
 
 
 async def _resolve_tenant_id_by_user(db: AsyncSession, user: User) -> str | None:
@@ -710,6 +718,8 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
     # Issue JWT + session
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant_id,
+        user_agent=request.headers.get("user-agent"),
+        client_ip=get_client_ip(request),
     )
 
     # Link orphaned accounts (created via prepare-account without tenant) to this tenant
@@ -834,6 +844,8 @@ async def miniapp_auth(payload: MiniAppAuthRequest, request: Request, db: AsyncS
     # Issue JWT
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant_id,
+        user_agent=request.headers.get("user-agent"),
+        client_ip=get_client_ip(request),
     )
 
     # Link orphaned accounts to this tenant
