@@ -46,3 +46,21 @@ def create_index_if_not_exists(index_name: str, table_name: str, columns, **kwar
     existing = [ix["name"] for ix in insp.get_indexes(table_name)]
     if index_name not in existing:
         op.create_index(index_name, table_name, columns, **kwargs)
+
+
+def create_foreign_key_if_not_exists(constraint_name: str, table_name: str, *args, **kwargs):
+    """Create a foreign key constraint only if it doesn't already exist."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    existing = [fk["name"] for fk in insp.get_foreign_keys(table_name)]
+    if constraint_name not in existing:
+        op.create_foreign_key(constraint_name, table_name, *args, **kwargs)
+
+
+def create_unique_constraint_if_not_exists(constraint_name: str, table_name: str, columns, **kwargs):
+    """Create a unique constraint only if it doesn't already exist."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    existing = [uc["name"] for uc in insp.get_unique_constraints(table_name)]
+    if constraint_name not in existing:
+        op.create_unique_constraint(constraint_name, table_name, columns, **kwargs)
