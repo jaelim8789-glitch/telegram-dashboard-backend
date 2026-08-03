@@ -9,7 +9,13 @@ from app.realtime.dispatcher import dispatcher
 
 
 @pytest.fixture
-def ws_app():
+def ws_app(monkeypatch):
+    # WS connections now require a valid auth token (hard enforcement). These
+    # tests exercise the broadcast plumbing, not auth — so bypass the gate.
+    async def _bypass_gate(websocket, token):
+        return True
+    monkeypatch.setattr("app.routes.ws._ws_auth_gate", _bypass_gate)
+
     app = FastAPI()
     app.include_router(ws_router)
     return app
