@@ -7,7 +7,7 @@ Create Date: 2026-08-03
 
 from alembic import op
 import sqlalchemy as sa
-from alembic.idempotent import create_table_if_not_exists
+from migration_helpers import create_table_if_not_exists
 
 
 # revision identifiers
