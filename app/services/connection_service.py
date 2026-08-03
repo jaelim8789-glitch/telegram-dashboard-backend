@@ -151,7 +151,14 @@ class ConnectionService:
                 session_string = ""
                 if hasattr(account, 'session_data') and account.session_data:
                     from app.core.crypto import decrypt_session
-                    session_string = decrypt_session(account.session_data)
+                    try:
+                        session_string = decrypt_session(account.session_data)
+                    except ValueError:
+                        logger.warning(
+                            "session_decrypt_failed_on_restore",
+                            account_id=account.id,
+                        )
+                        return
                 await self.connect(account.id, session_string)
 
         await asyncio.gather(*[_restore_one(a) for a in accounts], return_exceptions=True)

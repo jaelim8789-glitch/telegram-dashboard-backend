@@ -14,7 +14,7 @@ class Account(Base):
     tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
     phone: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="inactive")  # active, inactive, banned
+    status: Mapped[str] = mapped_column(String(20), default="inactive")  # active, inactive, banned, pending_auth, session_corrupted
     today_sent: Mapped[int] = mapped_column(Integer, default=0)
     group_count: Mapped[int] = mapped_column(Integer, default=0)
     last_activity: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
