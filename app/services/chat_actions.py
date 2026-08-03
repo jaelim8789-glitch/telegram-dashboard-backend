@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
 from telethon.tl.types import MessageService, User
+from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
 
 from app.core.logging import get_logger
 from app.database import async_session_maker
@@ -360,6 +361,18 @@ async def unpin_chat_message(client, chat_id: int, message_id: int) -> None:
     if msg is None:
         raise ValueError("Message not found")
     await client.unpin_message(entity, msg)
+
+
+async def block_user(client, chat_id: int) -> None:
+    """Block a user (1:1 chat peer)."""
+    entity = await client.get_entity(chat_id)
+    await client(BlockRequest(id=entity))
+
+
+async def unblock_user(client, chat_id: int) -> None:
+    """Unblock a user (1:1 chat peer)."""
+    entity = await client.get_entity(chat_id)
+    await client(UnblockRequest(id=entity))
 
 
 async def get_chat_details(client, chat_id: int) -> dict:

@@ -407,6 +407,64 @@ async def unpin_message_endpoint(
     return {"ok": True}
 
 
+@router.post("/accounts/{account_id}/dialogs/{chat_id}/block")
+async def block_user_endpoint(
+    account_id: str,
+    chat_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import block_user
+    try:
+        await block_user(client, int(chat_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    broadcast_to_ws("user_blocked", {"chat_id": chat_id})
+    return {"ok": True}
+
+
+@router.delete("/accounts/{account_id}/dialogs/{chat_id}/block")
+async def unblock_user_endpoint(
+    account_id: str,
+    chat_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    await require_account_tenant_access(account_id, db, identity)
+    account = await _get_account_or_404(account_id, db)
+
+    try:
+        client = await pool.get_client(account.id, decrypt_session(account.session_data) if account.session_data else "")
+    except RuntimeError as exc:
+        raise _config_error_to_http(exc)
+
+    from app.services.chat_actions import unblock_user
+    try:
+        await unblock_user(client, int(chat_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
+        )
+    broadcast_to_ws("user_unblocked", {"chat_id": chat_id})
+    return {"ok": True}
+
+
 @router.get("/accounts/{account_id}/dialogs/{chat_id}/stream")
 async def stream_messages_endpoint(
     account_id: str,
