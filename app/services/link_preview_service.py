@@ -15,11 +15,11 @@ metadata endpoints):
     and re-validate the new URL/host on every hop, so a public URL that 302s to
     an internal address cannot be used to bypass the check ("DNS rebinding"
     via redirect).
-  - httpx is also pointed at the already-validated IP directly (via a custom
-    transport override is overkill here; instead we re-resolve right before
-    connecting and rely on a short TTL) — practical mitigation for classic
-    SSRF given this codebase's existing tooling (no dedicated pinning
-    transport available without adding a new dependency).
+  - The client connects directly to the already-validated IP (not the
+    hostname) with an explicit Host header and TLS SNI override, so httpx/
+    httpcore's own independent DNS lookup can't be used to bypass the check
+    via DNS rebinding (a short-TTL DNS record that resolves safely at
+    validation time and to an internal address a moment later).
   - Strict connect/read timeouts and a hard cap on bytes read (we only need
     the <head>, so we stream and stop early instead of downloading the body).
   - The caller's cookies/auth headers are never forwarded to the target site;
@@ -80,10 +80,15 @@ def _is_blocked_ip(ip_str: str) -> bool:
     )
 
 
-def _validate_url(url: str) -> str:
+def _validate_url(url: str) -> tuple[str, str]:
     """Validate scheme + hostname, resolve DNS, and reject internal targets.
 
-    Returns the normalized URL on success; raises LinkPreviewError otherwise.
+    Returns (url, pinned_ip) on success; raises LinkPreviewError otherwise.
+    The caller MUST connect to `pinned_ip` rather than re-resolving `hostname`
+    itself — otherwise this check is vulnerable to DNS rebinding: an attacker
+    controlling the DNS record for their domain can return a safe IP for this
+    lookup and then, with a short TTL, return an internal IP by the time the
+    HTTP client does its own independent resolution a moment later.
     """
     try:
         parsed = urlparse(url)
@@ -108,13 +113,17 @@ def _validate_url(url: str) -> str:
     if not addrinfo:
         raise LinkPreviewError(f"호스트를 확인할 수 없습니다: {hostname}")
 
+    pinned_ip: str | None = None
     for family, _type, _proto, _canon, sockaddr in addrinfo:
         ip_str = sockaddr[0]
         if _is_blocked_ip(ip_str):
             logger.warning("link_preview_ssrf_blocked", url=url, hostname=hostname, ip=ip_str)
             raise LinkPreviewError("내부/사설 IP 대상으로의 요청은 허용되지 않습니다.", status_code=400)
+        if pinned_ip is None:
+            pinned_ip = ip_str  # pin to the first validated address
 
-    return url
+    assert pinned_ip is not None
+    return url, pinned_ip
 
 
 def _parse_head(html_bytes: bytes, base_url: str) -> LinkPreview:
@@ -139,13 +148,28 @@ def _parse_head(html_bytes: bytes, base_url: str) -> LinkPreview:
     return LinkPreview(url=base_url, title=title, description=description, image=image)
 
 
+def _pin_to_ip(url: str, ip: str) -> str:
+    """Rewrite `url`'s host to the already-validated IP, keeping scheme/port/path.
+
+    Combined with an explicit Host header and (for https) the `sni_hostname`
+    extension, this makes httpcore actually connect to the IP we checked
+    instead of re-resolving the hostname itself — closing the DNS-rebinding
+    TOCTOU gap between validation and connection.
+    """
+    parsed = urlparse(url)
+    netloc = f"[{ip}]" if ":" in ip else ip
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return parsed._replace(netloc=netloc).geturl()
+
+
 async def fetch_link_preview(url: str) -> LinkPreview:
     """Fetch `url` server-side and extract an Open Graph preview.
 
     Raises LinkPreviewError (with an appropriate status_code) for any
     validation failure, SSRF-blocked target, timeout, or non-HTML response.
     """
-    current_url = _validate_url(url)
+    current_url, current_ip = _validate_url(url)
 
     limits = httpx.Limits(max_connections=5, max_keepalive_connections=0)
     timeout = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=_READ_TIMEOUT, write=_CONNECT_TIMEOUT, pool=_CONNECT_TIMEOUT)
@@ -154,18 +178,29 @@ async def fetch_link_preview(url: str) -> LinkPreview:
         follow_redirects=False,  # we re-validate each hop manually below
         timeout=timeout,
         limits=limits,
-        headers={"User-Agent": _USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
         cookies=None,  # never forward caller cookies/auth to the target
     ) as client:
         for _hop in range(_MAX_REDIRECTS + 1):
+            hostname = urlparse(current_url).hostname
+            request_url = _pin_to_ip(current_url, current_ip)
+            request = client.build_request(
+                "GET",
+                request_url,
+                headers={
+                    "User-Agent": _USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Host": hostname,
+                },
+                extensions={"sni_hostname": hostname},
+            )
             try:
-                async with client.stream("GET", current_url) as resp:
+                async with await client.send(request, stream=True) as resp:
                     if resp.is_redirect:
                         location = resp.headers.get("location")
                         if not location:
                             raise LinkPreviewError("리디렉션 응답에 위치 정보가 없습니다.", status_code=502)
                         next_url = urljoin(current_url, location)
-                        current_url = _validate_url(next_url)  # re-validate on every hop
+                        current_url, current_ip = _validate_url(next_url)  # re-validate + re-pin on every hop
                         continue
 
                     if resp.status_code >= 400:
