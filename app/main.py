@@ -428,7 +428,7 @@ app.include_router(knowledge_base_router)
 app.include_router(translate_router)
 app.include_router(escrow_router, dependencies=_auth_required)
 app.include_router(trust_router, dependencies=_auth_required)
-app.include_router(automation_router)
+app.include_router(automation_router, dependencies=_auth_required)
 
 
 @app.get("/metrics")
