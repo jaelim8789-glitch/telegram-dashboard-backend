@@ -10,11 +10,19 @@ from app.realtime.dispatcher import dispatcher
 
 @pytest.fixture
 def ws_app(monkeypatch):
-    # WS connections now require a valid auth token (hard enforcement). These
-    # tests exercise the broadcast plumbing, not auth — so bypass the gate.
+    # WS connections now require a valid auth token (hard enforcement) and
+    # tenant ownership of the subscribed account. These tests exercise the
+    # broadcast plumbing, not auth/authorization — so bypass both gates.
+    from app.api.deps import Identity
+
     async def _bypass_gate(websocket, token):
+        return Identity(kind="admin")
+
+    async def _bypass_access(websocket, identity, account_id):
         return True
+
     monkeypatch.setattr("app.routes.ws._ws_auth_gate", _bypass_gate)
+    monkeypatch.setattr("app.routes.ws._verify_account_access", _bypass_access)
 
     app = FastAPI()
     app.include_router(ws_router)
