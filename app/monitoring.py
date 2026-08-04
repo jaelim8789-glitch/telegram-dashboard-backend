@@ -58,6 +58,42 @@ _metrics: dict[str, Any] = {
 
 _metrics_lock = threading.Lock()
 
+# Rolling latency samples (seconds) for percentile computation. Capped to bound
+# memory; used by get_latency_percentiles().
+_MAX_LATENCY_SAMPLES = 20_000
+_latency_samples: list[float] = []
+
+# Histogram bucket upper-bounds in seconds (Prometheus-style).
+_LATENCY_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+_latency_histogram: dict[str, int] = {f"le_{b}": 0 for b in _LATENCY_BUCKETS}
+
+
+def _record_latency_sample(duration: float) -> None:
+    """Record a duration into the rolling sample list + histogram (caller holds lock)."""
+    _latency_samples.append(duration)
+    if len(_latency_samples) > _MAX_LATENCY_SAMPLES:
+        del _latency_samples[: len(_latency_samples) - _MAX_LATENCY_SAMPLES]
+    for b in _LATENCY_BUCKETS:
+        if duration <= b:
+            _latency_histogram[f"le_{b}"] += 1
+
+
+def get_latency_percentiles() -> dict[str, float]:
+    """P50 / P95 / P99 / max over the rolling window (seconds)."""
+    with _metrics_lock:
+        samples = list(_latency_samples)
+    if not samples:
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
+    samples.sort()
+    n = len(samples)
+    idx = lambda p: min(n - 1, int(p * n))
+    return {
+        "p50": round(samples[idx(0.50)] * 1000, 1),
+        "p95": round(samples[idx(0.95)] * 1000, 1),
+        "p99": round(samples[idx(0.99)] * 1000, 1),
+        "max": round(samples[-1] * 1000, 1),
+    }
+
 
 def inc_metric(name: str, value: int = 1) -> None:
     """Increment a counter metric."""
@@ -79,6 +115,8 @@ def observe_duration(name_sum: str, name_count: str, duration: float) -> None:
     with _metrics_lock:
         _metrics[name_sum] = _metrics.get(name_sum, 0.0) + duration
         _metrics[name_count] = _metrics.get(name_count, 0) + 1
+        if name_sum == "http_request_duration_seconds_sum":
+            _record_latency_sample(duration)
 
 
 def get_metrics_text() -> str:
@@ -105,6 +143,17 @@ def get_metrics_text() -> str:
             "# TYPE telemon_http_request_duration_seconds summary",
             f"telemon_http_request_duration_seconds_sum {_metrics.get('http_request_duration_seconds_sum', 0.0)}",
             f"telemon_http_request_duration_seconds_count {_metrics.get('http_request_duration_seconds_count', 0)}",
+            "",
+            "# HELP telemon_http_request_duration_percentiles HTTP request latency percentiles (ms)",
+            "# TYPE telemon_http_request_duration_percentiles gauge",
+            *[
+                f"telemon_http_request_duration_percentile{{quantile=\"{k}\"}} {v}"
+                for k, v in get_latency_percentiles().items()
+            ],
+            "",
+            "# HELP telemon_http_request_duration_bucket HTTP request latency histogram",
+            "# TYPE telemon_http_request_duration_bucket counter",
+            *[f"telemon_http_request_duration_bucket{{le=\"{b}\"}} {_latency_histogram[f'le_{b}']}" for b in _LATENCY_BUCKETS],
             "",
             "# HELP telemon_runtimes_total Total registered runtimes",
             "# TYPE telemon_runtimes_total gauge",
