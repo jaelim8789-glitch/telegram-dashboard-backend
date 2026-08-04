@@ -337,8 +337,69 @@ def get_all_addons() -> list[dict]:
 # ─── Subscription Management ─────────────────────────────────────────
 
 
+async def get_billing_summary(tenant_id: str) -> dict:
+    """Aggregated data for the Billing Center dashboard:
+    current plan, billing period / next payment, payment status, and usage
+    (accounts / broadcast / AI) against the plan's limits."""
+    from sqlalchemy import func, select
+
+    from app.models.account import Account
+    from app.models.tenant import UsageRecord
+
+    async with async_session_maker() as db:
+        tenant = await db.get(Tenant, tenant_id)
+        if not tenant:
+            return {"success": False, "error": "사용자를 찾을 수 없습니다."}
+
+        plan_def = get_plan(tenant.plan)
+        limits = get_plan_limits(tenant.plan)
+
+        # Usage this billing month
+        now = utcnow_naive()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        usage_rows = await db.execute(
+            select(UsageRecord.action, func.sum(UsageRecord.count).label("total")).where(
+                UsageRecord.tenant_id == tenant_id,
+                UsageRecord.recorded_at >= month_start,
+            ).group_by(UsageRecord.action)
+        )
+        usage = {row.action: int(row.total or 0) for row in usage_rows.all()}
+
+        account_count = await db.execute(
+            select(func.count(Account.id)).where(Account.tenant_id == tenant_id)
+        )
+        accounts_used = account_count.scalar_one() or 0
+
+        ai_used = usage.get("ai_chat", 0)
+        ai_limit = limits.get("monthly_ai_chat_limit", 0)
+        if ai_limit <= 0:
+            # Credit-based AI: remaining credits vs reset budget
+            ai_total = (tenant.monthly_ai_chat_limit or 0)
+            ai_used = max(ai_total - (tenant.ai_credits_remaining or 0), 0) if ai_total else 0
+            ai_limit = ai_total
+
+        return {
+            "success": True,
+            "plan": tenant.plan,
+            "plan_name": plan_def["name"] if plan_def else tenant.plan,
+            "subscription_status": tenant.subscription_status,
+            "billing_period_start": tenant.billing_period_start.isoformat() if tenant.billing_period_start else None,
+            "billing_period_end": tenant.billing_period_end.isoformat() if tenant.billing_period_end else None,
+            "trial_expires_at": tenant.trial_expires_at.isoformat() if tenant.trial_expires_at else None,
+            "next_payment_date": tenant.billing_period_end.isoformat() if tenant.billing_period_end else None,
+            "stars_balance": tenant.stars_balance or 0,
+            "payment_methods": ["usdt", "stars", "ton"],
+            "usage": {
+                "accounts": {"used": accounts_used, "limit": limits.get("max_accounts", 0)},
+                "broadcast": {"used": usage.get("broadcast", 0), "limit": limits.get("monthly_message_limit", 0)},
+                "ai": {"used": ai_used, "limit": ai_limit},
+                "storage": {"used_mb": 0, "limit_mb": 10240},
+            },
+            "limits": limits,
+        }
+
+
 async def get_subscription_status(tenant_id: str) -> dict:
-    """Get current subscription status."""
     async with async_session_maker() as db:
         tenant = await db.get(Tenant, tenant_id)
         if not tenant:
