@@ -10,6 +10,7 @@ Improvements in this hardening batch:
   resolve correctly when the app runs behind nginx or Cloudflare.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
