@@ -196,24 +196,32 @@ async def create_invoice(
 
 
 async def _resolve_telegram_chat(identity) -> int | None:
-    from app.bot import db as bot_db
-    bot_db.init_bot_tables()
-    conn = None
-    try:
-        import sqlite3
-        import os
-        db_path = os.environ.get("ADMIN_DB_PATH", "data/admin.db")
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            "SELECT chat_id FROM bot_sessions ORDER BY updated_at DESC LIMIT 1"
-        )
-        row = cursor.fetchone()
-        if row:
-            return int(row["chat_id"])
+    """Resolve the CALLER's own linked Telegram chat id.
+
+    Previously this queried the sqlite bot_sessions table for whichever chat
+    was most recently updated GLOBALLY, with no relation to the caller at
+    all -- any user creating an invoice without an explicit telegram_chat_id
+    could have it sent to a completely different, unrelated user's Telegram
+    chat (whoever last messaged the bot), who could then pay Stars that get
+    credited to the invoice's real owner instead of themselves.
+
+    Correct resolution only ever looks at data tied to THIS identity: the
+    linked User.telegram_id (real phone + separately linked Telegram), or
+    the tg_<telegram_user_id> convention used for Telegram-only signups
+    (Tenant.phone). For a private bot chat, chat_id == telegram_user_id.
+    """
+    if identity is None:
         return None
-    except Exception:
-        return None
-    finally:
-        if conn:
-            conn.close()
+    if identity.user is not None and identity.user.telegram_id:
+        return int(identity.user.telegram_id)
+    if identity.tenant_id:
+        from app.core.telegram_identity import parse_tg_identifier
+        from app.database import async_session_maker
+        from app.models.tenant import Tenant
+        async with async_session_maker() as db:
+            tenant = await db.get(Tenant, identity.tenant_id)
+            if tenant and tenant.phone:
+                parsed = parse_tg_identifier(tenant.phone)
+                if parsed is not None:
+                    return parsed
+    return None
