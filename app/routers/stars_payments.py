@@ -57,6 +57,14 @@ STAR_PRODUCTS: dict[str, dict[str, Any]] = {
         "period_days": 30,
         "label": "Max",
     },
+    "max_yearly": {
+        "title": "Max 연간 구독",
+        "description": "계정 10개 · 월 50,000건 발송 · AI 크레딧 200,000/월 · 연간 결제",
+        "star_amount": 12000,
+        "plan": Plan.MAX,
+        "period_days": 365,
+        "label": "Max 연간",
+    },
     "ai_boost_1000": {
         "title": "AI Boost 크레딧 1,000",
         "description": "AI 크레딧 1,000개 추가 (플랜과 무관하게 즉시 충전)",
