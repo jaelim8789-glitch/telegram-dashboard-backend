@@ -366,6 +366,7 @@ async def list_users(
         UserRead(
             id=u.user.id,
             phone=u.user.phone,
+            username=u.user.username,
             is_active=u.user.is_active,
             created_at=u.user.created_at,
             last_login=u.user.last_login,
@@ -415,15 +416,20 @@ async def reissue_user_key(user_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/user-lookup", response_model=UserLookupResponse | None, dependencies=[Depends(require_admin)])
 async def user_lookup(q: str = Query(min_length=1, max_length=50), db: AsyncSession = Depends(get_db)):
-    """Look up a user by phone or tg_<telegram_user_id> identifier.
+    """Look up a user by phone, tg_<telegram_user_id> identifier, or id/password
+    username (for accounts created with no phone at all).
     Returns the user's current state including verification and tenant info."""
     user = await user_crud.get_user_by_phone(db, q)
+    if user is None:
+        result_username = await db.execute(select(User).where(User.username == q))
+        user = result_username.scalar_one_or_none()
     if user is None:
         return None
 
     result = UserLookupResponse(
         user_id=user.id,
         phone=user.phone,
+        username=user.username,
         is_active=user.is_active,
         created_at=user.created_at,
         last_login=user.last_login,

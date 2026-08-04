@@ -23,6 +23,7 @@ class UserLookupResponse(BaseModel):
 
     user_id: str | None = None
     phone: str | None = None
+    username: str | None = None
     is_active: bool | None = None
     created_at: datetime | None = None
     last_login: datetime | None = None

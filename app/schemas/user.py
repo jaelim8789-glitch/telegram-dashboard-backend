@@ -9,6 +9,7 @@ class UserRead(BaseModel):
 
     id: str
     phone: str
+    username: str | None = None  # set only for id/password (no-phone) signups
     is_active: bool
     created_at: datetime
     last_login: datetime | None
