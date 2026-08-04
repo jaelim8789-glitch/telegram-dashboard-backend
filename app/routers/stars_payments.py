@@ -144,10 +144,16 @@ async def create_invoice(
         )
 
     #  invoice payload  (    payload  )
+    # tid carries the real tenant_id so successful_payment fulfillment resolves
+    # the exact same Tenant row the rest of the app reads plan/limits from --
+    # identity.user_id (the dashboard User.id) is a DIFFERENT identifier space
+    # than the tg_<telegram_user_id> phone convention the bot's own /buy flow
+    # relies on, and using it there silently failed to find any tenant.
     payload_id = str(uuid.uuid4())
     invoice_payload = json.dumps({
         "pid": product_id,
-        "uid": identity.user_id if identity else "",
+        "tid": identity.tenant_id if identity else None,
+        "cid": telegram_chat_id,
         "iid": payload_id,
     })
 

@@ -17,19 +17,23 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from app.admin_platform import AdminPlatform, AuditAction
+from sqlalchemy import select
+
 from app.production_config import get_config
 from app.api.free_api_key import router as free_api_key_router
 from app.bot import db as bot_db
 from app.bot.ai_employee import AiEmployee
 from app.bot.guest_engine import GuestEngine
 from app.bot.telegram_api import TelegramAPIError, TelegramBotClient, is_channel_member_status
+from app.core.telegram_identity import tg_identifier
+from app.core.time import utcnow_naive
 from app.database import async_session_maker
 from app.models.referral import ReferralCommission
-from app.models.tenant import Tenant
+from app.models.tenant import StarsPaymentRecord, Tenant
+from app.services.usage_tracker import apply_plan_limits
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +379,7 @@ async def _handle_buy_command(client: TelegramBotClient, chat_id: int, text: str
             return
         title = product["title"]
         amount = product["star_amount"]
-        payload = json.dumps({"pid": product_key, "uid": str(chat_id)})
+        payload = json.dumps({"pid": product_key, "cid": chat_id})
         await client.send_invoice(
             chat_id=chat_id,
             title=title,
@@ -413,50 +417,105 @@ async def _handle_pre_checkout_query(client: TelegramBotClient, query: dict[str,
 
 
 async def _handle_successful_payment(client: TelegramBotClient, message: dict[str, Any]) -> None:
+    """Fulfill a real Telegram Stars (XTR) payment.
+
+    Writes ONLY to the real Postgres Tenant row the rest of the app reads
+    plan/limits/AI-credit-balance from -- this used to call AdminPlatform
+    (a separate, disconnected legacy sqlite store: `users`/`subscriptions`/
+    `usage_records` tables) for plan changes and "AI credit" top-ups, which
+    meant a paying Stars customer's real Tenant.plan / ai_credits_remaining
+    never actually changed. AI Boost purchases in particular called
+    `record_usage(api_calls=0)` -- always zero, never the purchased amount --
+    so every AI Boost purchase silently delivered nothing.
+
+    Idempotent via StarsPaymentRecord.telegram_payment_charge_id (unique):
+    Telegram can redeliver this update, so the very first thing this does is
+    check for (and atomically claim) that charge id before granting anything.
+    """
     payment = message.get("successful_payment", {})
     payload_str = payment.get("invoice_payload", "{}")
     telegram_charge_id = payment.get("telegram_payment_charge_id", "")
     stars_amount = payment.get("total_amount", 0)
 
+    if not telegram_charge_id:
+        logger.error("[stars] successful_payment missing telegram_payment_charge_id; cannot fulfill safely")
+        return
+
     try:
         payload = json.loads(payload_str)
-        product_id = payload.get("pid")
-        user_id = payload.get("uid")
-        if not product_id or not user_id:
-            return
+    except (json.JSONDecodeError, TypeError):
+        logger.error("[stars] successful_payment invalid payload: %r", payload_str)
+        return
 
-        product = _STAR_PRODUCTS.get(product_id)
-        if not product:
-            return
+    product_id = payload.get("pid")
+    product = _STAR_PRODUCTS.get(product_id) if product_id else None
+    if not product:
+        logger.error("[stars] successful_payment unknown product_id=%r", product_id)
+        return
 
-        admin = AdminPlatform.get_instance()
-        if product.get("plan") and product.get("period_days"):
-            admin.change_plan(user_id, product["plan"])
-            admin.create_subscription(user_id=user_id, plan=product["plan"])
-            admin._audit(user_id, "stars_payment", AuditAction.PAYMENT_SUCCEEDED, "subscription", user_id, {"product": product_id, "plan": product["plan"], "stars": stars_amount, "charge_id": telegram_charge_id})
-        elif product.get("ai_calls"):
-            admin.record_usage(user_id=user_id, api_calls=0)
-            admin._audit(user_id, "stars_payment", AuditAction.PAYMENT_SUCCEEDED, "ai_boost", user_id, {"product": product_id, "ai_calls": product["ai_calls"], "stars": stars_amount})
+    tenant_id = payload.get("tid")
+    chat_id_from_payload = payload.get("cid")
 
-        admin.create_invoice(user_id=user_id, amount_cents=stars_amount * 100, stripe_invoice_id=telegram_charge_id)
-
-        # Commission
-        if product.get("plan") and product.get("period_days"):
-            async with async_session_maker() as db:
-                from sqlalchemy import select
-                phone = f"tg_{user_id}"
-                result = await db.execute(select(Tenant).where(Tenant.phone == phone))
+    try:
+        async with async_session_maker() as db:
+            # StarsPaymentRecord.tenant_id is NOT NULL (FK to tenants), so the
+            # tenant must be resolved before the idempotency row can be
+            # inserted at all -- claim the charge_id only once we have a real
+            # tenant to attach it to.
+            tenant: Tenant | None = None
+            if tenant_id:
+                tenant = await db.get(Tenant, tenant_id)
+            if tenant is None and chat_id_from_payload:
+                result = await db.execute(select(Tenant).where(Tenant.phone == tg_identifier(int(chat_id_from_payload))))
                 tenant = result.scalar_one_or_none()
-                if tenant and tenant.referred_by and not tenant.referral_rewarded:
-                    referrer = await db.get(Tenant, tenant.referred_by)
-                    if referrer:
-                        commission_cents = int(stars_amount * 0.10)
-                        db.add(ReferralCommission(referrer_id=referrer.id, referred_id=tenant.id, amount_cents=commission_cents, rate=10, status="pending"))
-                        referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
-                        tenant.referral_rewarded = True
-                        await db.commit()
+
+            if tenant is None:
+                logger.error(
+                    "[stars] no tenant found for charge_id=%s tid=%r cid=%r -- payment taken but NOT fulfilled, needs manual reconciliation",
+                    telegram_charge_id, tenant_id, chat_id_from_payload,
+                )
+                return
+
+            # Idempotency claim, before touching any plan/credit state -- a
+            # concurrent/redelivered webhook for the same charge hits the
+            # unique constraint on telegram_payment_charge_id and bails
+            # before granting a second time.
+            db.add(StarsPaymentRecord(
+                tenant_id=tenant.id,
+                telegram_payment_charge_id=telegram_charge_id,
+                stars_amount=stars_amount,
+            ))
+            try:
+                await db.flush()
+            except Exception:
+                await db.rollback()
+                logger.info("[stars] duplicate successful_payment charge_id=%s ignored", telegram_charge_id)
+                return
+
+            if product.get("plan") and product.get("period_days"):
+                await apply_plan_limits(db, tenant, product["plan"])
+                tenant.subscription_status = "active"
+                tenant.trial_expires_at = None
+                tenant.billing_period_start = utcnow_naive()
+                tenant.billing_period_end = utcnow_naive() + timedelta(days=product["period_days"])
+            elif product.get("ai_calls"):
+                tenant.ai_credits_remaining = (tenant.ai_credits_remaining or 0) + product["ai_calls"]
+
+            if tenant.referred_by and not tenant.referral_rewarded:
+                referrer = await db.get(Tenant, tenant.referred_by)
+                if referrer:
+                    commission_cents = int(stars_amount * 0.10)
+                    db.add(ReferralCommission(referrer_id=referrer.id, referred_id=tenant.id, amount_cents=commission_cents, rate=10, status="pending"))
+                    referrer.referral_earnings = (referrer.referral_earnings or 0) + commission_cents
+                    tenant.referral_rewarded = True
+
+            await db.commit()
+            logger.info(
+                "[stars] fulfilled charge_id=%s tenant=%s product=%s stars=%d",
+                telegram_charge_id, tenant.id, product_id, stars_amount,
+            )
     except Exception as e:
-        logger.error("[stars] successful_payment error: %s", e)
+        logger.error("[stars] successful_payment error: %s", e, exc_info=True)
 
 
 # ── Daily Report (scheduled) ─────────────────────────────────────────
