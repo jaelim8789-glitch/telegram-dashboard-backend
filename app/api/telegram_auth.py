@@ -43,6 +43,33 @@ def _config_error_to_http(exc: RuntimeError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
+async def _refresh_group_count_background(account_id: str) -> None:
+    """Fetch group_count in the background, AFTER the account is already
+    reported as authenticated to the caller.
+
+    Previously verify_code/verify_2fa awaited a full list_groups() call
+    (iterates every dialog via Telethon) before returning the HTTP response
+    at all -- on an account with many groups, or while Telegram is
+    flood-waiting requests (a known issue right after a fresh login), this
+    made "로그인 연동" feel like it hung for a long time, even though the
+    account was already fully authenticated. group_count is a display stat,
+    not something the connection flow should ever block on.
+    """
+    from app.database import async_session_maker
+    from app.services.telegram_actions import list_groups
+
+    try:
+        async with async_session_maker() as db:
+            account = await account_crud.get_account(db, account_id)
+            if account is None:
+                return
+            groups = await list_groups(account)
+            account.group_count = len(groups)
+            await db.commit()
+    except Exception as exc:
+        logger.warning("group_count_background_refresh_failed", account_id=account_id, error=str(exc))
+
+
 # The auth_key backing an in-progress login is dead beyond recovery — most commonly
 # because the process restarted (wiping TelethonClientPool's in-memory clients)
 # between two steps of send-code -> verify-code -> verify-2fa and no persisted
@@ -239,17 +266,20 @@ async def verify_code(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
-    me = await client.get_me()
-    register_account_realtime(client, account.id, me.id if me else None)
+    try:
+        me = await client.get_me()
+        register_account_realtime(client, account.id, me.id if me else None)
+    except Exception as exc:
+        # The account is already fully authenticated (status=active, session
+        # persisted) at this point -- a failure here must NOT surface as an
+        # auth error to the user (they'd see a failure for an account that
+        # actually connected fine). Realtime updates just won't be live for
+        # this account until the next backend restart re-attaches listeners.
+        logger.warning("realtime_listener_attach_failed_post_auth", account_id=account.id, error=str(exc))
+
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
 
-    try:
-        from app.services.telegram_actions import list_groups
-        groups = await list_groups(account)
-        account.group_count = len(groups)
-        await db.commit()
-    except Exception:
-        pass
+    asyncio.create_task(_refresh_group_count_background(account.id))
 
     try:
         from app.services.session_manager import SessionManager
@@ -307,17 +337,20 @@ async def verify_2fa(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
-    me = await client.get_me()
-    register_account_realtime(client, account.id, me.id if me else None)
+    try:
+        me = await client.get_me()
+        register_account_realtime(client, account.id, me.id if me else None)
+    except Exception as exc:
+        # The account is already fully authenticated (status=active, session
+        # persisted) at this point -- a failure here must NOT surface as an
+        # auth error to the user (they'd see a failure for an account that
+        # actually connected fine). Realtime updates just won't be live for
+        # this account until the next backend restart re-attaches listeners.
+        logger.warning("realtime_listener_attach_failed_post_auth", account_id=account.id, error=str(exc))
+
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
 
-    try:
-        from app.services.telegram_actions import list_groups
-        groups = await list_groups(account)
-        account.group_count = len(groups)
-        await db.commit()
-    except Exception:
-        pass
+    asyncio.create_task(_refresh_group_count_background(account.id))
 
     try:
         from app.services.session_manager import SessionManager
