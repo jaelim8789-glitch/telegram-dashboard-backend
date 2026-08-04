@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
 
 _RATE_LIMIT_CATEGORY = "guest_ai_chat"
-_MAX_PER_DAY = 5
+_MAX_PER_DAY = 10
 _WINDOW_SECONDS = 24 * 60 * 60
 _MAX_INPUT_CHARS = 2000
 _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
@@ -36,8 +36,8 @@ _SYSTEM_PROMPT = (
     "발송/자동응답 같은 TeleMon의 텔레그램 자동화 기능은 언급하지 마세요. "
     "만약 사용 중인 모델, 요금, 대화 횟수 제한에 대해 물어보면 반드시 다음 사실만 "
     "정확히 답하고, 절대로 지어내지 마세요: 사용 모델은 DeepSeek(deepseek-chat) "
-    "기반이며, 로그인하지 않은 방문자는 IP당 하루 5회까지만 무료로 대화할 수 있고, "
-    "5회를 초과하면 회원가입이 필요합니다. 이 제한을 없다거나 무제한이라고 답하지 "
+    "기반이며, 로그인하지 않은 방문자는 IP당 하루 10회까지만 무료로 대화할 수 있고, "
+    "10회를 초과하면 회원가입이 필요합니다. 이 제한을 없다거나 무제한이라고 답하지 "
     "마세요."
 )
 
