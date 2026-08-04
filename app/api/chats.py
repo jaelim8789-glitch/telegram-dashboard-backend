@@ -587,9 +587,42 @@ async def get_chat_info(
 
     from app.services.chat_actions import get_chat_details
     try:
-        return await get_chat_details(client, int(chat_id))
+        return await get_chat_details(client, int(chat_id), account_id=account_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/accounts/{account_id}/dialogs/{chat_id}/avatar")
+async def get_chat_avatar(
+    account_id: str,
+    chat_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Serve a cached chat/contact avatar previously saved by get_chat_details().
+
+    Authorization mirrors every other /accounts/{account_id}/... route in this
+    file (require_account_tenant_access + account lookup) rather than an
+    unauthenticated StaticFiles mount, since this repo has no existing
+    HTTP-served media route for chat attachments to imitate -- message
+    media_path values are filesystem paths consumed only server-side by
+    Telethon's send_file and are never exposed over HTTP.
+    """
+    await require_account_tenant_access(account_id, db, identity)
+    await _get_account_or_404(account_id, db)
+
+    from app.services.media import avatar_file_path
+
+    try:
+        path = avatar_file_path(account_id, chat_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid chat_id")
+
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(path, media_type="image/jpeg")
 
 
 class CreateGroupRequest(BaseModel):

@@ -1,4 +1,6 @@
 import mimetypes
+import re
+import time
 import uuid
 from pathlib import Path
 
@@ -9,8 +11,79 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-MEDIA_ROOT = Path(__file__).resolve().parent.parent.parent / "media" / "broadcasts"
+# Shared root for everything this app writes under ./media/<kind>/... . Broadcast
+# attachments live in media/broadcasts (filesystem-path only -- consumed server-side
+# by Telethon's send_file, never served over HTTP). Avatars live in media/avatars and
+# ARE served over HTTP (see app.api.chats:get_chat_avatar), so they're kept in their
+# own subdirectory, per-account/per-chat, rather than reusing the broadcasts folder.
+MEDIA_BASE = Path(__file__).resolve().parent.parent.parent / "media"
+MEDIA_ROOT = MEDIA_BASE / "broadcasts"
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+
+AVATAR_ROOT = MEDIA_BASE / "avatars"
+AVATAR_ROOT.mkdir(parents=True, exist_ok=True)
+
+# How long a saved avatar is considered "fresh enough" before get_chat_details()
+# re-downloads it from Telegram. No prior on-disk-cache TTL convention exists
+# elsewhere in this codebase (in-memory caches use 600s/3600s TTLs -- see
+# telegram_actions._MEMBER_CACHE_TTL, api.link_preview._CACHE_TTL_SECONDS); 6 hours
+# is a reasonable middle ground for a profile photo, which changes far less often
+# than chat membership or link-preview metadata.
+AVATAR_CACHE_TTL_SECONDS = 6 * 60 * 60
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _safe_id_component(value: str, label: str) -> str:
+    """Reject anything that isn't a plain id -- no path separators, no '..'.
+
+    account_id/chat_id are already typed/validated upstream by FastAPI path params
+    (chat_id: int, account_id: str looked up via account_crud), but this is a second,
+    cheap guard directly at the point where those values become part of a filesystem
+    path, so a future caller that skips the DB lookup can't smuggle a traversal.
+    """
+    text = str(value)
+    if not text or not _SAFE_ID_RE.match(text) or ".." in text:
+        raise ValueError(f"Unsafe {label}: {value!r}")
+    return text
+
+
+def avatar_file_path(account_id: str, chat_id: str | int) -> Path:
+    """Filesystem path for a cached avatar, per-account/per-chat so one account's
+    session can never leak into another account's contact photos."""
+    safe_account = _safe_id_component(account_id, "account_id")
+    safe_chat = _safe_id_component(str(chat_id), "chat_id")
+    directory = AVATAR_ROOT / safe_account
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{safe_chat}.jpg"
+
+
+def avatar_is_fresh(path: Path) -> bool:
+    """True if a cached avatar file exists and is within the TTL window."""
+    if not path.exists():
+        return False
+    age = time.time() - path.stat().st_mtime
+    return age < AVATAR_CACHE_TTL_SECONDS
+
+
+def save_avatar_bytes(account_id: str, chat_id: str | int, data: bytes) -> Path:
+    """Persist downloaded profile-photo bytes to the per-account/per-chat avatar path."""
+    path = avatar_file_path(account_id, chat_id)
+    path.write_bytes(data)
+    return path
+
+
+def avatar_url_path(account_id: str, chat_id: str | int) -> str:
+    """URL path (route, not filesystem path) at which the avatar is servable.
+
+    This is NOT a StaticFiles mount -- unlike media/broadcasts (which is never
+    served over HTTP at all in this codebase), avatars must be access-controlled
+    per-account like every other /api/chat-telegram/... route, so they're served
+    through an authenticated FastAPI route rather than an open static mount.
+    """
+    safe_account = _safe_id_component(account_id, "account_id")
+    safe_chat = _safe_id_component(str(chat_id), "chat_id")
+    return f"/api/chat-telegram/accounts/{safe_account}/dialogs/{safe_chat}/avatar"
 
 _EXTENSION_BY_CONTENT_TYPE = {
     "image/jpeg": ".jpg",

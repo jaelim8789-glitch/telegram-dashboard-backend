@@ -382,8 +382,13 @@ async def unblock_user(client, chat_id: int) -> None:
     await client(UnblockRequest(id=utils.get_input_peer(entity)))
 
 
-async def get_chat_details(client, chat_id: int) -> dict:
-    """Get detailed chat info including members."""
+async def get_chat_details(client, chat_id: int, account_id: str | None = None) -> dict:
+    """Get detailed chat info including members.
+
+    When account_id is provided, also downloads (and caches on disk, per-account/
+    per-chat) the peer's profile photo and returns a servable photo_url -- see
+    app.services.media.{avatar_file_path,avatar_is_fresh,save_avatar_bytes}.
+    """
     entity = await client.get_entity(chat_id)
     info = {
         "id": chat_id,
@@ -391,12 +396,39 @@ async def get_chat_details(client, chat_id: int) -> dict:
         "type": type(entity).__name__,
     }
 
-    try:
-        photo = await client.download_profile_photo(entity, file=bytes)
-        if photo:
-            info["has_photo"] = True
-    except Exception:
-        info["has_photo"] = False
+    if account_id is not None:
+        from app.services.media import (
+            avatar_file_path, avatar_is_fresh, avatar_url_path, save_avatar_bytes,
+        )
+        cache_path = avatar_file_path(account_id, chat_id)
+        try:
+            if avatar_is_fresh(cache_path):
+                info["has_photo"] = True
+                info["photo_url"] = avatar_url_path(account_id, chat_id)
+            else:
+                photo = await client.download_profile_photo(entity, file=bytes)
+                if photo:
+                    save_avatar_bytes(account_id, chat_id, photo)
+                    info["has_photo"] = True
+                    info["photo_url"] = avatar_url_path(account_id, chat_id)
+                else:
+                    info["has_photo"] = False
+        except Exception:
+            logger.warning("chat_details_avatar_failed", account_id=account_id, chat_id=chat_id)
+            # Fall back to a stale cached copy (if any) rather than surfacing no photo
+            # at all just because this particular refresh attempt errored.
+            if cache_path.exists():
+                info["has_photo"] = True
+                info["photo_url"] = avatar_url_path(account_id, chat_id)
+            else:
+                info["has_photo"] = False
+    else:
+        try:
+            photo = await client.download_profile_photo(entity, file=bytes)
+            if photo:
+                info["has_photo"] = True
+        except Exception:
+            info["has_photo"] = False
 
     if hasattr(entity, "participants_count"):
         info["members_count"] = entity.participants_count
