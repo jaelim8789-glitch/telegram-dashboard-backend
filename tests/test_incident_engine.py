@@ -101,3 +101,29 @@ async def test_recovery_retry_schedule(engine):
     with monkeypatch:
         await engine._recover_loop("redis")
     assert calls == ["redis"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_does_not_reopen_or_realert_ongoing_critical_incident(engine, monkeypatch):
+    """A critical outage that persists across multiple 30s monitor ticks must
+    only alert/open once -- not spam ALERT_WEBHOOK_URL every tick and reset
+    opened_at (which would make the displayed incident duration meaningless)."""
+    alerts = []
+    monkeypatch.setattr("app.services.incident_engine.send_alert", lambda *a, **k: alerts.append((a, k)))
+    monkeypatch.setattr(engine, "_check_db", AsyncMock(return_value="critical"))
+    monkeypatch.setattr(engine, "_check_redis", AsyncMock(return_value=("ok", 1.0)))
+    monkeypatch.setattr(engine, "_check_scheduler", AsyncMock(return_value="ok"))
+    monkeypatch.setattr(engine, "_check_queue", AsyncMock(return_value="ok"))
+
+    r = await engine._redis()
+
+    await engine._monitor()
+    assert len(alerts) == 1
+    first_opened_at = json.loads(r.store["incident:active:postgres"])["opened_at"]
+
+    # Simulate the outage still being active on the next tick(s).
+    await engine._monitor()
+    await engine._monitor()
+
+    assert len(alerts) == 1, "critical incident re-alerted on a subsequent monitor tick"
+    assert json.loads(r.store["incident:active:postgres"])["opened_at"] == first_opened_at

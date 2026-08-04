@@ -279,7 +279,15 @@ class IncidentEngine:
         # Elevate warnings to incidents (critical: only real outages)
         for name, sev in checks.items():
             if sev == "critical":
-                await self._open_incident(name, "critical", f"{name} 연결 실패 (연속 감지)")
+                # Same dedup guard as the warning branch below -- without it,
+                # every 30s monitor tick during an ongoing outage called
+                # _open_incident() again: re-sent the CRITICAL alert (spam on
+                # ALERT_WEBHOOK_URL for the whole outage) and overwrote
+                # opened_at with "now" each time, so the displayed incident
+                # duration/downtime never reflected when it actually started.
+                r = await self._redis()
+                if r is not None and not await r.exists(f"{_ACTIVE_PREFIX}{name}"):
+                    await self._open_incident(name, "critical", f"{name} 연결 실패 (연속 감지)")
             elif sev == "warning":
                 # Only open a warning incident if we don't already have it active
                 r = await self._redis()
