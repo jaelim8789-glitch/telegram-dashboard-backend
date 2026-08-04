@@ -513,3 +513,127 @@ async def get_account_session_events(
     if not manager._initialized:
         return []
     return await manager.get_events(account_id, limit)
+
+
+# ── Epic 19: Sync progress + account maintenance ───────────────────────
+
+
+@router.get("/sync-progress")
+async def get_sync_queue(
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Sync queue: live progress for every account of the caller's tenant.
+
+    Reads Redis sync:{account_id} keys (10-min TTL); accounts without an
+    active sync still appear with their terminal facts from the DB so the
+    queue UI can show Completed / Waiting states.
+    """
+    from app.services import sync_progress
+
+    result = await db.execute(select(Account).where(Account.tenant_id == identity.tenant_id))
+    accounts = result.scalars().all()
+
+    queue = []
+    for acc in accounts:
+        live = await sync_progress.get_progress(acc.id)
+        queue.append({
+            "account_id": acc.id,
+            "phone": acc.phone,
+            "name": acc.name,
+            "status": acc.status,
+            "progress": live,
+            "dialogs": acc.dialog_count or 0,
+            "messages": acc.message_count or 0,
+            "last_sync_at": acc.last_sync_at.isoformat() if acc.last_sync_at else None,
+            "group_count": acc.group_count or 0,
+        })
+    return {"accounts": queue}
+
+
+@router.get("/{account_id}/sync-progress")
+async def get_account_sync_progress(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Live sync progress for a single account (or null when idle)."""
+    await require_account_tenant_access(account_id, db, identity)
+    from app.services import sync_progress
+
+    return await sync_progress.get_progress(account_id)
+
+
+async def _maintenance(account_id: str, action: str, db: AsyncSession, identity: Identity) -> dict:
+    await require_account_tenant_access(account_id, db, identity)
+    account = await account_crud.get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="계정을 찾을 수 없습니다.")
+
+    from app.services.session_manager import SessionManager
+
+    manager = SessionManager()
+    session = ""
+    if account.session_data:
+        from app.core.crypto import decrypt_session
+        try:
+            session = decrypt_session(account.session_data)
+        except ValueError:
+            session = ""
+
+    if action == "reconnect":
+        await manager.reconnect(account_id, session)
+        logger.info("account_maintenance", action="reconnect", account_id=account_id)
+        return {"ok": True, "action": action}
+    if action == "restart-session":
+        await manager.disconnect(account_id)
+        await manager.connect(account_id, session)
+        logger.info("account_maintenance", action="restart_session", account_id=account_id)
+        return {"ok": True, "action": action}
+    if action == "restart-worker":
+        # Disconnect + reconnect the account's connection worker.
+        await manager.reconnect(account_id, session)
+        logger.info("account_maintenance", action="restart_worker", account_id=account_id)
+        return {"ok": True, "action": action}
+    if action == "refresh-health":
+        from app.services.account_health import get_account_health
+        items = await get_account_health(identity, preloaded_accounts=[account])
+        return {"ok": True, "action": action, "health": items[0].__dict__ if items and hasattr(items[0], "__dict__") else None}
+    if action == "rebuild-dialogs":
+        try:
+            from app.services.telegram_actions import list_groups
+            groups = await list_groups(account)
+            account.group_count = len(groups)
+            await db.commit()
+            return {"ok": True, "action": action, "groups": len(groups)}
+        except Exception as e:
+            logger.warning("account_maintenance_rebuild_failed", account_id=account_id, error=str(e))
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"대화 목록 재구축 실패: {e}")
+    if action == "clear-cache":
+        try:
+            await manager.disconnect(account_id)
+            await manager.connect(account_id, session)
+        except Exception:
+            pass
+        logger.info("account_maintenance", action="clear_cache", account_id=account_id)
+        return {"ok": True, "action": action}
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 동작입니다.")
+
+
+@router.post("/{account_id}/maintenance")
+async def run_account_maintenance(
+    account_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Account Maintenance Center action.
+
+    body: {"action": "reconnect" | "restart-session" | "restart-worker" |
+                          "refresh-health" | "rebuild-dialogs" | "clear-cache"}
+    """
+    action = str(body.get("action", "")).strip()
+    if not action:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="action이 필요합니다.")
+    return await _maintenance(account_id, action, db, identity)

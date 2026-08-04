@@ -279,6 +279,13 @@ async def verify_code(
 
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
 
+    try:
+        from app.services import sync_progress
+
+        await sync_progress.set_progress(account.id, stage="syncing_dialogs", percent=5, dialogs=0, messages=0)
+    except Exception:
+        pass
+
     asyncio.create_task(_refresh_group_count_background(account.id))
 
     try:
@@ -349,6 +356,15 @@ async def verify_2fa(
         logger.warning("realtime_listener_attach_failed_post_auth", account_id=account.id, error=str(exc))
 
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
+
+    # Epic 19: announce the start of the sync phase so the UI can show the
+    # wizard progressing instead of a blank "waiting" state.
+    try:
+        from app.services import sync_progress
+
+        await sync_progress.set_progress(account.id, stage="syncing_dialogs", percent=5, dialogs=0, messages=0)
+    except Exception:
+        pass
 
     asyncio.create_task(_refresh_group_count_background(account.id))
 
