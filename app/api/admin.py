@@ -3,7 +3,7 @@ from sqlalchemy import and_, case, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 
-from app.api.deps import get_current_identity, require_admin
+from app.api.deps import Identity, get_current_identity, require_admin
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
@@ -24,6 +24,9 @@ from app.schemas.admin import (
     AdminUserBillingUpdateRequest,
     AdminUserBillingUpdateResponse,
     AdminDashboardStatusResponse,
+    AdminDashboardUserStats,
+    AdminDashboardAccountStats,
+    AdminDashboardBroadcastStats,
     AdminLoginRequest,
     AdminMeResponse,
     AdminRotatePasswordRequest,
@@ -1190,3 +1193,119 @@ async def update_watermark_setting(
     await db.commit()
     logger.info("watermark_ad_updated", length=len(value))
     return {"ok": True, "key": "watermark_ad", "value": value}
+
+
+# ── Operations Center Overview ────────────────────────────────────────
+
+
+@router.get("/operations/overview", dependencies=[Depends(require_admin)])
+async def admin_operations_overview(
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Single aggregated snapshot for the Admin Operations Center.
+
+    Reuses existing endpoints' underlying data (stats, dashboard status,
+    health, recent activity, scheduler status, payment history) plus three
+    new bits of data that don't exist anywhere else yet:
+      - Telegram account status buckets (connected / floodwait / need_login …)
+      - 30-day revenue trend (PaymentRecord)
+      - Redis reachability + latency
+
+    This is intentionally the ONLY new admin endpoint for Epic 18 — the
+    frontend polls it every ~10s instead of fanning out to 6+ calls.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.account import Account
+    from app.models.token import TokenBalance
+
+    # ── Telegram account status buckets ──────────────────────────────
+    accounts = (await db.execute(select(Account))).scalars().all()
+    connected = disconnected = flood_wait = need_login = banned = 0
+    for acc in accounts:
+        err = (acc.last_error or "").lower()
+        if "flood" in err or "floodwait" in err:
+            flood_wait += 1
+        elif acc.status == "banned":
+            banned += 1
+        elif acc.status in ("pending_auth", "session_corrupted") or not acc.session_data:
+            need_login += 1
+        elif acc.status == "active":
+            connected += 1
+        else:
+            disconnected += 1
+
+    # ── 30-day revenue trend (PaymentRecord.amount_usdt, cents) ──────
+    today_start = utcnow_naive().replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = today_start.replace(day=1)
+    days: dict[str, float] = {}
+    records = (await db.execute(
+        select(PaymentRecord.created_at, PaymentRecord.amount_usdt)
+        .where(PaymentRecord.created_at >= today_start - timedelta(days=29))
+    )).all()
+    for created, cents in records:
+        day = created.strftime("%Y-%m-%d") if created else None
+        if day:
+            days[day] = days.get(day, 0.0) + (cents or 0) / 100.0
+    revenue_trend = []
+    for i in range(29, -1, -1):
+        d = (today_start - timedelta(days=i)).strftime("%Y-%m-%d")
+        revenue_trend.append({"date": d, "revenue": round(days.get(d, 0.0), 2)})
+
+    today_revenue = sum(entry["revenue"] for entry in revenue_trend if entry["date"] == today_start.strftime("%Y-%m-%d"))
+    monthly_revenue = round(sum(entry["revenue"] for entry in revenue_trend if entry["date"] >= month_start.strftime("%Y-%m-%d")), 2)
+
+    # ── Redis status ─────────────────────────────────────────────────
+    redis_status = "unknown"
+    redis_latency_ms = None
+    try:
+        import os
+
+        from redis.asyncio import from_url as _redis_from_url
+
+        r = _redis_from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), socket_connect_timeout=1.5)
+        await r.ping()
+        redis_status = "healthy"
+        r.close()
+    except Exception:
+        redis_status = "unreachable"
+
+    # ── Reuse existing stats / status / health / scheduler / activity ─
+    stats = await get_admin_stats(db)
+    admin_identity = Identity(kind="admin")
+    status = await get_admin_dashboard_status(db, identity=admin_identity)
+    health = await system_health(db)
+    try:
+        from app.api.scheduler import get_scheduler_status as _get_sched_status
+
+        scheduler = await _get_sched_status(db, identity=admin_identity)
+    except Exception:
+        scheduler = {"status": "unavailable"}
+
+    return {
+        "stats": stats,
+        "accounts": {
+            "total": len(accounts),
+            "connected": connected,
+            "disconnected": disconnected,
+            "flood_wait": flood_wait,
+            "need_login": need_login,
+            "banned": banned,
+        },
+        "dashboard_status": status,
+        "health": health,
+        "scheduler": scheduler,
+        "redis": {"status": redis_status, "latency_ms": redis_latency_ms},
+        "revenue": {
+            "today": round(today_revenue, 2),
+            "monthly": monthly_revenue,
+            "trend_30d": revenue_trend,
+        },
+        "active_subscriptions": (
+            await db.execute(
+                select(func.count(Tenant.id)).where(Tenant.subscription_status == "active")
+            )
+        ).scalar_one() or 0,
+        "generated_at": utcnow_naive().isoformat(),
+    }
