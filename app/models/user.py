@@ -12,6 +12,10 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     phone: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    # Only set for accounts created via id/password signup (no real phone).
+    # phone still gets a synthetic placeholder value since it's NOT NULL
+    # UNIQUE and every other login path (SMS OTP, Telegram) keys off it.
+    username: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     # SHA-256 hex digest of the issued API key  the raw key is shown once, at issuance,
     # and never stored or logged.
     api_key_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)

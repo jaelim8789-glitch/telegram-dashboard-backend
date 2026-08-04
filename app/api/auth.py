@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
+import secrets
 import time
 import urllib.parse
 
@@ -24,7 +26,7 @@ from app.core.limits import (
     VERIFY_CODE_MAX_PER_IP,
     VERIFY_CODE_PER_IP_WINDOW,
 )
-from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key, hash_password, mask_api_key
+from app.core.security import create_user_access_token, generate_otp_code, generate_user_api_key, hash_api_key, hash_password, mask_api_key, verify_password_stored
 from app.crud import telegram_verification as verification_crud
 from app.crud import api_key as api_key_crud
 from app.crud import session as session_crud
@@ -737,6 +739,136 @@ async def login_with_phone(payload: LoginWithPhoneRequest, request: Request, db:
 
     logger.info("unified_login_success", user_id=user.id)
     return LoginWithPhoneResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+    )
+
+
+_USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
+
+
+class RegisterWithPasswordRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginWithPasswordRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordAuthResponse(BaseModel):
+    access_token: str
+    session_token: str
+
+
+@router.post("/register-password", response_model=PasswordAuthResponse, status_code=status.HTTP_201_CREATED)
+async def register_with_password(payload: RegisterWithPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Id/password signup, no phone or Telegram required (Epic 26: guest AI
+    -> full account funnel). Gets the same free-plan Tenant every other
+    signup path gets; a real Telegram account still has to be connected
+    separately before the automation features work -- this only unlocks
+    login + billing + AI chat.
+    """
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "password_register", max_attempts=5, window_seconds=3600):
+        retry_after = get_retry_after_seconds(client_ip, "password_register", window_seconds=3600)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 가입 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    username = payload.username.strip()
+    if not _USERNAME_RE.match(username):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="아이디는 영문/숫자/밑줄(_) 3~20자로 입력해주세요.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="비밀번호는 8자 이상으로 설정해주세요.")
+
+    existing = await db.execute(select(User).where(User.username == username))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 사용 중인 아이디입니다.")
+
+    # phone is NOT NULL UNIQUE on User/Tenant -- every other login path (SMS,
+    # Telegram) keys off it, so id/password accounts get a synthetic
+    # placeholder that can never collide with a real E.164 number.
+    placeholder_phone = f"pw_{secrets.token_hex(10)}"
+
+    user = User(
+        phone=placeholder_phone,
+        username=username,
+        password_hash=hash_password(payload.password),
+    )
+    db.add(user)
+    await db.flush()
+
+    plan_def = get_plan("free")
+    trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+    trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+    tenant = Tenant(
+        phone=placeholder_phone,
+        plan="free",
+        subscription_status="active",
+        trial_expires_at=trial_expires,
+    )
+    db.add(tenant)
+    await db.flush()
+    await apply_plan_limits(db, tenant, "free")
+
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant.id,
+        user_agent=request.headers.get("user-agent"),
+        client_ip=client_ip,
+    )
+    await db.commit()
+
+    logger.info("password_register_success", user_id=user.id)
+    return PasswordAuthResponse(
+        access_token=create_user_access_token(user.id),
+        session_token=raw_token,
+    )
+
+
+@router.post("/login-password", response_model=PasswordAuthResponse)
+async def login_with_password(payload: LoginWithPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip, "password_login", max_attempts=10, window_seconds=300):
+        retry_after = get_retry_after_seconds(client_ip, "password_login", window_seconds=300)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    result = await db.execute(select(User).where(User.username == payload.username.strip()))
+    user = result.scalar_one_or_none()
+    if user is None or not user.password_hash or not verify_password_stored(payload.password, user.password_hash):
+        logger.warning("password_login_failed", username=payload.username)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    await user_crud.touch_last_login(db, user)
+    tenant_id = await _resolve_tenant_id_by_user(db, user)
+    if not tenant_id:
+        # Shouldn't happen for accounts created via register-password, but
+        # guard the same way login_with_phone does for defense in depth.
+        plan_def = get_plan("free")
+        trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
+        trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+        tenant = Tenant(phone=user.phone, plan="free", subscription_status="active", trial_expires_at=trial_expires)
+        db.add(tenant)
+        await db.flush()
+        await apply_plan_limits(db, tenant, "free")
+        tenant_id = tenant.id
+
+    raw_token, _ = await session_crud.create_session(
+        db, user_id=user.id, tenant_id=tenant_id,
+        user_agent=request.headers.get("user-agent"),
+        client_ip=client_ip,
+    )
+    await db.commit()
+
+    logger.info("password_login_success", user_id=user.id)
+    return PasswordAuthResponse(
         access_token=create_user_access_token(user.id),
         session_token=raw_token,
     )
