@@ -362,6 +362,7 @@ _STAR_PRODUCTS: dict[str, dict[str, Any]] = {
     "pro_monthly": {"title": "Pro 월간 구독", "star_amount": 450, "plan": "pro", "period_days": 30, "label": "Pro", "ai_calls": None},
     "pro_yearly": {"title": "Pro 연간 구독 (20% 할인)", "star_amount": 3600, "plan": "pro", "period_days": 365, "label": "Pro 연간", "ai_calls": None},
     "max_monthly": {"title": "Max 월간 구독", "star_amount": 1500, "plan": "max", "period_days": 30, "label": "Max", "ai_calls": None},
+    "max_yearly": {"title": "Max 연간 구독", "star_amount": 12000, "plan": "max", "period_days": 365, "label": "Max 연간", "ai_calls": None},
     "ai_boost_1000": {"title": "AI Boost — 1,000회", "star_amount": 300, "plan": None, "period_days": None, "label": "AI Boost", "ai_calls": 1000},
     "ai_boost_5000": {"title": "AI Boost — 5,000회 (20% 할인)", "star_amount": 1200, "plan": None, "period_days": None, "label": "AI Boost+", "ai_calls": 5000},
 }
