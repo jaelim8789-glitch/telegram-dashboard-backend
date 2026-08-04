@@ -26,15 +26,16 @@ def client():
 @pytest.mark.asyncio
 async def test_create_invoice():
     """  """
-    # Mock NOWPayments API 
+    # Mock NOWPayments API — /v1/invoice response shape (see nowpayments.py's
+    # create_payment: switched from /v1/payment, which has no hosted
+    # checkout page, to /v1/invoice, which returns invoice_url).
     mock_response = {
-        "payment_id": "test_payment_123",
+        "id": "test_invoice_123",
         "price_amount": 99.99,
         "price_currency": "usd",
         "pay_currency": "usdt",
         "order_id": "tenant_test_plan_pro_1234567890",
-        "payment_status": "waiting",
-        "pay_address": "test_address_123",
+        "invoice_url": "https://nowpayments.io/payment/?iid=test_invoice_123",
         "created_at": "2023-01-01T00:00:00Z"
     }
     
@@ -62,7 +63,8 @@ async def test_create_invoice():
             order_description="Test Pro Subscription"
         )
         
-        assert result["payment_id"] == "test_payment_123"
+        assert result["payment_id"] == "test_invoice_123"
+        assert result["checkout_url"] == "https://nowpayments.io/payment/?iid=test_invoice_123"
         assert result["price_amount"] == 99.99
         assert result["pay_currency"] == "usdt"
 
@@ -165,6 +167,54 @@ async def test_process_webhook_success():
         mock_commission.assert_awaited_once()
         assert mock_transaction.fulfilled is True
         assert mock_transaction.fulfilled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_falls_back_to_order_id_when_payment_id_unmatched():
+    """create_payment() now creates via /v1/invoice: the stored payment_id is
+    the invoice id, but the webhook's payment_id is the real NOWPayments
+    payment id assigned once the customer pays -- these never match. The
+    webhook must still find the transaction via order_id (which we set at
+    creation and NOWPayments echoes back unchanged), and re-verification
+    must use the webhook's real payment_id, not the stored invoice id."""
+    webhook_data = {
+        "payment_id": "real_payment_id_999",  # different from stored invoice id
+        "payment_status": "finished",
+        "paid_amount": 99.99,
+        "pay_currency": "usdt",
+        "order_id": "tenant_testtenant123_plan_pro_1234567890",
+    }
+
+    mock_db = AsyncMock(spec=AsyncSession)
+    mock_transaction = _make_txn(payment_id="stored_invoice_id_123")
+
+    # First execute() (lookup by payment_id) finds nothing; second (lookup
+    # by order_id) finds the transaction; third is the fulfillment claim UPDATE.
+    no_match_result = MagicMock()
+    no_match_result.scalar_one_or_none.return_value = None
+    found_via_order_id = MagicMock()
+    found_via_order_id.scalar_one_or_none.return_value = mock_transaction
+
+    mock_tenant = MagicMock()
+    mock_plan = {"prices_usdt": {"monthly": 99.99}}
+    api_status = {"payment_status": "finished", "actually_paid": 99.99, "pay_currency": "usdt"}
+
+    with patch.object(mock_db, 'execute', side_effect=[no_match_result, found_via_order_id, _mock_claim_success()]), \
+         patch.object(mock_db, 'commit'), \
+         patch.object(mock_db, 'get', return_value=mock_tenant), \
+         patch('app.services.nowpayments.get_plan', return_value=mock_plan), \
+         patch.object(NOWPaymentsService, 'get_payment_status', new=AsyncMock(return_value=api_status)) as mock_verify, \
+         patch('app.services.nowpayments.activate_tenant_plan', new=AsyncMock(return_value={"success": True, "api_key": "sk-test"})), \
+         patch('app.services.nowpayments.create_commission', new=AsyncMock()):
+
+        service = NOWPaymentsService()
+        await service.process_webhook(webhook_data, mock_db)
+
+        # Re-verification must use the REAL webhook payment_id, not the
+        # stored invoice id, since that's the only one NOWPayments'
+        # GET /v1/payment/{id} status endpoint can actually resolve.
+        mock_verify.assert_awaited_once_with("real_payment_id_999")
+        assert mock_transaction.fulfilled is True
 
 
 @pytest.mark.asyncio
