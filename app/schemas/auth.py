@@ -57,6 +57,7 @@ class LoginWithApiKeyResponse(BaseModel):
 class MeResponse(BaseModel):
     role: Literal["admin", "user", "api_key"]
     phone: str | None = None
+    tenant_id: str | None = None
     subscription_status: str | None = None
     plan: str | None = None
     trial_expires_at: datetime | None = None
