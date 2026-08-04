@@ -27,6 +27,7 @@ from app.api.admin import router as admin_router
 from app.api.ai_assist import router as ai_assist_router
 from app.api.ai_copilot import router as ai_copilot_router
 from app.api.ai import router as ai_router
+from app.api.ai_guest import router as ai_guest_router
 from app.api.demo import router as demo_router
 from app.api.auth import router as auth_router
 from app.api.auto_reply import router as auto_reply_router
@@ -370,6 +371,7 @@ app.add_middleware(MetricsMiddleware)
 
 app.include_router(admin_router)
 app.include_router(auth_router)
+app.include_router(ai_guest_router)
 app.include_router(telegram_verify_router)
 
 _auth_required = [Depends(require_api_key_or_admin)]
