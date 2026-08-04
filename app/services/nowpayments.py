@@ -70,11 +70,22 @@ class NOWPaymentsService:
             "Content-Type": "application/json"
         }
 
+        # /v1/payment (previously used here) has no hosted checkout page --
+        # it only returns a raw pay_address for building a custom pay-to-
+        # address UI. This app's checkout flow opens a hosted page in a new
+        # tab, which only /v1/invoice provides (invoice_url). The tradeoff:
+        # the invoice's own `id` is NOT the eventual payment_id NOWPayments
+        # assigns once the customer actually pays -- that only exists once
+        # the IPN webhook fires. We keep the invoice id as our internal
+        # payment_id (stable from creation through completion, used for
+        # status polling/receipts) and reconcile the *real* payment_id via
+        # order_id matching in process_webhook (see there for detail).
+        order_id = f"tenant_{tenant_id}_plan_{plan_id}_{int(datetime.now().timestamp())}"
         payload = {
             "price_amount": amount,
             "price_currency": "usd",
             "pay_currency": currency.lower(),
-            "order_id": f"tenant_{tenant_id}_plan_{plan_id}_{int(datetime.now().timestamp())}",
+            "order_id": order_id,
             "order_description": order_description,
             "ipn_callback_url": self._callback_url(),
         }
@@ -82,7 +93,7 @@ class NOWPaymentsService:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.base_url}/payment",
+                    f"{self.base_url}/invoice",
                     headers=headers,
                     json=payload
                 )
@@ -92,14 +103,15 @@ class NOWPaymentsService:
                     raise RuntimeError(f"NOWPayments API error: {response.status_code}")
 
                 result = response.json()
+                invoice_id = str(result['id'])
 
                 transaction = NowPaymentsTransaction(
-                    id=result['payment_id'],
-                    payment_id=result['payment_id'],
+                    id=invoice_id,
+                    payment_id=invoice_id,
                     tenant_id=tenant_id,
                     plan_id=plan_id,
-                    amount=result['price_amount'],
-                    pay_currency=result['pay_currency'],
+                    amount=float(result['price_amount']),
+                    pay_currency=(result.get('pay_currency') or currency.lower()),
                     order_id=result['order_id'],
                     payment_status='created',
                     created_at=utcnow_naive()
@@ -109,7 +121,14 @@ class NOWPaymentsService:
                     db.add(transaction)
                     await db.commit()
 
-                return result
+                return {
+                    "payment_id": invoice_id,
+                    "invoice_id": invoice_id,
+                    "checkout_url": result["invoice_url"],
+                    "price_amount": result['price_amount'],
+                    "pay_currency": result.get('pay_currency') or currency.lower(),
+                    "order_id": result['order_id'],
+                }
         except Exception as e:
             logger.error(f"Error creating NOWPayments invoice: {str(e)}")
             raise
@@ -211,14 +230,27 @@ class NOWPaymentsService:
             logger.error("nowpayments_webhook_no_payment_id")
             return
 
-        # Look up by payment_id; prefer stored tenant/plan over parsing order_id
+        # Look up by payment_id first. Since create_payment() now creates via
+        # /v1/invoice, the row's stored payment_id is actually the INVOICE
+        # id (assigned before the customer ever picks a currency) -- the
+        # webhook's payment_id is the real underlying payment NOWPayments
+        # only creates once they pay, which never matches the invoice id.
+        # order_id is the one thing we set at creation and NOWPayments
+        # echoes back unchanged regardless of invoice-vs-payment origin, so
+        # it's the reliable join key for this case.
         existing_transaction = await db.execute(
             select(NowPaymentsTransaction).where(NowPaymentsTransaction.payment_id == payment_id)
         )
         transaction = existing_transaction.scalar_one_or_none()
 
+        if not transaction and order_id:
+            existing_transaction = await db.execute(
+                select(NowPaymentsTransaction).where(NowPaymentsTransaction.order_id == order_id)
+            )
+            transaction = existing_transaction.scalar_one_or_none()
+
         if not transaction:
-            logger.error(f"No existing transaction found for payment_id: {payment_id}")
+            logger.error(f"No existing transaction found for payment_id: {payment_id} order_id: {order_id}")
             return
 
         tenant_id = transaction.tenant_id
@@ -243,7 +275,10 @@ class NOWPaymentsService:
         transaction.pay_currency = pay_currency or transaction.pay_currency
 
         if status in ['finished', 'confirmed']:
-            if not await self._fulfill_transaction(db, transaction, tenant_id, plan_id, paid_amount, pay_currency):
+            if not await self._fulfill_transaction(
+                db, transaction, tenant_id, plan_id, paid_amount, pay_currency,
+                verify_payment_id=payment_id,
+            ):
                 await db.commit()
                 return
         elif status in ['failed', 'expired', 'refunded', 'partially_paid']:
@@ -262,6 +297,7 @@ class NOWPaymentsService:
         plan_id: Optional[str],
         paid_amount: float,
         pay_currency: str,
+        verify_payment_id: Optional[str] = None,
     ) -> bool:
         """Fulfill a finished/confirmed payment.
 
@@ -272,7 +308,14 @@ class NOWPaymentsService:
         Returns True when fulfilled, False when the payment must not be
         fulfilled (mismatch / verify failed / invalid plan / missing tenant).
         """
-        payment_id = transaction.payment_id
+        # transaction.payment_id is our stored id (the invoice id from
+        # creation for invoice-originated rows) -- NOWPayments' own
+        # GET /v1/payment/{id} status lookup needs the REAL payment id it
+        # assigned once the customer paid, which only the webhook body (or
+        # an explicit caller, e.g. the reconcile job) has. Falls back to
+        # transaction.payment_id for legacy /v1/payment-originated rows
+        # where the two were always the same value.
+        payment_id = verify_payment_id or transaction.payment_id
 
         # 1) Server-side re-verification — don't trust the webhook body alone.
         api_status = await self.get_payment_status(payment_id)
@@ -426,7 +469,19 @@ class NOWPaymentsService:
                 pending = result.scalars().all()
                 for txn in pending:
                     checked += 1
-                    # Re-fetch authoritative status from NOWPayments.
+                    # Re-fetch authoritative status from NOWPayments. NOTE:
+                    # txn.payment_id is the invoice id (see create_payment) --
+                    # NOWPayments only assigns the real payment id once the
+                    # customer actually pays, and there's no "check invoice
+                    # status" API to look that up in the meantime (confirmed:
+                    # GET /v1/invoice-status/{id} 404s). So this safety net
+                    # can only recover a transaction AFTER its first webhook
+                    # has been seen at least once (process_webhook's
+                    # order_id fallback finds it and the webhook processing
+                    # itself handles fulfillment) -- it can't proactively
+                    # discover a payment NOWPayments never told us about.
+                    # get_payment_status() returning None here (404) is the
+                    # expected, harmless case for a still-invoice-only row.
                     api_status = await self.get_payment_status(txn.payment_id)
                     if api_status is None:
                         continue
