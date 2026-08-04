@@ -239,7 +239,8 @@ async def verify_code(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
-    register_account_realtime(client, account.id)
+    me = await client.get_me()
+    register_account_realtime(client, account.id, me.id if me else None)
     logger.info("account_authenticated", account_id=account.id, stage="verify_code")
 
     try:
@@ -306,7 +307,8 @@ async def verify_2fa(
         db, account, status="active", session_data=encrypt_session(session_string)
     )
     pool.clear_pending_auth(account.id)
-    register_account_realtime(client, account.id)
+    me = await client.get_me()
+    register_account_realtime(client, account.id, me.id if me else None)
     logger.info("account_authenticated", account_id=account.id, stage="verify_2fa")
 
     try:

@@ -42,16 +42,25 @@ def _raw_chat_id(chat_id: int | None) -> int | None:
 _registered: dict[str, list[tuple[type, callable]]] = {}
 
 
-def register_account_realtime(client: TelegramClient, account_id: str) -> None:
+def register_account_realtime(client: TelegramClient, account_id: str, my_user_id: int | None) -> None:
     if account_id in _registered:
         return
 
     handlers: list[tuple[type, callable]] = []
 
+    # my_user_id is resolved ONCE by the caller (attach_all_account_realtime_listeners)
+    # rather than re-fetched here. This used to call `await client.get_me()` on
+    # every single new/edited message event — under a burst of incoming
+    # messages (e.g. catching up on updates right after login) that fired
+    # dozens of redundant GetUsersRequest RPCs per second, which Telegram
+    # started flood-waiting (observed: "A wait of 3 seconds is required
+    # (caused by GetUsersRequest)" repeated continuously), stalling the
+    # entire realtime pipeline for the account. The caller's own user ID
+    # never changes for the lifetime of a session, so there's nothing to
+    # re-fetch per event.
     async def on_new_message(event):
         try:
-            me = await client.get_me()
-            m = message_to_dict(event.message, me.id if me else None)
+            m = message_to_dict(event.message, my_user_id)
         except Exception as exc:
             logger.warning("realtime_new_message_normalize_failed", account_id=account_id, error=str(exc))
             return
@@ -66,8 +75,7 @@ def register_account_realtime(client: TelegramClient, account_id: str) -> None:
 
     async def on_message_edited(event):
         try:
-            me = await client.get_me()
-            m = message_to_dict(event.message, me.id if me else None)
+            m = message_to_dict(event.message, my_user_id)
         except Exception as exc:
             logger.warning("realtime_message_edited_normalize_failed", account_id=account_id, error=str(exc))
             return
@@ -180,10 +188,11 @@ async def attach_all_account_realtime_listeners() -> None:
             continue
         try:
             client = await get_authorized_client(account)
+            me = await client.get_me()
         except AccountNotAuthenticatedError:
             logger.info("realtime_listener_skip_unauthenticated", account_id=account.id)
             continue
         except Exception as exc:
             logger.warning("realtime_listener_attach_failed", account_id=account.id, error=str(exc))
             continue
-        register_account_realtime(client, account.id)
+        register_account_realtime(client, account.id, me.id if me else None)
