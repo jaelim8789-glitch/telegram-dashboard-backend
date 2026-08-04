@@ -74,6 +74,7 @@ def _public_me_response(user: User, tenant: Tenant | None, requires_reauth: bool
     return MeResponse(
         role="user",
         phone=user.phone,
+        tenant_id=tenant.id if tenant else None,
         subscription_status=tenant.subscription_status if tenant else None,
         plan=tenant.plan if tenant else None,
         trial_expires_at=tenant.trial_expires_at if tenant else None,
@@ -381,6 +382,7 @@ async def me(
             return _public_me_response(identity.user, tenant, requires_reauth=identity.requires_reauth)
         return MeResponse(
             role=identity.kind,
+            tenant_id=tenant.id if tenant else None,
             subscription_status=tenant.subscription_status if tenant else None,
             plan=tenant.plan if tenant else None,
             trial_expires_at=tenant.trial_expires_at if tenant else None,

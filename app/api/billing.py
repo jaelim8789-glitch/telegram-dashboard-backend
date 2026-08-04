@@ -15,6 +15,7 @@ from app.services.billing import (
     create_stars_invoice,
     create_usdt_invoice,
     get_all_addons,
+    get_billing_summary,
     get_subscription_status,
     process_stars_payment,
 )
@@ -150,6 +151,16 @@ async def api_spend_stars(
 
 
 # ─── Subscription ─────────────────────────────────────────────────────
+
+
+@router.get("/summary/{tenant_id}")
+async def api_get_billing_summary(
+    tenant_id: str,
+    identity: Identity = Depends(get_current_identity),
+):
+    """Get aggregated billing summary for the Billing Center dashboard."""
+    await require_tenant_access(tenant_id, identity)
+    return await get_billing_summary(tenant_id)
 
 
 @router.get("/subscription/{tenant_id}")
