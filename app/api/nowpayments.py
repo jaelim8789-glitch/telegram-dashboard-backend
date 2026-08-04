@@ -158,6 +158,42 @@ async def get_payment_status(
     }
 
 
+@router.get("/receipt/{payment_id}", dependencies=_auth_required)
+async def get_payment_receipt(
+    payment_id: str,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    """PDF 영수증 다운로드 — tenant 소유권 검증 후 반환."""
+    from fastapi.responses import Response
+
+    from app.models.tenant import Tenant
+    from app.services.receipt import generate_payment_receipt
+
+    result = await db.execute(
+        select(NowPaymentsTransaction).where(
+            NowPaymentsTransaction.payment_id == payment_id,
+            NowPaymentsTransaction.tenant_id == identity.tenant_id,
+        )
+    )
+    transaction = result.scalar_one_or_none()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="결제 내역을 찾을 수 없습니다.")
+
+    tenant = await db.get(Tenant, identity.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="테넌트를 찾을 수 없습니다.")
+
+    pdf_bytes = generate_payment_receipt(tenant, transaction)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="telemon-receipt-{transaction.payment_id}.pdf"',
+        },
+    )
+
+
 @router.get("/history", dependencies=_auth_required)
 async def get_payment_history(
     identity: Identity = Depends(get_current_identity),
