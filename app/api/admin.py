@@ -1309,3 +1309,27 @@ async def admin_operations_overview(
         ).scalar_one() or 0,
         "generated_at": utcnow_naive().isoformat(),
     }
+
+
+# ── Epic 20: Incidents ─────────────────────────────────────────────────
+
+
+@router.get("/incidents", dependencies=[Depends(require_admin)])
+async def get_incidents():
+    """Active incidents (auto recovery in progress)."""
+    from app.services.incident_engine import get_incident_engine
+    return {"incidents": await get_incident_engine().active_incidents()}
+
+
+@router.get("/incidents/history", dependencies=[Depends(require_admin)])
+async def get_incident_history(limit: int = Query(default=50, ge=1, le=200)):
+    """Rolling 7-day incident history."""
+    from app.services.incident_engine import get_incident_engine
+    return {"history": await get_incident_engine().incident_history(limit)}
+
+
+@router.get("/health-score", dependencies=[Depends(require_admin)])
+async def get_health_score():
+    """Composite health score (0-100) across subsystems."""
+    from app.services.incident_engine import get_incident_engine
+    return await get_incident_engine().health_score()
