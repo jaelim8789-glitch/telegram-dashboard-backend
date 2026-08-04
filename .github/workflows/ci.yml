@@ -68,3 +68,24 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           ENCRYPTION_KEY: ${{ env.ENCRYPTION_KEY }}
+
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit -r requirements.txt -r requirements-dev.txt
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
