@@ -22,8 +22,10 @@ def drop_table_if_exists(table_name: str):
 
 
 def add_column_if_not_exists(table_name: str, column: sa.Column):
-    """Add a column only if it doesn't already exist."""
+    """Add a column only if it doesn't already exist (skips missing tables)."""
     bind = op.get_bind()
+    if not bind.dialect.has_table(bind, table_name):
+        return
     insp = sa.inspect(bind)
     columns = [c["name"] for c in insp.get_columns(table_name)]
     if column.name not in columns:
@@ -31,8 +33,10 @@ def add_column_if_not_exists(table_name: str, column: sa.Column):
 
 
 def drop_column_if_exists(table_name: str, column_name: str):
-    """Drop a column only if it exists."""
+    """Drop a column only if it exists (skips missing tables)."""
     bind = op.get_bind()
+    if not bind.dialect.has_table(bind, table_name):
+        return
     insp = sa.inspect(bind)
     columns = [c["name"] for c in insp.get_columns(table_name)]
     if column_name in columns:
@@ -40,8 +44,10 @@ def drop_column_if_exists(table_name: str, column_name: str):
 
 
 def create_index_if_not_exists(index_name: str, table_name: str, columns, **kwargs):
-    """Create an index only if it doesn't already exist."""
+    """Create an index only if it doesn't already exist (skips missing tables)."""
     bind = op.get_bind()
+    if not bind.dialect.has_table(bind, table_name):
+        return
     insp = sa.inspect(bind)
     existing = [ix["name"] for ix in insp.get_indexes(table_name)]
     if index_name not in existing:
@@ -49,8 +55,10 @@ def create_index_if_not_exists(index_name: str, table_name: str, columns, **kwar
 
 
 def create_foreign_key_if_not_exists(constraint_name: str, table_name: str, *args, **kwargs):
-    """Create a foreign key constraint only if it doesn't already exist."""
+    """Create a foreign key constraint only if it doesn't already exist (skips missing tables)."""
     bind = op.get_bind()
+    if not bind.dialect.has_table(bind, table_name):
+        return
     insp = sa.inspect(bind)
     existing = [fk["name"] for fk in insp.get_foreign_keys(table_name)]
     if constraint_name not in existing:
@@ -58,8 +66,10 @@ def create_foreign_key_if_not_exists(constraint_name: str, table_name: str, *arg
 
 
 def create_unique_constraint_if_not_exists(constraint_name: str, table_name: str, columns, **kwargs):
-    """Create a unique constraint only if it doesn't already exist."""
+    """Create a unique constraint only if it doesn't already exist (skips missing tables)."""
     bind = op.get_bind()
+    if not bind.dialect.has_table(bind, table_name):
+        return
     insp = sa.inspect(bind)
     existing = [uc["name"] for uc in insp.get_unique_constraints(table_name)]
     if constraint_name not in existing:
