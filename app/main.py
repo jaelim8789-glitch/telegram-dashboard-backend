@@ -161,6 +161,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("scheduler_skipped", reason="another_worker_running")
 
+    #  Incident monitor (Epic 20)
+    # Only the singleton-lock winner runs the incident loop so multiple workers
+    # don't each open duplicate incidents for the same outage.
+    if await acquire_singleton_lock("incident_monitor"):
+        try:
+            from app.services.incident_engine import get_incident_engine
+            asyncio.create_task(get_incident_engine().run())
+            logger.info("incident_monitor_started")
+        except Exception as exc:
+            logger.error("incident_monitor_startup_failed", error=str(exc))
+    else:
+        logger.info("incident_monitor_skipped", reason="another_worker_running")
+
     #  Auto-reply listeners
     # Same duplication risk: each worker would attach its own Telethon event handler
     # to the same account sessions, so a single incoming message triggers the
