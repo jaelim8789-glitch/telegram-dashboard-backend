@@ -6,7 +6,17 @@
 #   - Log rotation
 #   - Graceful shutdown
 #   - No build contexts (uses pre-built images)
-#   - Secrets via Docker secrets instead of env vars
+#
+# NOTE: this file previously declared `secrets: {..., external: true}` for
+# NOWPAYMENTS_API_KEY/IPN_SECRET and blanked the env vars below to force
+# reading from the secret file instead. External secrets are a Swarm-only
+# Docker feature -- this host runs plain `docker compose` (not swarm), so
+# `docker compose up` rejected the whole deploy ("unsupported external
+# secret"), and app/config.py only ever read os.getenv() and never the
+# mounted secret file, so even a successful deploy would have shipped with
+# a blank NOWPAYMENTS_API_KEY. Reverted to plain env vars sourced from
+# .env via the base docker-compose.yml (DATABASE_URL etc. below still
+# override the base file's dev defaults for prod).
 
 services:
   backend:
@@ -30,17 +40,11 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
-    secrets:
-      - nowpayments_api_key
-      - nowpayments_ipn_secret
     environment:
       DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@db:5432/telegram_dashboard
       UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      NOWPAYMENTS_API_KEY: ""
-      NOWPAYMENTS_IPN_SECRET: ""
-      NOWPAYMENTS_PUBLIC_KEY: ""
 
   frontend:
     build: !reset null
@@ -63,9 +67,3 @@ services:
   redis:
     restart: always
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-
-secrets:
-  nowpayments_api_key:
-    external: true
-  nowpayments_ipn_secret:
-    external: true
