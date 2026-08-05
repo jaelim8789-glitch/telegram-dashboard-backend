@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,4 +23,5 @@ class GuestAiChatLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     reply: Mapped[str] = mapped_column(Text, nullable=False)
     request_count_today: Mapped[int] = mapped_column(Integer, default=1)
+    thumbs_up: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)

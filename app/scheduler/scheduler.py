@@ -269,6 +269,13 @@ def start_scheduler() -> None:
         id="cleanup_expired_sessions",
         replace_existing=True,
     )
+    # AI Learning — 매일 새벽 3시 (KST) 좋은 응답 자동 KB 적재
+    scheduler.add_job(
+        _run_ai_learning_ingest,
+        IntervalTrigger(hours=24, start_date="2026-08-06 03:00:00"),
+        id="ai_learning_ingest",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("scheduler_started", interval_seconds=DISPATCH_INTERVAL_SECONDS)
 
@@ -299,3 +306,52 @@ async def _cleanup_expired_sessions_wrapper() -> None:
                 logger.info("expired_sessions_cleaned", count=removed)
     except Exception as exc:
         logger.error("expired_sessions_cleanup_failed", error=str(exc))
+
+
+async def _run_ai_learning_ingest() -> None:
+    """AI Learning — 매일 새벽 3시 좋은 응답을 Knowledge Base에 자동 적재.
+
+    feedback_score >= 4인 Q&A 쌍을 찾아서 KB의 'ai_learned' 컬렉션에 저장합니다.
+    실행 결과(적재 건수, 실패 건수)를 로그로 남깁니다.
+    """
+    try:
+        from app.services.ai_chat_v2_service import ingest_positive_responses
+
+        async with async_session_maker() as db:
+            # 모든 활성 테넌트에 대해 실행
+            from sqlalchemy import select
+            from app.models.tenant import Tenant
+
+            result = await db.execute(
+                select(Tenant).where(Tenant.is_active == True, Tenant.plan != "admin")
+            )
+            tenants = result.scalars().all()
+
+            total_ingested = 0
+            total_failed = 0
+
+            for tenant in tenants:
+                try:
+                    count = await ingest_positive_responses(
+                        db=db,
+                        tenant_id=tenant.id,
+                        min_score=4,
+                        days=7,
+                    )
+                    total_ingested += count
+                except Exception as exc:
+                    total_failed += 1
+                    logger.warning(
+                        "ai_learning_ingest_tenant_failed",
+                        tenant_id=tenant.id,
+                        error=str(exc),
+                    )
+
+            logger.info(
+                "ai_learning_ingest_completed",
+                tenants_processed=len(tenants),
+                total_ingested=total_ingested,
+                total_failed=total_failed,
+            )
+    except Exception as exc:
+        logger.error("ai_learning_ingest_failed", error=str(exc))

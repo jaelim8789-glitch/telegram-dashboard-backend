@@ -139,6 +139,30 @@ def _strip_leaked_think_tags(content: str) -> str:
     return content.strip()
 
 
+# The strategic-answer system prompts (ai_guest.py, ai_chat_v2_service.py)
+# instruct the model to end its reply with a trailing "[CONFIDENCE: high|
+# medium|low]" marker so the frontend can show a confidence badge without a
+# second API call. This must never leak to the user -- callers use this to
+# strip it out of the text they show/store/count credits against.
+_CONFIDENCE_RE = re.compile(r"\s*\[CONFIDENCE:\s*(high|medium|low)\]\s*$", re.IGNORECASE)
+# Longest possible marker ("[CONFIDENCE: MEDIUM]" = 21 chars) plus slack for
+# surrounding whitespace/newlines the model might emit before it.
+CONFIDENCE_STREAM_HOLDBACK = 32
+
+
+def extract_confidence(text: str) -> tuple[str, str | None]:
+    """Strip a trailing [CONFIDENCE: high|medium|low] marker off `text`.
+
+    Returns (clean_text, confidence) where confidence is "high"/"medium"/
+    "low" (lowercased) or None if the model didn't include one -- callers
+    should treat a missing marker as "unknown", not as an error.
+    """
+    match = _CONFIDENCE_RE.search(text)
+    if not match:
+        return text, None
+    return text[: match.start()].rstrip(), match.group(1).lower()
+
+
 async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
     result = await _call_deepseek_full(messages, max_tokens=max_tokens)

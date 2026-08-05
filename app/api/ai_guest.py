@@ -22,7 +22,7 @@ from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
-from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full
+from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full, extract_confidence
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
@@ -53,7 +53,19 @@ _SYSTEM_PROMPT = (
     "자체 AI 모델이며, 특정 외부 회사의 제품 이름을 밝히지 마세요. "
     "로그인하지 않은 방문자는 IP당 하루 10회까지만 무료로 대화할 수 있고, "
     "10회를 초과하면 회원가입이 필요합니다. 이 제한을 없다거나 무제한이라고 답하지 "
-    "마세요."
+    "마세요.\n\n"
+    "답변하기 전에 스스로 판단하세요:\n"
+    "1. 사용자가 준 정보로 정확한 답을 줄 수 있는가?\n"
+    "   - 아니면: 바로 답하지 말고, 필요한 정보를 구체적으로 2~3개 질문하세요. "
+    "정보가 진짜 부족할 때만 질문하고, 매 답변마다 기계적으로 묻지 마세요.\n"
+    "2. 충분한 정보가 있으면 답변하되, 단순 정보 나열이 아니라 당신의 의견을 "
+    "제시하세요. (예: \"제 생각엔 A보다 B가 나을 것 같습니다. 이유는...\")\n"
+    "3. 답변 끝에는 상황에 맞을 때만(항상 X, 복잡하거나 여러 선택지가 걸린 주제일 "
+    "때만) 놓친 부분이 없는지 되물어보세요. 뻔한 문구를 매번 붙이지 마세요.\n\n"
+    "답변을 마친 뒤 마지막 줄에, 그 답변에 대한 당신의 확신도를 다음 형식으로만 "
+    "정확히 표시하세요 (본문에서 언급하지 말고 이 마커만 맨 끝에 추가): "
+    "[CONFIDENCE: high] 또는 [CONFIDENCE: medium] 또는 [CONFIDENCE: low]. "
+    "정보가 부족해 되묻기만 한 경우는 [CONFIDENCE: medium]으로 표시하세요."
 )
 
 
@@ -73,9 +85,14 @@ class GuestChatRequest(BaseModel):
 
 class GuestChatResponse(BaseModel):
     reply: str
+    log_id: str | None = None
     # Populated only when think_mode was on and the model actually returned a
     # separate reasoning pass -- lets the frontend show "생각 중..." content.
     reasoning: str | None = None
+    # "high" | "medium" | "low" | None (model omitted the marker). Parsed out
+    # of `reply` server-side -- the [CONFIDENCE: ...] marker itself never
+    # reaches the client.
+    confidence: str | None = None
 
 
 @router.post("/chat", response_model=GuestChatResponse)
@@ -104,17 +121,46 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     if result is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
     reply, reasoning = result
+    reply, confidence = extract_confidence(reply)
     reasoning = reasoning if payload.think_mode else None
 
-    logger.info("guest_ai_chat_reply", ip=client_ip)
+    logger.info("guest_ai_chat_reply", ip=client_ip, confidence=confidence)
 
     # Best-effort persistence for admin visibility -- must never fail the
     # actual chat response (the guest already got their reply above).
+    log_id = None
     try:
-        db.add(GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply))
+        log_entry = GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply)
+        db.add(log_entry)
         await db.commit()
+        await db.refresh(log_entry)
+        log_id = log_entry.id
     except Exception:
         logger.exception("guest_ai_chat_log_persist_failed")
         await db.rollback()
 
-    return GuestChatResponse(reply=reply, reasoning=reasoning)
+    return GuestChatResponse(reply=reply, log_id=log_id, reasoning=reasoning, confidence=confidence)
+
+
+class GuestFeedbackRequest(BaseModel):
+    log_id: str = Field(min_length=1, max_length=36)
+    thumbs_up: bool
+
+
+@router.post("/feedback")
+async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depends(get_db)):
+    """Submit thumbs up/down feedback for a guest AI chat response."""
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(GuestAiChatLog).where(GuestAiChatLog.id == payload.log_id).limit(1)
+    )
+    log = result.scalar_one_or_none()
+    if log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="로그를 찾을 수 없습니다.")
+
+    log.thumbs_up = payload.thumbs_up
+    await db.commit()
+
+    logger.info("guest_ai_chat_feedback", log_id=payload.log_id, thumbs_up=payload.thumbs_up)
+    return {"success": True}

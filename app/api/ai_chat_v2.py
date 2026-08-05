@@ -392,7 +392,7 @@ async def ingest_positive_to_kb_endpoint(
 
 @router.get("/candidates")
 async def list_candidates_endpoint(
-    status: str = Query(default="pending", regex="^(pending|approved|rejected|all)$"),
+    status: str = Query(default="pending", pattern="^(pending|approved|rejected|all)$"),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(require_admin),
 ):

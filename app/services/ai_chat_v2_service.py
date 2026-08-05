@@ -38,7 +38,7 @@ from app.schemas.ai_chat_v2 import (
     UsageStats,
 )
 from app.api.ai_tools import TOOLS as _ALL_TOOLS
-from app.services.ai_chat_service import _strip_leaked_think_tags
+from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, CONFIDENCE_STREAM_HOLDBACK
 from app.services.ai_core_service import call_deepseek, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 
@@ -701,7 +701,21 @@ async def chat(
         "- \"죄송합니다\" 같은 사과를 남발하지 마세요.\n"
         "- \"AI입니다\", \"저는 AI라서\" 같은 자기 정체성을 밝히지 마세요.\n"
         "- 불필요한 경고나 주의사항을 남발하지 마세요.\n"
-        "- 표면적인 답변만 하지 마세요. 근본 원리까지 깊이 파고드세요."
+        "- 표면적인 답변만 하지 마세요. 근본 원리까지 깊이 파고드세요.\n\n"
+        "## 답변 전 판단\n"
+        "답변하기 전에 스스로 판단하세요:\n"
+        "1. 사용자가 준 정보로 정확한 답을 줄 수 있는가?\n"
+        "   - 아니면: 바로 답하지 말고, 필요한 정보를 구체적으로 2~3개 질문하세요. "
+        "정보가 진짜 부족할 때만 질문하고, 매 답변마다 기계적으로 묻지 마세요.\n"
+        "2. 충분한 정보가 있으면 답변하되, 단순 정보 나열이 아니라 당신의 의견을 "
+        "제시하세요. (예: \"제 생각엔 A보다 B가 나을 것 같습니다. 이유는...\")\n"
+        "3. 답변 끝에는 상황에 맞을 때만(항상 X, 복잡하거나 여러 선택지가 걸린 주제일 "
+        "때만) 놓친 부분이 없는지 되물어보세요. 뻔한 문구를 매번 붙이지 마세요.\n\n"
+        "## 확신도 표시\n"
+        "답변을 마친 뒤 마지막 줄에, 그 답변에 대한 당신의 확신도를 다음 형식으로만 "
+        "정확히 표시하세요 (본문에서 언급하지 말고 이 마커만 맨 끝에 추가): "
+        "[CONFIDENCE: high] 또는 [CONFIDENCE: medium] 또는 [CONFIDENCE: low]. "
+        "정보가 부족해 되묻기만 한 경우는 [CONFIDENCE: medium]으로 표시하세요."
     )
 
     # Apply template if specified
@@ -814,8 +828,13 @@ async def chat(
         # Streaming response
         full_content = ""
         full_reasoning = ""
+        full_confidence: str | None = None
         tool_calls_buffer: list[dict] = []  # Collect tool calls from stream
         current_tool_call: dict | None = None
+        # Content is held back CONFIDENCE_STREAM_HOLDBACK chars behind what's
+        # been received so the trailing "[CONFIDENCE: ...]" marker never gets
+        # flushed to the client mid-stream -- see extract_confidence().
+        pending = ""
         try:
             async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None):
                 if kind == "reasoning":
@@ -839,12 +858,27 @@ async def chat(
                     if fn_delta.get("arguments"):
                         tc["function"]["arguments"] += fn_delta["arguments"]
                     continue
-                full_content += text
-                yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
+                pending += text
+                safe_len = max(0, len(pending) - CONFIDENCE_STREAM_HOLDBACK)
+                to_emit, pending = pending[:safe_len], pending[safe_len:]
+                if to_emit:
+                    full_content += to_emit
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': to_emit})}\n\n"
         except Exception as exc:
             logger.error("ai_chat_v2_stream_failed", error=str(exc))
             yield f"data: {json.dumps({'type': 'error', 'content': 'Stream failed. Please try again.'})}\n\n"
             return
+
+        # Flush the held-back tail now that the stream is done, stripping the
+        # confidence marker out of it if present -- only reachable once no
+        # more content chunks are coming, so this is the one safe point to
+        # know the marker (if any) is fully in `pending`.
+        pending, tail_confidence = extract_confidence(pending)
+        if tail_confidence:
+            full_confidence = tail_confidence
+        if pending:
+            full_content += pending
+            yield f"data: {json.dumps({'type': 'chunk', 'content': pending})}\n\n"
 
         # Handle tool calls if any
         if tool_calls_buffer:
@@ -893,14 +927,28 @@ async def chat(
                     # Stream AI summary of tool result
                     yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': result_content})}\n\n"
 
-            # Get final AI response with tool results
+            # Get final AI response with tool results -- this, not the
+            # pre-tool-call pass above, is the answer the user actually
+            # reads, so the confidence marker (and holdback) applies here.
             full_content = ""
+            full_confidence = None
+            pending = ""
             async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
                 if kind == "content":
                     text = text.replace("<think>", "").replace("</think>", "")
                     if text:
-                        full_content += text
-                        yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
+                        pending += text
+                        safe_len = max(0, len(pending) - CONFIDENCE_STREAM_HOLDBACK)
+                        to_emit, pending = pending[:safe_len], pending[safe_len:]
+                        if to_emit:
+                            full_content += to_emit
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': to_emit})}\n\n"
+            pending, tail_confidence = extract_confidence(pending)
+            if tail_confidence:
+                full_confidence = tail_confidence
+            if pending:
+                full_content += pending
+                yield f"data: {json.dumps({'type': 'chunk', 'content': pending})}\n\n"
 
         if not full_content and not tool_calls_buffer:
             yield f"data: {json.dumps({'type': 'error', 'content': 'Empty response from AI.'})}\n\n"
@@ -964,6 +1012,7 @@ async def chat(
             'latency_ms': latency_ms,
             'remaining_credits': remaining_credits,
             'chars_used': actual_chars,
+            'confidence': full_confidence,
         })}\n\n"
 
     else:
@@ -974,6 +1023,7 @@ async def chat(
         if reply is None:
             yield f"data: {json.dumps({'type': 'error', 'content': 'AI service unavailable. Please try again.'})}\n\n"
             return
+        reply, confidence = extract_confidence(reply)
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1023,6 +1073,7 @@ async def chat(
             'latency_ms': latency_ms,
             'remaining_credits': remaining_credits,
             'chars_used': actual_chars,
+            'confidence': confidence,
         })}\n\n"
 
 

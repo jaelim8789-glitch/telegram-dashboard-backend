@@ -125,6 +125,8 @@ class ChatResponse(BaseModel):
     tokens_completion: int = 0
     latency_ms: int | None = None
     model: str
+    # "high" | "medium" | "low" | None -- see app.services.ai_chat_service.extract_confidence.
+    confidence: str | None = None
 
 
 #  Search 
