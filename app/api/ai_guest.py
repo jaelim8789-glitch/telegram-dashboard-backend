@@ -28,12 +28,12 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
 
 _RATE_LIMIT_CATEGORY = "guest_ai_chat"
-# Temporarily raised for the open test period -- 10/day was blocking real
-# testers after only a handful of actual sends because failed/timed-out
-# attempts (502s) still consumed the quota, and mobile-carrier NAT means
-# many different real people can share one IP. Revisit once the GPU box's
-# reliability under concurrent load is solid again.
-_MAX_PER_DAY = 300
+# Raised for the open test period -- 10/day was blocking real testers after
+# only a handful of actual sends because failed/timed-out attempts (502s)
+# still consumed the quota, and mobile-carrier NAT means many different real
+# people can share one IP.
+# TODO: dial this back down once the test period ends.
+_MAX_PER_DAY = 30
 _WINDOW_SECONDS = 24 * 60 * 60
 _MAX_INPUT_CHARS = 2000
 _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
