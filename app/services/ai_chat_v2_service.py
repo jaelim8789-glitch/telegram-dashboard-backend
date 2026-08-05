@@ -45,7 +45,11 @@ logger = get_logger(__name__)
 
 _MAX_HISTORY_MESSAGES = 50
 _MAX_INPUT_CHARS = 10000
-_DEFAULT_MAX_TOKENS = 2000
+# The self-hosted reasoning model behind DEEPSEEK_API_BASE spends a chunk of
+# this on a separate "thinking" pass before any real content -- self-hosted
+# GPU means no per-token cost, so budget generously rather than trim close
+# to the edge.
+_DEFAULT_MAX_TOKENS = 4000
 _DEFAULT_TIMEOUT = 60
 _STREAM_TIMEOUT = 120
 _RETRY_MAX = 3

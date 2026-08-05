@@ -35,9 +35,9 @@ _MAX_INPUT_CHARS = 2000
 # 600 was fine for a plain chat model, but the self-hosted reasoning model
 # behind DEEPSEEK_API_BASE spends a few hundred tokens "thinking" before any
 # real content -- with a tight budget the reply comes back empty every time
-# (finish_reason: length, hit mid-reasoning). 2000 matches ai_chat_v2_service's
-# _DEFAULT_MAX_TOKENS, confirmed sufficient by hand against the live model.
-_MAX_TOKENS = 2000
+# (finish_reason: length, hit mid-reasoning). Self-hosted GPU means no
+# per-token cost, so budget generously rather than trim close to the edge.
+_MAX_TOKENS = 4000
 
 
 @dataclass
