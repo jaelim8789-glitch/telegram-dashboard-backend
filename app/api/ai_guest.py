@@ -91,7 +91,10 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
     messages.append({"role": "user", "content": payload.message})
 
-    result = await _call_deepseek_full(messages, max_tokens=_MAX_TOKENS * 3 if payload.think_mode else _MAX_TOKENS)
+    # The model always reasons internally regardless of budget -- think_mode
+    # only controls whether that reasoning gets shown to the user, not how
+    # much token budget the call gets.
+    result = await _call_deepseek_full(messages, max_tokens=_MAX_TOKENS)
     if result is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
     reply, reasoning = result

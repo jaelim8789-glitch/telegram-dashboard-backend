@@ -579,10 +579,10 @@ async def chat(
     messages.append({"role": "user", "content": user_content})
 
     # 8. Stream or non-stream
-    # Think mode: the reasoning pass alone can burn well past the default
-    # budget on a harder prompt, so give it real headroom -- self-hosted GPU
-    # means no per-token cost, this only costs wall-clock time.
-    max_tokens = _DEFAULT_MAX_TOKENS * 3 if request.think_mode else _DEFAULT_MAX_TOKENS
+    # The model always reasons internally regardless of budget -- think_mode
+    # only controls whether that reasoning is surfaced to the user, not the
+    # token budget the call gets.
+    max_tokens = _DEFAULT_MAX_TOKENS
 
     if request.stream:
         # Streaming response
@@ -590,6 +590,8 @@ async def chat(
         try:
             async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
                 if kind == "reasoning":
+                    if not request.think_mode:
+                        continue
                     # Not saved/counted -- purely so the frontend can show a
                     # "생각 중..." trace while think_mode is on.
                     yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
