@@ -4,6 +4,7 @@ from app.models.account import Account
 from app.models.ai import AiChatLog, AiReplyAssistantLog, AiBroadcastAssistantLog, AiOperationsReport, AiUsageRecord, AiPlanLimit
 from app.models.ai_broadcast_draft import AiBroadcastDraft
 from app.models.ai_ops_report import AiOpsReport
+from app.models.guest_ai_chat import GuestAiChatLog
 from app.models.api_key import APIKey
 from app.models.auto_reply import AutoReplyLog, AutoReplyRule, AutoReplySuggestion
 from app.models.broadcast import Broadcast

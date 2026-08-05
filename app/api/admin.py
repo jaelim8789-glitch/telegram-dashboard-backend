@@ -43,6 +43,9 @@ from app.schemas.admin import (
     ManualIssueRequest,
     ManualIssueResponse,
     UserLookupResponse,
+    GuestAiChatLogRead,
+    AiChatSessionRead,
+    AiChatMessageRead,
 )
 from app.schemas.style_profile import StyleProfileCreate, StyleProfileAnalyzeRequest, StyleProfileUpdate, StyleProfileRead
 from app.services.ai_style_service import analyze_style, list_profiles, get_profile, update_profile, delete_profile
@@ -1339,3 +1342,93 @@ async def get_health_score():
     """Composite health score (0-100) across subsystems."""
     from app.services.incident_engine import get_incident_engine
     return await get_incident_engine().health_score()
+
+
+# ── AI chat visibility (guest + logged-in) ──────────────────────────────
+
+
+@router.get("/ai-chat/guest-logs", response_model=list[GuestAiChatLogRead], dependencies=[Depends(require_admin)])
+async def list_guest_ai_chat_logs(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    ip: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Anonymous /ai visitor exchanges -- persisted since guest chat has no
+    tenant/session of its own (see ai_guest.py), purely for admin review."""
+    from app.models.guest_ai_chat import GuestAiChatLog
+
+    stmt = select(GuestAiChatLog).order_by(GuestAiChatLog.created_at.desc())
+    if ip:
+        stmt = stmt.where(GuestAiChatLog.ip == ip)
+    stmt = stmt.offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@router.get("/ai-chat/sessions", response_model=list[AiChatSessionRead], dependencies=[Depends(require_admin)])
+async def list_ai_chat_sessions(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    tenant_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Logged-in AI chat sessions across all tenants, enriched with the
+    owning user's phone/username so support can tell whose conversation
+    they're looking at without a second lookup."""
+    from app.models.ai_chat_v2 import AiChatSession
+    from app.models.tenant import Tenant
+
+    stmt = (
+        select(AiChatSession, Tenant.phone)
+        .join(Tenant, Tenant.id == AiChatSession.tenant_id)
+        .order_by(AiChatSession.updated_at.desc())
+    )
+    if tenant_id:
+        stmt = stmt.where(AiChatSession.tenant_id == tenant_id)
+    stmt = stmt.offset(skip).limit(limit)
+    rows = (await db.execute(stmt)).all()
+
+    phones = [phone for _, phone in rows if phone]
+    usernames: dict[str, str | None] = {}
+    if phones:
+        user_rows = (await db.execute(select(User.phone, User.username).where(User.phone.in_(phones)))).all()
+        usernames = {phone: uname for phone, uname in user_rows}
+
+    return [
+        AiChatSessionRead(
+            id=session.id,
+            tenant_id=session.tenant_id,
+            title=session.title,
+            message_count=session.message_count,
+            total_tokens=session.total_tokens,
+            is_archived=session.is_archived,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            user_phone=phone,
+            username=usernames.get(phone) if phone else None,
+        )
+        for session, phone in rows
+    ]
+
+
+@router.get(
+    "/ai-chat/sessions/{session_id}/messages",
+    response_model=list[AiChatMessageRead],
+    dependencies=[Depends(require_admin)],
+)
+async def list_ai_chat_session_messages(
+    session_id: str,
+    limit: int = Query(default=200, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.ai_chat_v2 import AiChatMessageV2
+
+    stmt = (
+        select(AiChatMessageV2)
+        .where(AiChatMessageV2.session_id == session_id)
+        .order_by(AiChatMessageV2.created_at.asc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()

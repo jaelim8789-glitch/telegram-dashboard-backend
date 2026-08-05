@@ -18,6 +18,43 @@ class AdminMeResponse(BaseModel):
     username: str
 
 
+class GuestAiChatLogRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    ip: str
+    message: str
+    reply: str
+    created_at: datetime
+
+
+class AiChatSessionRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    tenant_id: str
+    title: str
+    message_count: int
+    total_tokens: int
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+    # Enriched -- who this tenant actually is, for the admin list
+    user_phone: str | None = None
+    username: str | None = None
+
+
+class AiChatMessageRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    role: str
+    content: str
+    tokens_prompt: int
+    tokens_completion: int
+    created_at: datetime
+
+
 class UserLookupResponse(BaseModel):
     model_config = {"from_attributes": True}
 

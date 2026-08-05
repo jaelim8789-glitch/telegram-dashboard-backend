@@ -13,12 +13,15 @@ this is purely an acquisition/trial surface.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
+from app.database import get_db
+from app.models.guest_ai_chat import GuestAiChatLog
 from app.services.ai_chat_service import _call_deepseek
 
 logger = get_logger(__name__)
@@ -60,7 +63,7 @@ class GuestChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=GuestChatResponse)
-async def guest_chat(payload: GuestChatRequest, request: Request):
+async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSession = Depends(get_db)):
     client_ip = get_client_ip(request)
 
     if not check_rate_limit(client_ip, _RATE_LIMIT_CATEGORY, max_attempts=_MAX_PER_DAY, window_seconds=_WINDOW_SECONDS):
@@ -83,4 +86,14 @@ async def guest_chat(payload: GuestChatRequest, request: Request):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
 
     logger.info("guest_ai_chat_reply", ip=client_ip)
+
+    # Best-effort persistence for admin visibility -- must never fail the
+    # actual chat response (the guest already got their reply above).
+    try:
+        db.add(GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply))
+        await db.commit()
+    except Exception:
+        logger.exception("guest_ai_chat_log_persist_failed")
+        await db.rollback()
+
     return GuestChatResponse(reply=reply)
