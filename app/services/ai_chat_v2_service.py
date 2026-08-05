@@ -1040,15 +1040,16 @@ async def submit_message_feedback(
 
 async def ingest_positive_responses(
     db: AsyncSession,
-    tenant_id: str,
     min_score: int = 4,
     days: int = 7,
 ) -> int:
     """Ingest positively-rated Q&A pairs into the Knowledge Base.
 
-    Finds assistant messages with feedback_score >= min_score from the last N days,
-    pairs them with the preceding user message, and ingests them into KB as
-    'ai_chat_positive' source type.
+    Finds assistant messages with feedback_score >= min_score from the last N days
+    across ALL tenants (the KB -- app.models.knowledge_base.Document -- has no
+    tenant_id column; it's a single shared collection, same as every other KB
+    ingestion path), pairs them with the preceding user message, and ingests
+    them as source_type='ai_chat_positive'.
 
     Returns the number of Q&A pairs ingested.
     """
@@ -1063,7 +1064,6 @@ async def ingest_positive_responses(
     # Get positively-rated assistant messages
     result = await db.execute(
         select(AiChatMessageV2).where(
-            AiChatMessageV2.tenant_id == tenant_id,
             AiChatMessageV2.role == "assistant",
             AiChatMessageV2.feedback_score >= min_score,
             AiChatMessageV2.created_at >= since,
@@ -1093,7 +1093,6 @@ async def ingest_positive_responses(
         # Check if this Q&A pair is already in KB
         existing = await db.execute(
             select(Document).where(
-                Document.tenant_id == tenant_id,
                 Document.source_type == "ai_chat_positive",
                 Document.source_url == f"chat://{assistant_msg.id}",
             ).limit(1)
@@ -1108,7 +1107,6 @@ async def ingest_positive_responses(
         try:
             await ingest_document(
                 db=db,
-                tenant_id=tenant_id,
                 title=title,
                 content=content,
                 source_type="ai_chat_positive",
@@ -1125,7 +1123,6 @@ async def ingest_positive_responses(
 
     logger.info(
         "ai_learning_ingest_completed",
-        tenant_id=tenant_id,
         ingested=ingested_count,
         total_positive=len(positive_msgs),
     )

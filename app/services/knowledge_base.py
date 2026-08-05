@@ -54,11 +54,12 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
 
 async def ingest_document(db: AsyncSession, title: str, content: str, collection: str = "general",
                           source_url: str | None = None, permission_groups: list[str] | None = None,
-                          metadata: dict | None = None, user_id: str | None = None) -> Document:
+                          metadata: dict | None = None, user_id: str | None = None,
+                          source_type: str = "manual") -> Document:
     doc = Document(
         title=title, content=content, source_url=source_url,
         collection=collection, permission_groups=permission_groups or [],
-        extra=metadata or {}, created_by=user_id,
+        extra=metadata or {}, created_by=user_id, source_type=source_type,
     )
     db.add(doc)
     await db.flush()

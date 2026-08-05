@@ -270,7 +270,7 @@ async def usage_stats_endpoint(
 async def feedback_analytics_endpoint(
     days: int = Query(default=7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """Get feedback analytics for AI Learning dashboard.
 
@@ -371,7 +371,7 @@ async def ingest_positive_to_kb_endpoint(
     min_score: int = Query(default=4, ge=1, le=5),
     days: int = Query(default=7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """Ingest positively-rated Q&A pairs into the Knowledge Base.
 
@@ -383,7 +383,7 @@ async def ingest_positive_to_kb_endpoint(
     from datetime import timedelta
     from app.services.ai_chat_v2_service import ingest_positive_responses
 
-    count = await ingest_positive_responses(db, identity.tenant_id, min_score=min_score, days=days)
+    count = await ingest_positive_responses(db, min_score=min_score, days=days)
     return {"ingested": count, "min_score": min_score, "days": days}
 
 
