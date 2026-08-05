@@ -430,7 +430,7 @@ async def force_logout_all_users(db: AsyncSession = Depends(get_db)):
     now = utcnow_naive()
     result = await db.execute(update(User).values(token_valid_after=now))
     await append_admin_audit(
-        db, action="user_force_logout_all", target_type="user", target_id="*",
+        db, action="user_force_logout_all", target_type="user", target_id="*", target_phone=None,
         detail=f"Forced re-login for all users (rowcount={result.rowcount})",
     )
     await db.commit()
