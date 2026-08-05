@@ -1022,3 +1022,100 @@ async def submit_message_feedback(
     await db.commit()
     await db.refresh(msg)
     return msg
+
+
+#  AI Learning — Positive Response Ingestion
+
+
+async def ingest_positive_responses(
+    db: AsyncSession,
+    tenant_id: str,
+    min_score: int = 4,
+    days: int = 7,
+) -> int:
+    """Ingest positively-rated Q&A pairs into the Knowledge Base.
+
+    Finds assistant messages with feedback_score >= min_score from the last N days,
+    pairs them with the preceding user message, and ingests them into KB as
+    'ai_chat_positive' source type.
+
+    Returns the number of Q&A pairs ingested.
+    """
+    from datetime import timedelta
+    from app.core.time import utcnow_naive
+    from app.models.knowledge_base import Document
+    from app.services.knowledge_base import ingest_document
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Get positively-rated assistant messages
+    result = await db.execute(
+        select(AiChatMessageV2).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score >= min_score,
+            AiChatMessageV2.created_at >= since,
+        ).order_by(AiChatMessageV2.created_at.desc()).limit(100)
+    )
+    positive_msgs = result.scalars().all()
+
+    if not positive_msgs:
+        return 0
+
+    ingested_count = 0
+
+    for assistant_msg in positive_msgs:
+        # Find the preceding user message in the same session
+        user_result = await db.execute(
+            select(AiChatMessageV2).where(
+                AiChatMessageV2.session_id == assistant_msg.session_id,
+                AiChatMessageV2.role == "user",
+                AiChatMessageV2.created_at < assistant_msg.created_at,
+            ).order_by(AiChatMessageV2.created_at.desc()).limit(1)
+        )
+        user_msg = user_result.scalar_one_or_none()
+
+        if not user_msg:
+            continue
+
+        # Check if this Q&A pair is already in KB
+        existing = await db.execute(
+            select(Document).where(
+                Document.tenant_id == tenant_id,
+                Document.source_type == "ai_chat_positive",
+                Document.source_url == f"chat://{assistant_msg.id}",
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        # Create KB document from the Q&A pair
+        title = user_msg.content[:80] + ("..." if len(user_msg.content) > 80 else "")
+        content = f"질문: {user_msg.content}\n\n답변: {assistant_msg.content}"
+
+        try:
+            await ingest_document(
+                db=db,
+                tenant_id=tenant_id,
+                title=title,
+                content=content,
+                source_type="ai_chat_positive",
+                source_url=f"chat://{assistant_msg.id}",
+                collection="ai_learned",
+            )
+            ingested_count += 1
+        except Exception as exc:
+            logger.warning(
+                "ai_learning_ingest_failed",
+                message_id=assistant_msg.id,
+                error=str(exc),
+            )
+
+    logger.info(
+        "ai_learning_ingest_completed",
+        tenant_id=tenant_id,
+        ingested=ingested_count,
+        total_positive=len(positive_msgs),
+    )
+    return ingested_count

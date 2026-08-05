@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access
+from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_admin
 from app.core.logging import get_logger
+from app.core.time import utcnow_naive
 from app.database import get_db
 from app.schemas.ai_chat_v2 import (
     ChatRequest,
@@ -260,6 +261,130 @@ async def usage_stats_endpoint(
 ):
     """Get AI Chat 2.0 usage statistics."""
     return await get_usage_stats(db, identity.tenant_id)
+
+
+#  AI Learning — Feedback Analytics
+
+
+@router.get("/analytics/feedback")
+async def feedback_analytics_endpoint(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """Get feedback analytics for AI Learning dashboard.
+
+    Returns feedback distribution, top/worst responses, and daily trends.
+    Admin-only endpoint.
+    """
+    from datetime import timedelta
+    from sqlalchemy import func, case, and_
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Overall stats
+    base_query = select(
+        func.count(AiChatMessageV2.id).label("total"),
+        func.count(case((AiChatMessageV2.feedback_score >= 4, 1))).label("positive"),
+        func.count(case((AiChatMessageV2.feedback_score <= 2, 1))).label("negative"),
+        func.avg(AiChatMessageV2.feedback_score).label("avg_score"),
+    ).where(
+        AiChatMessageV2.role == "assistant",
+        AiChatMessageV2.feedback_score.isnot(None),
+        AiChatMessageV2.created_at >= since,
+    )
+
+    result = await db.execute(base_query)
+    row = result.one()
+
+    # Daily trends
+    daily_query = select(
+        func.date(AiChatMessageV2.created_at).label("date"),
+        func.count(AiChatMessageV2.id).label("total"),
+        func.count(case((AiChatMessageV2.feedback_score >= 4, 1))).label("positive"),
+        func.count(case((AiChatMessageV2.feedback_score <= 2, 1))).label("negative"),
+    ).where(
+        AiChatMessageV2.role == "assistant",
+        AiChatMessageV2.feedback_score.isnot(None),
+        AiChatMessageV2.created_at >= since,
+    ).group_by(func.date(AiChatMessageV2.created_at)).order_by(func.date(AiChatMessageV2.created_at))
+
+    daily_result = await db.execute(daily_query)
+    daily_rows = daily_result.all()
+
+    # Top positive responses (score >= 4, with content)
+    top_query = select(
+        AiChatMessageV2.id,
+        AiChatMessageV2.content,
+        AiChatMessageV2.feedback_score,
+        AiChatMessageV2.created_at,
+    ).where(
+        AiChatMessageV2.role == "assistant",
+        AiChatMessageV2.feedback_score >= 4,
+        AiChatMessageV2.created_at >= since,
+    ).order_by(AiChatMessageV2.feedback_score.desc()).limit(20)
+
+    top_result = await db.execute(top_query)
+    top_rows = top_result.all()
+
+    # Worst responses (score <= 2, with content)
+    worst_query = select(
+        AiChatMessageV2.id,
+        AiChatMessageV2.content,
+        AiChatMessageV2.feedback_score,
+        AiChatMessageV2.created_at,
+    ).where(
+        AiChatMessageV2.role == "assistant",
+        AiChatMessageV2.feedback_score <= 2,
+        AiChatMessageV2.created_at >= since,
+    ).order_by(AiChatMessageV2.feedback_score.asc()).limit(20)
+
+    worst_result = await db.execute(worst_query)
+    worst_rows = worst_result.all()
+
+    return {
+        "period_days": days,
+        "summary": {
+            "total": row.total or 0,
+            "positive": row.positive or 0,
+            "negative": row.negative or 0,
+            "avg_score": round(float(row.avg_score or 0), 2),
+        },
+        "daily": [
+            {"date": str(r.date), "total": r.total, "positive": r.positive, "negative": r.negative}
+            for r in daily_rows
+        ],
+        "top_responses": [
+            {"id": r.id, "content": r.content[:200], "score": r.feedback_score, "created_at": str(r.created_at)}
+            for r in top_rows
+        ],
+        "worst_responses": [
+            {"id": r.id, "content": r.content[:200], "score": r.feedback_score, "created_at": str(r.created_at)}
+            for r in worst_rows
+        ],
+    }
+
+
+@router.post("/analytics/ingest-to-kb")
+async def ingest_positive_to_kb_endpoint(
+    min_score: int = Query(default=4, ge=1, le=5),
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """Ingest positively-rated Q&A pairs into the Knowledge Base.
+
+    Finds assistant messages with feedback_score >= min_score from the last N days,
+    pairs them with the preceding user message, and ingests them into KB as
+    'ai_chat_positive' source type.
+    Admin-only endpoint.
+    """
+    from datetime import timedelta
+    from app.services.ai_chat_v2_service import ingest_positive_responses
+
+    count = await ingest_positive_responses(db, identity.tenant_id, min_score=min_score, days=days)
+    return {"ingested": count, "min_score": min_score, "days": days}
 
 
 #  Tool Confirmation
