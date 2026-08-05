@@ -8,7 +8,7 @@ import time
 import urllib.parse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -773,6 +773,7 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
 class RegisterWithPasswordRequest(BaseModel):
     username: str
     password: str
+    nickname: str | None = Field(default=None, max_length=50)
 
 
 class LoginWithPasswordRequest(BaseModel):
@@ -817,10 +818,12 @@ async def register_with_password(payload: RegisterWithPasswordRequest, request: 
     # placeholder that can never collide with a real E.164 number.
     placeholder_phone = f"pw_{secrets.token_hex(10)}"
 
+    nickname = payload.nickname.strip() if payload.nickname else None
     user = User(
         phone=placeholder_phone,
         username=username,
         password_hash=hash_password(payload.password),
+        nickname=nickname or None,
     )
     db.add(user)
     await db.flush()

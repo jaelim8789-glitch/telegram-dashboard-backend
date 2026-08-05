@@ -181,8 +181,17 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_
         )
         if session is not None:
             await session_crud.touch_session(db, session)
+            # Session tokens carry user_id -- load the User so downstream
+            # consumers (e.g. /me) can return phone/username/nickname the
+            # same way they do for JWT-authenticated requests. Without this,
+            # every session-token request (the default once a session_token
+            # exists, since authHeaders() prefers it over the JWT) got back
+            # username/nickname/phone as null, silently breaking anything
+            # that reads those fields (e.g. the post-signup nickname greeting).
+            user = await user_crud.get_user(db, session.user_id) if session.user_id else None
             return Identity(
                 kind="user",
+                user=user,
                 tenant_id=session.tenant_id,
                 requires_reauth=session.requires_reauth,
             )

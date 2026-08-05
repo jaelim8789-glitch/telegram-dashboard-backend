@@ -19,6 +19,28 @@ async def test_register_password_then_login_succeeds(unauthenticated_client):
 
 
 @pytest.mark.asyncio
+async def test_register_password_with_nickname_saves_it(unauthenticated_client):
+    reg = await unauthenticated_client.post(
+        "/api/auth/register-password",
+        json={"username": "guest_nick", "password": "correcthorse123", "nickname": "NickTest"},
+    )
+    assert reg.status_code == 201
+    session_token = reg.json()["session_token"]
+
+    me = await unauthenticated_client.get("/api/auth/me", headers={"X-Session-Token": session_token})
+    assert me.status_code == 200
+    assert me.json()["nickname"] == "NickTest"
+
+
+@pytest.mark.asyncio
+async def test_register_password_without_nickname_is_optional(unauthenticated_client):
+    reg = await unauthenticated_client.post(
+        "/api/auth/register-password", json={"username": "guest_nonick", "password": "correcthorse123"}
+    )
+    assert reg.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_register_password_grants_free_plan_via_me(unauthenticated_client):
     reg = await unauthenticated_client.post(
         "/api/auth/register-password", json={"username": "guest_bob", "password": "correcthorse123"}
