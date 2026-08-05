@@ -868,7 +868,16 @@ async def chat(
             {"role": "assistant", "content": reply},
         ])
 
+        # Deduct credits (input + output characters) -- the streaming branch
+        # above already did this; this non-stream branch never did, so a
+        # request with stream=false ran completely free of charge.
+        actual_chars = len(request.content) + len(reply)
+        if tenant and tenant.plan != "admin":
+            await check_and_deduct_credits(tenant, db, actual_chars)
+
         await db.commit()
+
+        remaining_credits = await get_remaining_credits(tenant) if tenant else 0
 
         yield f"data: {json.dumps({
             'type': 'done',
@@ -877,6 +886,8 @@ async def chat(
             'tokens_prompt': prompt_tokens,
             'tokens_completion': completion_tokens,
             'latency_ms': latency_ms,
+            'remaining_credits': remaining_credits,
+            'chars_used': actual_chars,
         })}\n\n"
 
 
