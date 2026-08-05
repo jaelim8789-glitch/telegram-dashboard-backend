@@ -14,7 +14,7 @@ from app.schemas.knowledge_base import (DocumentCreate, DocumentOut, FeedbackCre
 from app.services import knowledge_base as kb
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/kb", tags=["knowledge-base"])
+router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
 
 
 @router.post("/search")
