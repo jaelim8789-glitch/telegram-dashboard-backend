@@ -5,12 +5,21 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.config import settings
+
+# The provider/model actually behind this is whatever DEEPSEEK_API_BASE +
+# DEEPSEEK_MODEL point at right now -- was a hardcoded "deepseek-chat"
+# literal, silently breaking (or worse, silently ignoring model swaps) any
+# time that env var moved to a self-hosted model with a different name,
+# since nothing on the frontend ever overrides this default.
+_default_model = lambda: settings.deepseek_model  # noqa: E731
+
 
 #  Session 
 
 class SessionCreate(BaseModel):
     title: str = Field(default="New Chat", max_length=200)
-    model: str = Field(default="deepseek-chat", max_length=50)
+    model: str = Field(default_factory=_default_model, max_length=50)
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     source: str = Field(default="web_app", max_length=30)
@@ -61,7 +70,7 @@ class SessionSummary(BaseModel):
 class MessageCreate(BaseModel):
     session_id: str
     content: str = Field(..., min_length=1, max_length=10000)
-    model: str = Field(default="deepseek-chat", max_length=50)
+    model: str = Field(default_factory=_default_model, max_length=50)
 
 
 class MessageRead(BaseModel):
@@ -93,7 +102,7 @@ class MessageFeedback(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     content: str = Field(..., min_length=1, max_length=10000)
-    model: str = Field(default="deepseek-chat", max_length=50)
+    model: str = Field(default_factory=_default_model, max_length=50)
     stream: bool = Field(default=True, description="SSE streaming enabled")
     use_memory: bool = Field(default=True, description="Search Graphiti memory")
     store_memory: bool = Field(default=True, description="Store in Graphiti memory")
