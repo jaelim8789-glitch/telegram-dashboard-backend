@@ -397,8 +397,9 @@ async def _stream_deepseek(
     messages: list[dict],
     model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
+    tools: list[dict] | None = None,
 ) -> AsyncGenerator[tuple[str, str], None]:
-    """Stream response from DeepSeek API, yielding ("content"|"reasoning", text) tuples.
+    """Stream response from DeepSeek API, yielding ("content"|"reasoning"|"tool_call", text) tuples.
 
     The self-hosted reasoning model streams its "thinking" pass in a separate
     `delta.reasoning` field before/alongside `delta.content` -- callers that
@@ -411,6 +412,9 @@ async def _stream_deepseek(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
 
     for attempt in range(_RETRY_MAX):
         try:
@@ -432,6 +436,11 @@ async def _stream_deepseek(
                         reasoning = delta.get("reasoning", "")
                         if reasoning:
                             yield ("reasoning", reasoning)
+                        # Handle tool calls
+                        tool_calls = delta.get("tool_calls")
+                        if tool_calls:
+                            for tc in tool_calls:
+                                yield ("tool_call", json.dumps(tc))
                         content = delta.get("content", "")
                         if content:
                             # Some responses leak their <think>/</think>
@@ -641,18 +650,30 @@ async def chat(
         # Streaming response
         full_content = ""
         full_reasoning = ""
+        tool_calls_buffer: list[dict] = []  # Collect tool calls from stream
+        current_tool_call: dict | None = None
         try:
-            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
+            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None):
                 if kind == "reasoning":
-                    # The model always spends real generation cost on this
-                    # pass whether or not it's shown, so it always counts
-                    # toward the character credit deduction below -- but it
-                    # only gets streamed to the frontend when think_mode is
-                    # on (that's purely a display choice).
                     full_reasoning += text
                     if not request.think_mode:
                         continue
                     yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
+                    continue
+                if kind == "tool_call":
+                    # Accumulate tool call chunks
+                    tc_chunk = json.loads(text)
+                    tc_index = tc_chunk.get("index", 0)
+                    while len(tool_calls_buffer) <= tc_index:
+                        tool_calls_buffer.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                    tc = tool_calls_buffer[tc_index]
+                    if tc_chunk.get("id"):
+                        tc["id"] = tc_chunk["id"]
+                    fn_delta = tc_chunk.get("function", {})
+                    if fn_delta.get("name"):
+                        tc["function"]["name"] += fn_delta["name"]
+                    if fn_delta.get("arguments"):
+                        tc["function"]["arguments"] += fn_delta["arguments"]
                     continue
                 full_content += text
                 yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
@@ -661,7 +682,60 @@ async def chat(
             yield f"data: {json.dumps({'type': 'error', 'content': 'Stream failed. Please try again.'})}\n\n"
             return
 
-        if not full_content:
+        # Handle tool calls if any
+        if tool_calls_buffer:
+            from app.api.ai_tools import execute_tool, TOOL_META
+            from app.api.deps import Identity
+
+            # Create a minimal identity for tool execution
+            identity = Identity(kind="session", tenant_id=tenant_id, user_id=None, session_id=None)
+
+            for tc in tool_calls_buffer:
+                tool_name = tc["function"]["name"]
+                if not tool_name:
+                    continue
+
+                try:
+                    arguments = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+
+                meta = TOOL_META.get(tool_name, {})
+
+                # Notify frontend that tool is being executed
+                yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name, 'label': meta.get('label', tool_name)})}\n\n"
+
+                if meta.get("requires_confirmation"):
+                    # Write tool — send pending confirmation to frontend
+                    yield f"data: {json.dumps({
+                        'type': 'tool_confirm',
+                        'tool_name': tool_name,
+                        'label': meta.get('label', tool_name),
+                        'arguments': arguments,
+                        'tool_call_id': tc["id"],
+                    })}\n\n"
+                else:
+                    # Read tool — execute immediately
+                    result = await execute_tool(tool_name, arguments, identity)
+                    result_content = json.dumps(result.result, ensure_ascii=False, default=str) if result.success else f"Error: {result.error}"
+
+                    # Add tool result to conversation and get AI summary
+                    messages.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+                    messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_content})
+
+                    # Stream AI summary of tool result
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': result_content})}\n\n"
+
+            # Get final AI response with tool results
+            full_content = ""
+            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
+                if kind == "content":
+                    text = text.replace("<think>", "").replace("</think>", "")
+                    if text:
+                        full_content += text
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
+
+        if not full_content and not tool_calls_buffer:
             yield f"data: {json.dumps({'type': 'error', 'content': 'Empty response from AI.'})}\n\n"
             return
 

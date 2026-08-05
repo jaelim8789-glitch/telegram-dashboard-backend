@@ -260,3 +260,56 @@ async def usage_stats_endpoint(
 ):
     """Get AI Chat 2.0 usage statistics."""
     return await get_usage_stats(db, identity.tenant_id)
+
+
+#  Tool Confirmation
+
+
+@router.post("/confirm-tool")
+async def confirm_tool_endpoint(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Execute a write tool after user confirmation.
+
+    Expected payload:
+    {
+        "tool_name": "send_broadcast",
+        "arguments": {"account_id": "...", "message": "...", ...},
+        "session_id": "...",
+    }
+    """
+    from app.api.ai_tools import execute_tool, TOOL_META
+
+    tool_name = payload.get("tool_name")
+    arguments = payload.get("arguments", {})
+
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+
+    meta = TOOL_META.get(tool_name, {})
+    if not meta.get("requires_confirmation"):
+        raise HTTPException(status_code=400, detail="This tool does not require confirmation")
+
+    result = await execute_tool(tool_name, arguments, identity)
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error)
+
+    # Save the tool result as an assistant message
+    session_id = payload.get("session_id")
+    if session_id:
+        from app.models.ai_chat_v2 import AiChatMessageV2
+        msg = AiChatMessageV2(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            tenant_id=identity.tenant_id,
+            role="assistant",
+            content=f"✅ {meta.get('label', tool_name)} 실행 완료\n\n{json.dumps(result.result, ensure_ascii=False, default=str)}",
+            model="tool",
+        )
+        db.add(msg)
+        await db.commit()
+
+    return {"success": True, "result": result.result}
