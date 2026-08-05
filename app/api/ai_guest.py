@@ -13,6 +13,8 @@ this is purely an acquisition/trial surface.
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,8 +151,13 @@ class GuestFeedbackRequest(BaseModel):
 
 @router.post("/feedback")
 async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depends(get_db)):
-    """Submit thumbs up/down feedback for a guest AI chat response."""
-    from sqlalchemy import select
+    """Submit thumbs up/down feedback for a guest AI chat response.
+
+    When positive feedback is received, also creates a Knowledge Candidate
+    so the Q&A pair can be reviewed and potentially added to the KB.
+    """
+    from sqlalchemy import select, func
+    from app.models.knowledge_base import KnowledgeCandidate
 
     result = await db.execute(
         select(GuestAiChatLog).where(GuestAiChatLog.id == payload.log_id).limit(1)
@@ -161,6 +168,39 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
 
     log.thumbs_up = payload.thumbs_up
     await db.commit()
+
+    # 게스트 긍정 피드백 → Knowledge Candidate 생성
+    if payload.thumbs_up:
+        try:
+            # 중복 체크 (같은 질문+답변 조합)
+            existing = await db.execute(
+                select(KnowledgeCandidate).where(
+                    KnowledgeCandidate.question == log.message[:500],
+                    KnowledgeCandidate.answer == log.reply[:500],
+                    KnowledgeCandidate.status == "pending",
+                ).limit(1)
+            )
+            if existing.scalar_one_or_none() is None:
+                # 게스트용 Knowledge Candidate 생성 (tenant_id는 "guest"로 설정)
+                candidate = KnowledgeCandidate(
+                    id=str(uuid.uuid4()),
+                    tenant_id="guest",
+                    question=log.message[:2000],
+                    answer=log.reply[:5000],
+                    feedback_score=5.0,  # 게스트는 thumbs_up만 있으므로 5점으로 설정
+                    feedback_count=1,
+                    model_name="deepseek-chat",
+                    tokens_used=0,
+                    response_time_ms=0,
+                    ai_version="guest",
+                    prompt_version="v1",
+                    status="pending",
+                )
+                db.add(candidate)
+                await db.commit()
+                logger.info("guest_knowledge_candidate_created", log_id=payload.log_id)
+        except Exception as exc:
+            logger.warning("guest_knowledge_candidate_failed", error=str(exc))
 
     logger.info("guest_ai_chat_feedback", log_id=payload.log_id, thumbs_up=payload.thumbs_up)
     return {"success": True}
