@@ -640,13 +640,18 @@ async def chat(
     if request.stream:
         # Streaming response
         full_content = ""
+        full_reasoning = ""
         try:
             async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
                 if kind == "reasoning":
+                    # The model always spends real generation cost on this
+                    # pass whether or not it's shown, so it always counts
+                    # toward the character credit deduction below -- but it
+                    # only gets streamed to the frontend when think_mode is
+                    # on (that's purely a display choice).
+                    full_reasoning += text
                     if not request.think_mode:
                         continue
-                    # Not saved/counted -- purely so the frontend can show a
-                    # "생각 중..." trace while think_mode is on.
                     yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
                     continue
                 full_content += text
@@ -696,8 +701,10 @@ async def chat(
             {"role": "assistant", "content": full_content},
         ])
 
-        # Deduct actual credits (input + output characters, 1 credit = 1 char)
-        actual_chars = len(request.content) + len(full_content)
+        # Deduct actual credits (input + output + reasoning characters,
+        # 1 credit = 1 char). Reasoning counts even when think_mode was off
+        # and it was never shown -- the tokens were actually generated.
+        actual_chars = len(request.content) + len(full_content) + len(full_reasoning)
         if tenant and tenant.plan != "admin":
             # Refund the estimated amount and deduct actual
             tenant.ai_credits_remaining += estimated_chars  # refund estimate
