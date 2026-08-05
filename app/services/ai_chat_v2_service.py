@@ -525,9 +525,17 @@ async def chat(
     history = await _build_history_messages(db, session.id, tenant_id)
 
     # 4. Build system prompt
+    # Was an English default -- every member got English replies unless
+    # AI_CHAT_SYSTEM_PROMPT was explicitly set, which it wasn't in prod.
     system_content = settings.ai_chat_system_prompt or (
-        "You are TeleMon AI Assistant. You help users manage their Telegram "
-        "marketing operations. Be helpful, concise, and professional."
+        "당신은 TeleMon의 AI 어시스턴트입니다. 사용자가 텔레그램 마케팅/자동화 업무를 "
+        "관리하는 것을 돕습니다. "
+        "무조건 한국어로만 답변하세요. 사용자가 다른 언어로 질문해도 답변은 항상 "
+        "한국어로만 하세요. "
+        "질문을 대충 넘겨짚지 말고 정확히 무엇을 묻는지 먼저 파악한 뒤에 답하세요. "
+        "질문이 애매하면 짐작으로 답하지 말고 무엇을 원하는지 되물어보세요. "
+        "확실하지 않은 내용을 지어내서 답하지 말고, 모르면 모른다고 말하세요. "
+        "친절하고 간결하며 전문적으로 답변하세요."
     )
 
     # Apply template if specified
