@@ -124,6 +124,17 @@ async def _recent_history(db: AsyncSession, tenant_id: str, telegram_user_id: st
 
 async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
+    result = await _call_deepseek_full(messages, max_tokens=max_tokens)
+    return result[0] if result else None
+
+
+async def _call_deepseek_full(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> tuple[str, str | None] | None:
+    """Returns (content, reasoning) or None on any failure.
+
+    The self-hosted reasoning model (Qwen3.6) returns its "thinking" pass in
+    a separate `message.reasoning` field alongside the final `content` --
+    reasoning is None for non-reasoning models/plain replies.
+    """
     try:
         # 30s was too tight once replies routinely run into the thousands of
         # tokens (think_mode = 3x _MAX_TOKENS) and the self-hosted GPU box
@@ -143,7 +154,8 @@ async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) ->
             )
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            return message["content"], message.get("reasoning")
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         logger.error("ai_chat_deepseek_call_failed", error=str(exc))
         return None

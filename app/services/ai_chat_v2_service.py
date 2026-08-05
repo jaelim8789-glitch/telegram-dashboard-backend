@@ -393,13 +393,18 @@ async def _store_chat_memory(
 
 async def _stream_deepseek(
     messages: list[dict],
-    model: str = "deepseek-chat",
+    model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
-) -> AsyncGenerator[str, None]:
-    """Stream response from DeepSeek API, yielding content chunks."""
+) -> AsyncGenerator[tuple[str, str], None]:
+    """Stream response from DeepSeek API, yielding ("content"|"reasoning", text) tuples.
+
+    The self-hosted reasoning model streams its "thinking" pass in a separate
+    `delta.reasoning` field before/alongside `delta.content` -- callers that
+    only care about the final answer can just filter for kind == "content".
+    """
     client = _get_client()
     payload = {
-        "model": model,
+        "model": model or settings.deepseek_model or "deepseek-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": True,
@@ -422,9 +427,12 @@ async def _stream_deepseek(
                     try:
                         chunk = json.loads(data_str)
                         delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        reasoning = delta.get("reasoning", "")
+                        if reasoning:
+                            yield ("reasoning", reasoning)
                         content = delta.get("content", "")
                         if content:
-                            yield content
+                            yield ("content", content)
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
             return  # Success
@@ -442,13 +450,13 @@ async def _stream_deepseek(
 
 async def _call_deepseek_nonstream(
     messages: list[dict],
-    model: str = "deepseek-chat",
+    model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
 ) -> tuple[str | None, int, int]:
     """Non-streaming call with token tracking. Returns (content, prompt_tokens, completion_tokens)."""
     client = _get_client()
     payload = {
-        "model": model,
+        "model": model or settings.deepseek_model or "deepseek-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
@@ -580,9 +588,14 @@ async def chat(
         # Streaming response
         full_content = ""
         try:
-            async for chunk in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
-                full_content += chunk
-                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
+                if kind == "reasoning":
+                    # Not saved/counted -- purely so the frontend can show a
+                    # "생각 중..." trace while think_mode is on.
+                    yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
+                    continue
+                full_content += text
+                yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
         except Exception as exc:
             logger.error("ai_chat_v2_stream_failed", error=str(exc))
             yield f"data: {json.dumps({'type': 'error', 'content': 'Stream failed. Please try again.'})}\n\n"

@@ -22,13 +22,18 @@ from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
-from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek
+from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
 
 _RATE_LIMIT_CATEGORY = "guest_ai_chat"
-_MAX_PER_DAY = 10
+# Temporarily raised for the open test period -- 10/day was blocking real
+# testers after only a handful of actual sends because failed/timed-out
+# attempts (502s) still consumed the quota, and mobile-carrier NAT means
+# many different real people can share one IP. Revisit once the GPU box's
+# reliability under concurrent load is solid again.
+_MAX_PER_DAY = 300
 _WINDOW_SECONDS = 24 * 60 * 60
 _MAX_INPUT_CHARS = 2000
 _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
@@ -62,6 +67,9 @@ class GuestChatRequest(BaseModel):
 
 class GuestChatResponse(BaseModel):
     reply: str
+    # Populated only when think_mode was on and the model actually returned a
+    # separate reasoning pass -- lets the frontend show "생각 중..." content.
+    reasoning: str | None = None
 
 
 @router.post("/chat", response_model=GuestChatResponse)
@@ -83,9 +91,11 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
     messages.append({"role": "user", "content": payload.message})
 
-    reply = await _call_deepseek(messages, max_tokens=_MAX_TOKENS * 3 if payload.think_mode else _MAX_TOKENS)
-    if reply is None:
+    result = await _call_deepseek_full(messages, max_tokens=_MAX_TOKENS * 3 if payload.think_mode else _MAX_TOKENS)
+    if result is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
+    reply, reasoning = result
+    reasoning = reasoning if payload.think_mode else None
 
     logger.info("guest_ai_chat_reply", ip=client_ip)
 
@@ -98,4 +108,4 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
         logger.exception("guest_ai_chat_log_persist_failed")
         await db.rollback()
 
-    return GuestChatResponse(reply=reply)
+    return GuestChatResponse(reply=reply, reasoning=reasoning)
