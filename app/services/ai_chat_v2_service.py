@@ -39,6 +39,7 @@ from app.schemas.ai_chat_v2 import (
 )
 from app.services.ai_chat_service import _strip_leaked_think_tags
 from app.services.ai_core_service import call_deepseek, search_memory, store_memory
+from app.services.ai_credit_service import check_and_deduct_characters, get_remaining_credits
 
 logger = get_logger(__name__)
 
@@ -519,6 +520,16 @@ async def chat(
         yield f"data: {json.dumps({'type': 'error', 'content': 'Session not found'})}\n\n"
         return
 
+    # 1.5. Check character credits (pre-check with estimated max)
+    from app.models.tenant import Tenant
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant and tenant.plan != "admin":
+        estimated_chars = len(request.content) + _DEFAULT_MAX_TOKENS * 2  # rough estimate
+        ok, remaining = await check_and_deduct_characters(tenant, db, estimated_chars)
+        if not ok:
+            yield f"data: {json.dumps({'type': 'error', 'content': '크레딧이 부족합니다. 플랜을 업그레이드하거나 내일 다시 시도해주세요.'})}\n\n"
+            return
+
     # 2. Save user message
     user_msg = AiChatMessageV2(
         id=str(uuid.uuid4()),
@@ -685,7 +696,17 @@ async def chat(
             {"role": "assistant", "content": full_content},
         ])
 
+        # Deduct actual characters (input + output)
+        actual_chars = len(request.content) + len(full_content)
+        if tenant and tenant.plan != "admin":
+            # Refund the estimated amount and deduct actual
+            tenant.ai_credits_remaining += estimated_chars  # refund estimate
+            await check_and_deduct_characters(tenant, db, actual_chars)  # deduct actual
+
         await db.commit()
+
+        # Get remaining credits after deduction
+        remaining_credits = await get_remaining_credits(tenant) if tenant else 0
 
         yield f"data: {json.dumps({
             'type': 'done',
@@ -693,6 +714,8 @@ async def chat(
             'tokens_prompt': prompt_tokens,
             'tokens_completion': completion_tokens,
             'latency_ms': latency_ms,
+            'remaining_credits': remaining_credits,
+            'chars_used': actual_chars,
         })}\n\n"
 
     else:
