@@ -387,6 +387,193 @@ async def ingest_positive_to_kb_endpoint(
     return {"ingested": count, "min_score": min_score, "days": days}
 
 
+#  Knowledge Candidates
+
+
+@router.get("/candidates")
+async def list_candidates_endpoint(
+    status: str = Query(default="pending", regex="^(pending|approved|rejected|all)$"),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """List knowledge candidates for admin review."""
+    from app.models.knowledge_base import KnowledgeCandidate
+
+    stmt = select(KnowledgeCandidate).where(KnowledgeCandidate.tenant_id == identity.tenant_id)
+    if status != "all":
+        stmt = stmt.where(KnowledgeCandidate.status == status)
+    stmt = stmt.order_by(KnowledgeCandidate.created_at.desc()).limit(100)
+
+    result = await db.execute(stmt)
+    candidates = result.scalars().all()
+
+    return [
+        {
+            "id": c.id,
+            "question": c.question[:200],
+            "answer": c.answer[:500],
+            "feedback_score": c.feedback_score,
+            "feedback_count": c.feedback_count,
+            "model_name": c.model_name,
+            "tokens_used": c.tokens_used,
+            "response_time_ms": c.response_time_ms,
+            "ai_version": c.ai_version,
+            "prompt_version": c.prompt_version,
+            "status": c.status,
+            "approval_reason": c.approval_reason,
+            "approval_comment": c.approval_comment,
+            "created_at": str(c.created_at),
+        }
+        for c in candidates
+    ]
+
+
+@router.post("/candidates/{candidate_id}/approve")
+async def approve_candidate_endpoint(
+    candidate_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """Approve a knowledge candidate and ingest into KB."""
+    from app.models.knowledge_base import KnowledgeCandidate, Document
+    from app.services.knowledge_base import ingest_document
+    from datetime import datetime
+
+    result = await db.execute(
+        select(KnowledgeCandidate).where(
+            KnowledgeCandidate.id == candidate_id,
+            KnowledgeCandidate.tenant_id == identity.tenant_id,
+        ).limit(1)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    # Update candidate status
+    candidate.status = "approved"
+    candidate.approval_reason = payload.get("reason", "other")
+    candidate.approval_comment = payload.get("comment")
+    candidate.reviewed_by = identity.user_id
+    candidate.reviewed_at = datetime.utcnow()
+
+    # Ingest into KB with versioning
+    title = candidate.question[:80] + ("..." if len(candidate.question) > 80 else "")
+    content = f"질문: {candidate.question}\n\n답변: {candidate.answer}"
+
+    await ingest_document(
+        db=db,
+        tenant_id=identity.tenant_id,
+        title=title,
+        content=content,
+        source_type="ai_learned",
+        source_url=f"candidate://{candidate.id}",
+        collection="ai_learned",
+    )
+
+    await db.commit()
+    return {"success": True, "message": "Candidate approved and ingested into KB"}
+
+
+@router.post("/candidates/{candidate_id}/reject")
+async def reject_candidate_endpoint(
+    candidate_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """Reject a knowledge candidate."""
+    from app.models.knowledge_base import KnowledgeCandidate
+    from datetime import datetime
+
+    result = await db.execute(
+        select(KnowledgeCandidate).where(
+            KnowledgeCandidate.id == candidate_id,
+            KnowledgeCandidate.tenant_id == identity.tenant_id,
+        ).limit(1)
+    )
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    candidate.status = "rejected"
+    candidate.approval_reason = payload.get("reason", "other")
+    candidate.approval_comment = payload.get("comment")
+    candidate.reviewed_by = identity.user_id
+    candidate.reviewed_at = datetime.utcnow()
+
+    await db.commit()
+    return {"success": True, "message": "Candidate rejected"}
+
+
+#  AI Evolution Analytics
+
+
+@router.get("/analytics/evolution")
+async def evolution_analytics_endpoint(
+    days: int = Query(default=30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+):
+    """Get AI evolution metrics for the admin dashboard."""
+    from datetime import timedelta
+    from sqlalchemy import func, case
+    from app.models.knowledge_base import KnowledgeCandidate, Document
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Feedback accuracy (positive rate)
+    feedback_query = select(
+        func.count(AiChatMessageV2.id).label("total"),
+        func.count(case((AiChatMessageV2.feedback_score >= 4, 1))).label("positive"),
+        func.avg(AiChatMessageV2.feedback_score).label("avg_score"),
+    ).where(
+        AiChatMessageV2.role == "assistant",
+        AiChatMessageV2.feedback_score.isnot(None),
+        AiChatMessageV2.created_at >= since,
+    )
+    feedback_result = await db.execute(feedback_query)
+    feedback_row = feedback_result.one()
+
+    # Knowledge count
+    kb_count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.is_published == True)
+    )
+    kb_count = kb_count_result.scalar() or 0
+
+    # Candidate stats
+    candidate_stats = await db.execute(
+        select(
+            func.count(KnowledgeCandidate.id).label("total"),
+            func.count(case((KnowledgeCandidate.status == "pending", 1))).label("pending"),
+            func.count(case((KnowledgeCandidate.status == "approved", 1))).label("approved"),
+            func.count(case((KnowledgeCandidate.status == "rejected", 1))).label("rejected"),
+        ).where(KnowledgeCandidate.tenant_id == identity.tenant_id)
+    )
+    candidate_row = candidate_stats.one()
+
+    # Learning speed (candidates per day)
+    learning_speed = (candidate_row.approved or 0) / max(days, 1)
+
+    # Accuracy
+    total_feedback = feedback_row.total or 0
+    positive_feedback = feedback_row.positive or 0
+    accuracy = (positive_feedback / total_feedback * 100) if total_feedback > 0 else 0
+
+    return {
+        "accuracy": round(accuracy, 1),
+        "satisfaction": round(float(feedback_row.avg_score or 0), 2),
+        "knowledge_count": kb_count,
+        "learning_speed": round(learning_speed, 1),
+        "pending_candidates": candidate_row.pending or 0,
+        "total_candidates": candidate_row.total or 0,
+        "approved_candidates": candidate_row.approved or 0,
+        "rejected_candidates": candidate_row.rejected or 0,
+        "period_days": days,
+    }
+
+
 #  Tool Confirmation
 
 

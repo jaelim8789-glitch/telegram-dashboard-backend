@@ -21,6 +21,10 @@ class Document(Base):
     extra: Mapped[dict | None] = mapped_column("extra", JSON, default=dict)
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     is_published: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Knowledge Versioning
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    parent_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("kb_documents.id"), nullable=True)
+    is_latest: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"), onupdate=text("now()"))
 
@@ -62,4 +66,26 @@ class Feedback(Base):
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))
+
+
+class KnowledgeCandidate(Base):
+    __tablename__ = "kb_candidates"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    feedback_score: Mapped[float] = mapped_column(Float, default=0.0)
+    feedback_count: Mapped[int] = mapped_column(Integer, default=0)
+    model_name: Mapped[str] = mapped_column(String(100), default="unknown")
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    response_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    ai_version: Mapped[str] = mapped_column(String(100), default="")
+    prompt_version: Mapped[str] = mapped_column(String(50), default="v1")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending / approved / rejected
+    approval_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    approval_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("now()"))

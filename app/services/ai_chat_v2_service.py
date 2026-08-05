@@ -405,6 +405,109 @@ async def _store_chat_memory(
         logger.warning("ai_chat_v2_memory_store_failed", error=str(exc))
 
 
+#  AI Self Review 
+
+
+async def self_review_answer(
+    question: str,
+    answer: str,
+    kb_context: list[str] | None = None,
+) -> tuple[bool, str]:
+    """AI가 자기 답변을 검사합니다.
+
+    Returns (passed, reason).
+    - passed: True면 답변 전송, False면 재생성 또는 관리자 알림
+    - reason: 검사 결과 이유
+    """
+    try:
+        context_text = ""
+        if kb_context:
+            context_text = f"\n\n참고 지식:\n{chr(10).join(kb_context[:3])}"
+
+        review_prompt = (
+            f"다음 AI 답변을 검사하세요:{context_text}\n\n"
+            f"질문: {question[:500]}\n"
+            f"답변: {answer[:1000]}\n\n"
+            f"확인 사항:\n"
+            f"1. 틀린 정보가 있나요?\n"
+            f"2. 모순이 있나요?\n"
+            f"3. 기존 지식과 충돌하나요?\n\n"
+            f"문제 없으면 \"PASS\"만, 문제 있으면 \"FAIL: 이유\" 형태로만 답변하세요."
+        )
+
+        result, _tokens, _tool_calls = await call_deepseek(
+            [{"role": "user", "content": review_prompt}],
+            max_tokens=200,
+        )
+
+        if result is None:
+            return True, "review_unavailable"
+
+        result = result.strip()
+        if result.startswith("PASS"):
+            return True, "passed"
+        elif result.startswith("FAIL"):
+            reason = result[4:].strip(": ")
+            return False, reason or "quality_issue"
+        else:
+            return True, "review_unclear"
+    except Exception as exc:
+        logger.warning("ai_self_review_failed", error=str(exc))
+        return True, "review_error"
+
+
+#  Knowledge Candidate Creation
+
+
+async def create_knowledge_candidate(
+    db: AsyncSession,
+    tenant_id: str,
+    question: str,
+    answer: str,
+    feedback_score: float,
+    feedback_count: int,
+    model_name: str,
+    tokens_used: int,
+    response_time_ms: int,
+) -> None:
+    """피드백 임계값 달성 시 Knowledge Candidate를 생성합니다."""
+    from app.models.knowledge_base import KnowledgeCandidate
+
+    # 중복 체크
+    existing = await db.execute(
+        select(KnowledgeCandidate).where(
+            KnowledgeCandidate.tenant_id == tenant_id,
+            KnowledgeCandidate.question == question[:500],
+            KnowledgeCandidate.status == "pending",
+        ).limit(1)
+    )
+    if existing.scalar_one_or_none():
+        return
+
+    candidate = KnowledgeCandidate(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        question=question[:2000],
+        answer=answer[:5000],
+        feedback_score=feedback_score,
+        feedback_count=feedback_count,
+        model_name=model_name or "unknown",
+        tokens_used=tokens_used,
+        response_time_ms=response_time_ms,
+        ai_version=settings.deepseek_model or "deepseek-chat",
+        prompt_version="v1",
+        status="pending",
+    )
+    db.add(candidate)
+    await db.commit()
+    logger.info(
+        "knowledge_candidate_created",
+        tenant_id=tenant_id,
+        feedback_score=feedback_score,
+        feedback_count=feedback_count,
+    )
+
+
 #  Streaming DeepSeek Call 
 
 
@@ -640,15 +743,43 @@ async def chat(
                            "이 정보를 바탕으로 더 정확하고 관련성 높은 답변을 제공하세요.",
             })
 
-    # 5. Add memory context if enabled
+    # 5. Add knowledge context (KB first — highest confidence)
     memory_context: list[str] = []
+    kb_context: list[str] = []
+    kb_confidence: float = 0.0
     if request.use_memory:
+        # 5a. Knowledge Base 검색 (공식 문서 + 승인된 학습 데이터)
+        try:
+            from app.services.knowledge_base import search_knowledge_base
+            kb_results = await search_knowledge_base(
+                db=db,
+                tenant_id=tenant_id,
+                query=request.content,
+                top_k=3,
+            )
+            if kb_results:
+                for r in kb_results:
+                    content = r.get("content", "")
+                    confidence = r.get("confidence", 0.0)
+                    if content:
+                        kb_context.append(content)
+                        kb_confidence = max(kb_confidence, confidence)
+                if kb_context:
+                    kb_text = "\n\n".join(f"[신뢰도: {r.get('confidence', 0):.0%}]\n{r.get('content', '')}" for r in kb_results if r.get("content"))
+                    messages.append({
+                        "role": "system",
+                        "content": f"관련 지식 (Knowledge Base):\n{kb_text}",
+                    })
+        except Exception as exc:
+            logger.warning("ai_chat_v2_kb_search_failed", error=str(exc))
+
+        # 5b. Graphiti Memory 검색 (장기 기억)
         memory_context = await _enrich_with_memory(tenant_id, session.id, request.content)
         if memory_context:
             memory_text = "\n".join(f"- {m}" for m in memory_context)
             messages.append({
                 "role": "system",
-                "content": f"Relevant context from memory:\n{memory_text}",
+                "content": f"장기 기억에서 관련 정보:\n{memory_text}",
             })
 
     # 6. Add history
@@ -666,6 +797,10 @@ async def chat(
         template = result.scalar_one_or_none()
         if template and template.role == "user":
             user_content = _apply_template(template.content, {**request.template_variables, "message": request.content})
+
+    # 7.5. Confidence-based instruction
+    if kb_confidence < 0.7 and kb_context:
+        user_content += "\n\n[시스템 알림: Knowledge Base 검색 신뢰도가 낮습니다(70% 미만). 확신이 부족하다면 '확신이 없습니다'라고밝히고, 관리자에게 문의를 안내하세요.]"
 
     messages.append({"role": "user", "content": user_content})
 
@@ -1032,7 +1167,70 @@ async def submit_message_feedback(
         msg.feedback_comment = comment
     await db.commit()
     await db.refresh(msg)
+
+    # Event-based learning trigger: when feedback count reaches threshold,
+    # check if this Q&A pair should become a knowledge candidate
+    try:
+        await _check_and_create_candidate(db, tenant_id, msg)
+    except Exception as exc:
+        logger.warning("ai_learning_trigger_failed", error=str(exc))
+
     return msg
+
+
+async def _check_and_create_candidate(
+    db: AsyncSession,
+    tenant_id: str,
+    assistant_msg: AiChatMessageV2,
+) -> None:
+    """Check if this Q&A pair has enough positive feedback to become a candidate."""
+    # Find the preceding user message
+    user_result = await db.execute(
+        select(AiChatMessageV2).where(
+            AiChatMessageV2.session_id == assistant_msg.session_id,
+            AiChatMessageV2.role == "user",
+            AiChatMessageV2.created_at < assistant_msg.created_at,
+        ).order_by(AiChatMessageV2.created_at.desc()).limit(1)
+    )
+    user_msg = user_result.scalar_one_or_none()
+    if not user_msg:
+        return
+
+    # Count positive feedback for similar answers (same question pattern)
+    feedback_count_result = await db.execute(
+        select(func.count(AiChatMessageV2.id)).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score >= 4,
+            AiChatMessageV2.content == assistant_msg.content,
+        )
+    )
+    positive_count = feedback_count_result.scalar() or 0
+
+    # Get average feedback score
+    avg_result = await db.execute(
+        select(func.avg(AiChatMessageV2.feedback_score)).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.content == assistant_msg.content,
+        )
+    )
+    avg_score = float(avg_result.scalar() or 0)
+
+    # Trigger candidate creation when threshold reached
+    FEEDBACK_THRESHOLD = 10
+    if positive_count >= FEEDBACK_THRESHOLD and avg_score >= 4.0:
+        await create_knowledge_candidate(
+            db=db,
+            tenant_id=tenant_id,
+            question=user_msg.content,
+            answer=assistant_msg.content,
+            feedback_score=avg_score,
+            feedback_count=positive_count,
+            model_name=assistant_msg.model or "unknown",
+            tokens_used=(assistant_msg.tokens_prompt or 0) + (assistant_msg.tokens_completion or 0),
+            response_time_ms=assistant_msg.latency_ms or 0,
+        )
 
 
 #  AI Learning — Positive Response Ingestion
