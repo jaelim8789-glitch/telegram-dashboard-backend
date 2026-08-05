@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
 
 import jwt
@@ -24,6 +25,23 @@ class Identity:
     user: User | None = None
     tenant_id: str | None = None
     requires_reauth: bool = False
+
+
+def _token_predates_forced_logout(user: User, payload: dict) -> bool:
+    """True if this JWT was issued before an admin forced this user (or
+    everyone) to log in again -- see User.token_valid_after's docstring."""
+    if user.token_valid_after is None:
+        return False
+    iat = payload.get("iat")
+    if iat is None:
+        # No iat means the token predates this feature entirely -- treat
+        # any forced-logout cutoff as covering it too.
+        return True
+    issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
+    cutoff = user.token_valid_after
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    return issued_at < cutoff
 
 
 async def get_current_identity(
@@ -146,7 +164,7 @@ async def _resolve_identity(x_api_key: str | None, authorization: str | None, x_
         if user_payload:
             user_id = user_payload.get("sub", "")[len("user:"):]
             user = await user_crud.get_user(db, user_id)
-            if user is not None and user.is_active:
+            if user is not None and user.is_active and not _token_predates_forced_logout(user, user_payload):
                 tenant_id = await _resolve_tenant_by_phone(db, user.phone)
                 return Identity(kind="user", user=user, tenant_id=tenant_id)
             key_row = await api_key_crud.get_api_key(db, user_id)

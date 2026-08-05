@@ -28,6 +28,13 @@ class User(Base):
     # username/phone-based display in the frontend.
     nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # JWTs are stateless (signature-only, no server-side record) -- normally
+    # the only way to force one user's existing tokens to stop working is
+    # rotating the shared signing secret, which logs out *every* user at
+    # once. This lets a single account (or, set in bulk, everyone) be forced
+    # to log in again: any JWT whose `iat` predates this cutoff is rejected,
+    # checked in deps.py's _resolve_identity.
+    token_valid_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

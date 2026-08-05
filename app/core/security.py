@@ -74,8 +74,13 @@ def hash_api_key(raw_key: str) -> str:
 
 
 def create_user_access_token(user_id: str) -> str:
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.admin_jwt_expire_minutes)
-    payload = {"sub": f"{USER_JWT_SUBJECT_PREFIX}{user_id}", "exp": expires_at}
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=settings.admin_jwt_expire_minutes)
+    # iat lets a forced-logout cutoff (User.token_valid_after) reject tokens
+    # issued before it, without needing to rotate the shared signing secret
+    # (which would log out every user at once) -- see deps.py's
+    # _resolve_identity for where this is checked.
+    payload = {"sub": f"{USER_JWT_SUBJECT_PREFIX}{user_id}", "exp": expires_at, "iat": now}
     return jwt.encode(payload, _get_user_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 

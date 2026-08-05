@@ -402,6 +402,42 @@ async def toggle_user(user_id: str, payload: UserToggleRequest, db: AsyncSession
     return user
 
 
+@router.post("/users/{user_id}/force-logout", response_model=UserRead, dependencies=[Depends(require_admin)])
+async def force_logout_user(user_id: str, db: AsyncSession = Depends(get_db)):
+    """Invalidates this user's existing JWTs (see User.token_valid_after) --
+    they'll need to log in again. Session-token logins are separate (rows in
+    user_sessions) and aren't touched here; delete those directly if needed."""
+    user = await user_crud.get_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다.")
+    user.token_valid_after = utcnow_naive()
+    db.add(user)
+    await append_admin_audit(
+        db, action="user_force_logout", target_type="user", target_id=user.id, target_phone=user.phone,
+        detail="Forced re-login (JWTs issued before now invalidated)",
+    )
+    await db.commit()
+    await db.refresh(user)
+    logger.info("user_force_logout", user_id=user_id)
+    return user
+
+
+@router.post("/users/force-logout-all", dependencies=[Depends(require_admin)])
+async def force_logout_all_users(db: AsyncSession = Depends(get_db)):
+    """Same as force_logout_user but for every user at once -- the intended
+    use is a one-off "everyone re-login" reset, not a routine action."""
+    from sqlalchemy import update
+    now = utcnow_naive()
+    result = await db.execute(update(User).values(token_valid_after=now))
+    await append_admin_audit(
+        db, action="user_force_logout_all", target_type="user", target_id="*",
+        detail=f"Forced re-login for all users (rowcount={result.rowcount})",
+    )
+    await db.commit()
+    logger.info("user_force_logout_all", rowcount=result.rowcount)
+    return {"rowcount": result.rowcount}
+
+
 @router.post(
     "/users/{user_id}/reissue-key",
     response_model=UserApiKeyReissued,
