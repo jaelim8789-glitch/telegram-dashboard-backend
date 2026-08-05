@@ -122,7 +122,7 @@ async def _recent_history(db: AsyncSession, tenant_id: str, telegram_user_id: st
     return [{"role": row.role, "content": row.content} for row in rows]
 
 
-async def _call_deepseek(messages: list[dict]) -> str | None:
+async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -132,7 +132,7 @@ async def _call_deepseek(messages: list[dict]) -> str | None:
                 json={
                     "model": settings.deepseek_model,
                     "messages": messages,
-                    "max_tokens": _MAX_TOKENS,
+                    "max_tokens": max_tokens,
                 },
             )
             response.raise_for_status()

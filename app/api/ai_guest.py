@@ -22,7 +22,7 @@ from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
@@ -57,6 +57,7 @@ class GuestChatRequest(BaseModel):
     # REJECTS (422) an oversized history rather than silently truncating it --
     # a crafted request can't smuggle a huge prompt through this field.
     history: list[GuestChatMessage] = Field(default_factory=list, max_length=_MAX_HISTORY_MESSAGES)
+    think_mode: bool = Field(default=False)
 
 
 class GuestChatResponse(BaseModel):
@@ -82,7 +83,7 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
     messages.append({"role": "user", "content": payload.message})
 
-    reply = await _call_deepseek(messages)
+    reply = await _call_deepseek(messages, max_tokens=_MAX_TOKENS * 3 if payload.think_mode else _MAX_TOKENS)
     if reply is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
 

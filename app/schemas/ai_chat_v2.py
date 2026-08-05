@@ -108,6 +108,10 @@ class ChatRequest(BaseModel):
     store_memory: bool = Field(default=True, description="Store in Graphiti memory")
     template_id: str | None = Field(default=None, description="Prompt template ID")
     template_variables: dict[str, str] = Field(default_factory=dict)
+    # "Think mode" toggle from the frontend -- the self-hosted reasoning
+    # model spends real budget on a separate thinking pass before content,
+    # so a bigger ceiling gets used only when the user actually asks for it.
+    think_mode: bool = Field(default=False)
 
 
 class ChatResponse(BaseModel):

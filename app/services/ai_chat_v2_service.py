@@ -571,11 +571,16 @@ async def chat(
     messages.append({"role": "user", "content": user_content})
 
     # 8. Stream or non-stream
+    # Think mode: the reasoning pass alone can burn well past the default
+    # budget on a harder prompt, so give it real headroom -- self-hosted GPU
+    # means no per-token cost, this only costs wall-clock time.
+    max_tokens = _DEFAULT_MAX_TOKENS * 3 if request.think_mode else _DEFAULT_MAX_TOKENS
+
     if request.stream:
         # Streaming response
         full_content = ""
         try:
-            async for chunk in _stream_deepseek(messages, model=request.model):
+            async for chunk in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
                 full_content += chunk
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
         except Exception as exc:
@@ -636,7 +641,7 @@ async def chat(
     else:
         # Non-streaming response
         reply, prompt_tokens, completion_tokens = await _call_deepseek_nonstream(
-            messages, model=request.model,
+            messages, model=request.model, max_tokens=max_tokens,
         )
         if reply is None:
             yield f"data: {json.dumps({'type': 'error', 'content': 'AI service unavailable. Please try again.'})}\n\n"
