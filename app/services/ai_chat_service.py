@@ -15,6 +15,7 @@ the "ai_chat_pack_50" Telegram Stars add-on, see app/services/billing.py) is
 spent one credit per reply. A failed/timed-out DeepSeek call consumes neither.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -122,6 +123,22 @@ async def _recent_history(db: AsyncSession, tenant_id: str, telegram_user_id: st
     return [{"role": row.role, "content": row.content} for row in rows]
 
 
+def _strip_leaked_think_tags(content: str) -> str:
+    """Some responses put the reasoning pass inline in `content` as
+    <think>...</think> instead of (or in addition to) the separate
+    `message.reasoning` field -- observed as a stray leading token plus a
+    dangling "</think>" leaking into the visible reply. Strip any complete
+    <think>...</think> blocks, then drop everything up to and including a
+    leftover unmatched "</think>" if one remains.
+    """
+    if "</think>" not in content and "<think>" not in content:
+        return content
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+    if "</think>" in content:
+        content = content.split("</think>", 1)[1]
+    return content.strip()
+
+
 async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
     result = await _call_deepseek_full(messages, max_tokens=max_tokens)
@@ -155,7 +172,7 @@ async def _call_deepseek_full(messages: list[dict], max_tokens: int = _MAX_TOKEN
             response.raise_for_status()
             data = response.json()
             message = data["choices"][0]["message"]
-            return message["content"], message.get("reasoning")
+            return _strip_leaked_think_tags(message["content"]), message.get("reasoning")
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         logger.error("ai_chat_deepseek_call_failed", error=str(exc))
         return None

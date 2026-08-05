@@ -37,6 +37,7 @@ from app.schemas.ai_chat_v2 import (
     SearchResponse,
     UsageStats,
 )
+from app.services.ai_chat_service import _strip_leaked_think_tags
 from app.services.ai_core_service import call_deepseek, search_memory, store_memory
 
 logger = get_logger(__name__)
@@ -432,7 +433,15 @@ async def _stream_deepseek(
                             yield ("reasoning", reasoning)
                         content = delta.get("content", "")
                         if content:
-                            yield ("content", content)
+                            # Some responses leak their <think>/</think>
+                            # markers straight into content deltas instead of
+                            # (or alongside) the separate `reasoning` field --
+                            # strip them token-by-token; doesn't catch a tag
+                            # split across chunk boundaries, but covers the
+                            # common single-chunk leak.
+                            content = content.replace("<think>", "").replace("</think>", "")
+                            if content:
+                                yield ("content", content)
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
             return  # Success
@@ -470,7 +479,7 @@ async def _call_deepseek_nonstream(
             )
             response.raise_for_status()
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            content = _strip_leaked_think_tags(data["choices"][0]["message"]["content"])
             usage = data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
