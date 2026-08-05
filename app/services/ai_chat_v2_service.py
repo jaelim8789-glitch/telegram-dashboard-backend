@@ -37,9 +37,24 @@ from app.schemas.ai_chat_v2 import (
     SearchResponse,
     UsageStats,
 )
+from app.api.ai_tools import TOOLS as _ALL_TOOLS
 from app.services.ai_chat_service import _strip_leaked_think_tags
 from app.services.ai_core_service import call_deepseek, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
+
+# Trimmed down from ai_tools.TOOLS to only the tools that actually work:
+# - send_broadcast's confirm-execute path always returned a fake
+#   {"pending": True} without ever delivering the message, while the UI
+#   reported it as sent (app/services/bot_ai_agent_service.py has a real
+#   _execute_send_broadcast, just not hooked up here yet).
+# - get_account_list called app.crud.account.get_accounts, which doesn't
+#   exist in that module at all -- ImportError on every call.
+# - get_group_list called app.api.groups._get_all_groups_for_tenant, which
+#   likewise doesn't exist -- same crash.
+# The remaining 6 (delivery_analytics-backed) tools call real functions with
+# matching signatures.
+_BROKEN_OR_UNSAFE_TOOLS = {"send_broadcast", "get_account_list", "get_group_list"}
+TOOLS = [t for t in _ALL_TOOLS if t["function"]["name"] not in _BROKEN_OR_UNSAFE_TOOLS]
 
 logger = get_logger(__name__)
 
@@ -687,8 +702,11 @@ async def chat(
             from app.api.ai_tools import execute_tool, TOOL_META
             from app.api.deps import Identity
 
-            # Create a minimal identity for tool execution
-            identity = Identity(kind="session", tenant_id=tenant_id, user_id=None, session_id=None)
+            # Create a minimal identity for tool execution -- Identity is a
+            # strict @dataclass(kind, user, tenant_id, requires_reauth); the
+            # kind="session"/user_id=/session_id= this used to pass aren't
+            # real fields and raised TypeError on every single tool call.
+            identity = Identity(kind="user", tenant_id=tenant_id)
 
             for tc in tool_calls_buffer:
                 tool_name = tc["function"]["name"]
