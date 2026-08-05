@@ -57,6 +57,8 @@ class LoginWithApiKeyResponse(BaseModel):
 class MeResponse(BaseModel):
     role: Literal["admin", "user", "api_key"]
     phone: str | None = None
+    username: str | None = None
+    nickname: str | None = None
     tenant_id: str | None = None
     subscription_status: str | None = None
     plan: str | None = None
@@ -65,6 +67,10 @@ class MeResponse(BaseModel):
     telegram_photo_url: str | None = None
     stars_balance: int = 0
     requires_reauth: bool = False
+
+
+class NicknameUpdateRequest(BaseModel):
+    nickname: str = Field(min_length=1, max_length=50)
 
 
 class TelegramLoginRequest(BaseModel):

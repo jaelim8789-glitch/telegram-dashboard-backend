@@ -23,6 +23,10 @@ class User(Base):
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # User-chosen display name, distinct from `username` (the login id --
+    # unique, alphanumeric-constrained). Nullable: unset users fall back to
+    # username/phone-based display in the frontend.
+    nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

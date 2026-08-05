@@ -43,6 +43,7 @@ from app.schemas.auth import (
     LoginWithApiKeyRequest,
     LoginWithApiKeyResponse,
     MeResponse,
+    NicknameUpdateRequest,
     ResetPasswordRequest,
     ResetPasswordResponse,
     SendCodeRequest,
@@ -76,6 +77,8 @@ def _public_me_response(user: User, tenant: Tenant | None, requires_reauth: bool
     return MeResponse(
         role="user",
         phone=user.phone,
+        username=user.username,
+        nickname=user.nickname,
         tenant_id=tenant.id if tenant else None,
         subscription_status=tenant.subscription_status if tenant else None,
         plan=tenant.plan if tenant else None,
@@ -392,6 +395,26 @@ async def me(
             requires_reauth=identity.requires_reauth,
         )
     return MeResponse(role=identity.kind, requires_reauth=identity.requires_reauth)
+
+
+@router.patch("/me/nickname", response_model=MeResponse)
+async def update_nickname(
+    payload: NicknameUpdateRequest,
+    identity: Identity = Depends(get_current_identity),
+    db: AsyncSession = Depends(get_db),
+):
+    if identity.kind != "user" or identity.user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="닉네임은 회원 계정만 설정할 수 있습니다.")
+
+    identity.user.nickname = payload.nickname.strip()
+    db.add(identity.user)
+    await db.commit()
+    await db.refresh(identity.user)
+
+    from sqlalchemy import select
+    result = await db.execute(select(Tenant).where(Tenant.phone == identity.user.phone))
+    tenant = result.scalar_one_or_none()
+    return _public_me_response(identity.user, tenant, requires_reauth=identity.requires_reauth)
 
 
 async def _resolve_tenant_id_by_user(db: AsyncSession, user: User) -> str | None:
