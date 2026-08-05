@@ -394,12 +394,17 @@ async def ingest_positive_to_kb_endpoint(
 async def list_candidates_endpoint(
     status: str = Query(default="pending", pattern="^(pending|approved|rejected|all)$"),
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """List knowledge candidates for admin review."""
     from app.models.knowledge_base import KnowledgeCandidate
 
-    stmt = select(KnowledgeCandidate).where(KnowledgeCandidate.tenant_id == identity.tenant_id)
+    # require_admin is a gate-only dependency (returns None, not an
+    # Identity) -- this used to bind it as `identity: Identity` and then
+    # filter by identity.tenant_id, which is an AttributeError on None. This
+    # is an admin review queue across every tenant (+ 'guest'), not scoped
+    # to one, so there's no tenant_id filter to apply anyway.
+    stmt = select(KnowledgeCandidate)
     if status != "all":
         stmt = stmt.where(KnowledgeCandidate.status == status)
     stmt = stmt.order_by(KnowledgeCandidate.created_at.desc()).limit(100)
@@ -433,18 +438,18 @@ async def approve_candidate_endpoint(
     candidate_id: str,
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """Approve a knowledge candidate and ingest into KB."""
     from app.models.knowledge_base import KnowledgeCandidate, Document
     from app.services.knowledge_base import ingest_document
     from datetime import datetime
 
+    # No tenant_id filter -- see list_candidates_endpoint's comment; this is
+    # a global admin queue, and identity.tenant_id would've been an
+    # AttributeError on require_admin's None return anyway.
     result = await db.execute(
-        select(KnowledgeCandidate).where(
-            KnowledgeCandidate.id == candidate_id,
-            KnowledgeCandidate.tenant_id == identity.tenant_id,
-        ).limit(1)
+        select(KnowledgeCandidate).where(KnowledgeCandidate.id == candidate_id).limit(1)
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
@@ -454,16 +459,17 @@ async def approve_candidate_endpoint(
     candidate.status = "approved"
     candidate.approval_reason = payload.get("reason", "other")
     candidate.approval_comment = payload.get("comment")
-    candidate.reviewed_by = identity.user_id
+    candidate.reviewed_by = "admin"
     candidate.reviewed_at = datetime.utcnow()
 
     # Ingest into KB with versioning
     title = candidate.question[:80] + ("..." if len(candidate.question) > 80 else "")
     content = f"질문: {candidate.question}\n\n답변: {candidate.answer}"
 
+    # ingest_document() has no tenant_id param -- Document has no tenant_id
+    # column at all (single shared KB, same as every other ingestion path).
     await ingest_document(
         db=db,
-        tenant_id=identity.tenant_id,
         title=title,
         content=content,
         source_type="ai_learned",
@@ -480,17 +486,14 @@ async def reject_candidate_endpoint(
     candidate_id: str,
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """Reject a knowledge candidate."""
     from app.models.knowledge_base import KnowledgeCandidate
     from datetime import datetime
 
     result = await db.execute(
-        select(KnowledgeCandidate).where(
-            KnowledgeCandidate.id == candidate_id,
-            KnowledgeCandidate.tenant_id == identity.tenant_id,
-        ).limit(1)
+        select(KnowledgeCandidate).where(KnowledgeCandidate.id == candidate_id).limit(1)
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
@@ -499,7 +502,7 @@ async def reject_candidate_endpoint(
     candidate.status = "rejected"
     candidate.approval_reason = payload.get("reason", "other")
     candidate.approval_comment = payload.get("comment")
-    candidate.reviewed_by = identity.user_id
+    candidate.reviewed_by = "admin"
     candidate.reviewed_at = datetime.utcnow()
 
     await db.commit()
@@ -513,7 +516,7 @@ async def reject_candidate_endpoint(
 async def evolution_analytics_endpoint(
     days: int = Query(default=30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    identity: Identity = Depends(require_admin),
+    _admin: None = Depends(require_admin),
 ):
     """Get AI evolution metrics for the admin dashboard."""
     from datetime import timedelta
@@ -549,7 +552,7 @@ async def evolution_analytics_endpoint(
             func.count(case((KnowledgeCandidate.status == "pending", 1))).label("pending"),
             func.count(case((KnowledgeCandidate.status == "approved", 1))).label("approved"),
             func.count(case((KnowledgeCandidate.status == "rejected", 1))).label("rejected"),
-        ).where(KnowledgeCandidate.tenant_id == identity.tenant_id)
+        )
     )
     candidate_row = candidate_stats.one()
 

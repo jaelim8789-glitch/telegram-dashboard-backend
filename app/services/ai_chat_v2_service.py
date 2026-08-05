@@ -763,23 +763,23 @@ async def chat(
     kb_confidence: float = 0.0
     if request.use_memory:
         # 5a. Knowledge Base 검색 (공식 문서 + 승인된 학습 데이터)
+        # search_knowledge_base() takes no tenant_id (Document has no
+        # tenant_id column -- single shared KB) and returns a
+        # (list[SearchResult], list[str]) tuple, not a list of dicts -- this
+        # used to pass an invalid kwarg and then call .get() on Pydantic
+        # models, so it always hit the except below and silently never ran.
         try:
             from app.services.knowledge_base import search_knowledge_base
-            kb_results = await search_knowledge_base(
-                db=db,
-                tenant_id=tenant_id,
-                query=request.content,
-                top_k=3,
+            kb_results, _kb_result_ids = await search_knowledge_base(
+                db, request.content, top_k=3,
             )
             if kb_results:
                 for r in kb_results:
-                    content = r.get("content", "")
-                    confidence = r.get("confidence", 0.0)
-                    if content:
-                        kb_context.append(content)
-                        kb_confidence = max(kb_confidence, confidence)
+                    if r.content:
+                        kb_context.append(r.content)
+                        kb_confidence = max(kb_confidence, r.score)
                 if kb_context:
-                    kb_text = "\n\n".join(f"[신뢰도: {r.get('confidence', 0):.0%}]\n{r.get('content', '')}" for r in kb_results if r.get("content"))
+                    kb_text = "\n\n".join(f"[신뢰도: {r.score:.0%}]\n{r.content}" for r in kb_results if r.content)
                     messages.append({
                         "role": "system",
                         "content": f"관련 지식 (Knowledge Base):\n{kb_text}",

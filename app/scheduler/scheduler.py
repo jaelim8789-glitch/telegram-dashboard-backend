@@ -312,46 +312,19 @@ async def _run_ai_learning_ingest() -> None:
     """AI Learning — 매일 새벽 3시 좋은 응답을 Knowledge Base에 자동 적재.
 
     feedback_score >= 4인 Q&A 쌍을 찾아서 KB의 'ai_learned' 컬렉션에 저장합니다.
-    실행 결과(적재 건수, 실패 건수)를 로그로 남깁니다.
+    실행 결과(적재 건수)를 로그로 남깁니다.
+
+    ingest_positive_responses()는 tenant_id 파라미터를 받지 않습니다 -- KB
+    (app.models.knowledge_base.Document)에는 tenant_id 컬럼 자체가 없는 단일
+    공용 컬렉션이라, 호출 한 번으로 전체 테넌트를 스캔합니다. (이전 버전은
+    테넌트별로 반복 호출하면서 존재하지 않는 tenant_id= 인자를 넘겨 매번
+    TypeError로 실패했습니다.)
     """
     try:
         from app.services.ai_chat_v2_service import ingest_positive_responses
 
         async with async_session_maker() as db:
-            # 모든 활성 테넌트에 대해 실행
-            from sqlalchemy import select
-            from app.models.tenant import Tenant
-
-            result = await db.execute(
-                select(Tenant).where(Tenant.is_active == True, Tenant.plan != "admin")
-            )
-            tenants = result.scalars().all()
-
-            total_ingested = 0
-            total_failed = 0
-
-            for tenant in tenants:
-                try:
-                    count = await ingest_positive_responses(
-                        db=db,
-                        tenant_id=tenant.id,
-                        min_score=4,
-                        days=7,
-                    )
-                    total_ingested += count
-                except Exception as exc:
-                    total_failed += 1
-                    logger.warning(
-                        "ai_learning_ingest_tenant_failed",
-                        tenant_id=tenant.id,
-                        error=str(exc),
-                    )
-
-            logger.info(
-                "ai_learning_ingest_completed",
-                tenants_processed=len(tenants),
-                total_ingested=total_ingested,
-                total_failed=total_failed,
-            )
+            ingested = await ingest_positive_responses(db=db, min_score=4, days=7)
+            logger.info("ai_learning_ingest_completed", total_ingested=ingested)
     except Exception as exc:
         logger.error("ai_learning_ingest_failed", error=str(exc))
