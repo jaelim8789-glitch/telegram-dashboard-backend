@@ -112,6 +112,8 @@ class ChatRequest(BaseModel):
     # model spends real budget on a separate thinking pass before content,
     # so a bigger ceiling gets used only when the user actually asks for it.
     think_mode: bool = Field(default=False)
+    # Context injection: active account/group/broadcast IDs from frontend
+    context: dict[str, Any] = Field(default_factory=dict, description="Active context (account_id, group_id, etc.)")
 
 
 class ChatResponse(BaseModel):

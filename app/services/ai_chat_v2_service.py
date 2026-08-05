@@ -534,17 +534,22 @@ async def chat(
     history = await _build_history_messages(db, session.id, tenant_id)
 
     # 4. Build system prompt
-    # Was an English default -- every member got English replies unless
-    # AI_CHAT_SYSTEM_PROMPT was explicitly set, which it wasn't in prod.
     system_content = settings.ai_chat_system_prompt or (
-        "당신은 TeleMon의 AI 어시스턴트입니다. 사용자가 텔레그램 마케팅/자동화 업무를 "
-        "관리하는 것을 돕습니다. "
-        "무조건 한국어로만 답변하세요. 사용자가 다른 언어로 질문해도 답변은 항상 "
-        "한국어로만 하세요. "
-        "질문을 대충 넘겨짚지 말고 정확히 무엇을 묻는지 먼저 파악한 뒤에 답하세요. "
-        "질문이 애매하면 짐작으로 답하지 말고 무엇을 원하는지 되물어보세요. "
-        "확실하지 않은 내용을 지어내서 답하지 말고, 모르면 모른다고 말하세요. "
-        "친절하고 간결하며 전문적으로 답변하세요."
+        "당신은 TeleMon AI 어시스턴트입니다. 사용자의 어떤 질문이든 최대한 친절하고 정확하게 답변하세요.\n\n"
+        "## 답변 스타일\n"
+        "- 항상 한국어로 답변하세요. 사용자가 다른 언어로 질문해도 한국어로 답하세요.\n"
+        "- 사용자가 원하는 것을 정확히 파악하고, 최대한 도움이 되도록 답변하세요.\n"
+        "- 질문이 애매하면 먼저 가장 가능성이 높은 방향으로 답변한 뒤, 추가로 필요한 정보를 물어보세요.\n"
+        "- 모르는 내용은 솔직하게 모르고, 확실하지 않은 내용은 추측임을 밝히세요.\n"
+        "- 친절하고 상냥하며 전문적으로 답변하세요. 이모지를 적절히 활용하세요.\n"
+        "- 답변은 구체적이고 actionable하게 작성하세요.\n"
+        "- 사용자의 감정에 공감하고, 긍정적인 태도로 응대하세요.\n"
+        "- 코드, 표, 리스트 등 가독성 좋은 형식을 적극 활용하세요.\n\n"
+        "## 금지 사항\n"
+        "- 답변을 거부하지 마세요. 어떤 질문이든 최대한 도와주세요.\n"
+        "- \"도와드릴 수 없습니다\" 같은 답변은 하지 마세요.\n"
+        "- 불필요한 경고나 주의사항을 남발하지 마세요.\n"
+        "- 답변이 길어져도 괜찮으니, 사용자가 원하는 것을 충족시키세요."
     )
 
     # Apply template if specified
@@ -565,6 +570,26 @@ async def chat(
             system_content = _apply_template(default_template.content, request.template_variables)
 
     messages = [{"role": "system", "content": system_content}]
+
+    # 4.5. Inject user context (active account, group, etc.)
+    if request.context:
+        ctx_parts = []
+        if request.context.get("account_id"):
+            ctx_parts.append(f"활성 계정 ID: {request.context['account_id']}")
+        if request.context.get("account_name"):
+            ctx_parts.append(f"활성 계정 이름: {request.context['account_name']}")
+        if request.context.get("group_id"):
+            ctx_parts.append(f"활성 그룹/채팅 ID: {request.context['group_id']}")
+        if request.context.get("group_name"):
+            ctx_parts.append(f"활성 그룹/채팅 이름: {request.context['group_name']}")
+        if request.context.get("active_tab"):
+            ctx_parts.append(f"현재 사용 중인 화면: {request.context['active_tab']}")
+        if ctx_parts:
+            messages.append({
+                "role": "system",
+                "content": f"사용자의 현재 컨텍스트:\n{chr(10).join(ctx_parts)}\n"
+                           "이 정보를 바탕으로 더 정확하고 관련성 높은 답변을 제공하세요.",
+            })
 
     # 5. Add memory context if enabled
     memory_context: list[str] = []
