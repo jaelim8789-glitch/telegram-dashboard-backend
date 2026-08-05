@@ -14,12 +14,14 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_admin
 from app.core.logging import get_logger
 from app.core.time import utcnow_naive
 from app.database import get_db
+from app.models.ai_chat_v2 import AiChatMessageV2
 from app.schemas.ai_chat_v2 import (
     ChatRequest,
     MessageFeedback,
