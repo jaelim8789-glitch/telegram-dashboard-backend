@@ -305,6 +305,23 @@ async def get_default_template(
     return result.scalar_one_or_none()
 
 
+async def delete_template(db: AsyncSession, template_id: str, tenant_id: str) -> bool:
+    """Delete a prompt template. Returns False if it doesn't exist (or
+    belongs to another tenant, which looks identical from the outside)."""
+    result = await db.execute(
+        select(AiChatPromptTemplate).where(
+            AiChatPromptTemplate.id == template_id,
+            AiChatPromptTemplate.tenant_id == tenant_id,
+        )
+    )
+    template = result.scalar_one_or_none()
+    if template is None:
+        return False
+    await db.delete(template)
+    await db.commit()
+    return True
+
+
 def _apply_template(content: str, variables: dict[str, str]) -> str:
     """Replace {{variable}} placeholders with actual values."""
     if not variables:

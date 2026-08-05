@@ -39,6 +39,7 @@ from app.services.ai_chat_v2_service import (
     create_session,
     create_template,
     delete_session,
+    delete_template,
     get_default_template,
     get_session,
     get_session_messages,
@@ -237,7 +238,19 @@ async def get_default_template_endpoint(
     return await get_default_template(db, identity.tenant_id, role)
 
 
-#  Usage Stats 
+@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template_endpoint(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Delete a prompt template."""
+    deleted = await delete_template(db, template_id, identity.tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found.")
+
+
+#  Usage Stats
 
 
 @router.get("/stats", response_model=UsageStats)
