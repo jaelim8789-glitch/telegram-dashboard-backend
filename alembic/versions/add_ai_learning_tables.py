@@ -27,8 +27,15 @@ def upgrade() -> None:
     add_column_if_not_exists("guest_ai_chat_logs", sa.Column("thumbs_up", sa.Boolean(), nullable=True))
 
     # Knowledge Base document versioning
+    # parent_id must be varchar(36), not a real postgres UUID type -- kb_documents.id
+    # itself is character varying(36) (this codebase stores "UUIDs" as plain
+    # strings, not the native uuid column type), and a FK can't reference a
+    # column of a different underlying type. Document.parent_id's model type
+    # is UUID(as_uuid=False) same as Document.id -- that decorator only
+    # affects the Python-side str<->UUID conversion and works fine against a
+    # varchar column, it does not require the DB column itself to be uuid.
     add_column_if_not_exists("kb_documents", sa.Column("version", sa.Integer(), nullable=False, server_default="1"))
-    add_column_if_not_exists("kb_documents", sa.Column("parent_id", postgresql.UUID(as_uuid=False), nullable=True))
+    add_column_if_not_exists("kb_documents", sa.Column("parent_id", sa.String(length=36), nullable=True))
     add_column_if_not_exists("kb_documents", sa.Column("is_latest", sa.Boolean(), nullable=False, server_default=sa.true()))
     bind = op.get_bind()
     insp = sa.inspect(bind)
@@ -37,6 +44,16 @@ def upgrade() -> None:
         op.create_foreign_key(
             "fk_kb_documents_parent_id", "kb_documents", "kb_documents", ["parent_id"], ["id"],
         )
+
+    # kb_documents.tenant_id exists in the live DB (character varying(36),
+    # NOT NULL) but isn't declared on the current Document model at all --
+    # the model was apparently changed to drop tenant scoping (single shared
+    # KB, confirmed empty/unused: 0 rows in production) without a matching
+    # migration. Every ingest_document() call omits it, which would violate
+    # the NOT NULL constraint on the very first insert. Made nullable rather
+    # than dropped, in case tenant scoping comes back later.
+    if "tenant_id" in [c["name"] for c in insp.get_columns("kb_documents")]:
+        op.alter_column("kb_documents", "tenant_id", nullable=True)
 
     # Knowledge Candidates (learning approval queue)
     create_table_if_not_exists(
