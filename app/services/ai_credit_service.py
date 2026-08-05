@@ -1,10 +1,9 @@
 """Server-side AI credit management — character-based billing.
 
-Free tenants get 10,000 characters per day (input + output combined).
-Paid tenants get monthly character pools sized per plan.
+Free tenants get 10,000 credits, refilled every 6 hours.
+Paid tenants get monthly credit pools sized per plan.
 
-Credit costs: 1 character = 1 unit. The chat endpoint counts actual
-input + output characters and deducts that amount.
+Credit costs: 1 credit = 1 character (input + output combined).
 """
 
 from datetime import timedelta
@@ -15,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time import utcnow_naive
 from app.models.tenant import Tenant
 
-FREE_REFILL_INTERVAL = timedelta(days=1)
-FREE_DAILY_CREDITS = 10_000
+FREE_REFILL_INTERVAL = timedelta(hours=6)
+FREE_CREDITS_PER_REFILL = 10_000
 
 # Monthly credit pool + manual-reset allowance, per paid plan.
 # 1 credit = 1 character (input + output combined).
@@ -44,7 +43,7 @@ async def ensure_initial_credits(tenant: Tenant, db: AsyncSession) -> None:
     """Initialize credits when a tenant is first created or plan changes."""
     now = utcnow_naive()
     if tenant.plan == "free" and tenant.ai_credits_remaining <= 0:
-        tenant.ai_credits_remaining = FREE_DAILY_CREDITS
+        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
         tenant.ai_last_refill_at = now
     elif tenant.plan in PLAN_MONTHLY_CREDITS and tenant.ai_credits_remaining <= 0:
         tenant.ai_credits_remaining = PLAN_MONTHLY_CREDITS[tenant.plan]
@@ -134,13 +133,13 @@ async def bulk_sync_credits(db: AsyncSession) -> int:
         select(Tenant).where(
             Tenant.plan == "free",
             Tenant.is_active == True,
-            Tenant.ai_credits_remaining < FREE_DAILY_CREDITS,
+            Tenant.ai_credits_remaining < FREE_CREDITS_PER_REFILL,
         )
     )
     refilled = 0
     for t in result.scalars().all():
         if t.ai_last_refill_at is None or t.ai_last_refill_at < cutoff:
-            t.ai_credits_remaining = FREE_DAILY_CREDITS
+            t.ai_credits_remaining = FREE_CREDITS_PER_REFILL
             t.ai_last_refill_at = now
             refilled += 1
     await db.commit()
@@ -151,14 +150,14 @@ def _refill_if_needed(tenant: Tenant) -> None:
     """Inline refill check — called on every credit check for Free tenants."""
     if tenant.plan != "free":
         return
-    if tenant.ai_credits_remaining >= FREE_DAILY_CREDITS:
+    if tenant.ai_credits_remaining >= FREE_CREDITS_PER_REFILL:
         return
     now = utcnow_naive()
     if tenant.ai_last_refill_at is None:
-        tenant.ai_credits_remaining = FREE_DAILY_CREDITS
+        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
         tenant.ai_last_refill_at = now
         return
     last = tenant.ai_last_refill_at
     if now - last >= FREE_REFILL_INTERVAL:
-        tenant.ai_credits_remaining = FREE_DAILY_CREDITS
+        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
         tenant.ai_last_refill_at = now
