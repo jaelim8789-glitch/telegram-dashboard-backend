@@ -45,10 +45,17 @@ async def ingest(doc: DocumentCreate, db: AsyncSession = Depends(get_db),
 
 
 @router.get("/documents", response_model=list[DocumentOut])
-async def list_documents(collection: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_documents(
+    collection: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
     stmt = select(Document).order_by(Document.created_at.desc())
     if collection:
         stmt = stmt.where(Document.collection == collection)
+    # 비관리자는 발행된 문서만 조회 가능
+    if identity.kind != "admin":
+        stmt = stmt.where(Document.is_published == True)  # noqa: E712
     result = await db.execute(stmt)
     docs = result.scalars().all()
     return [DocumentOut(

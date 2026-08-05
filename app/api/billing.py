@@ -39,7 +39,7 @@ async def api_get_plans(request: Request):
     """Get all plan info with USDT prices from canonical PLAN_CATALOG."""
     client_ip = get_client_ip(request)
     if not check_rate_limit(client_ip, "billing_plans", max_attempts=30, window_seconds=60):
-        raise HTTPException(status_code=400, detail=result.get("error", "  "))
+        raise HTTPException(status_code=400, detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.")
     plans = []
     for plan_id, pdef in PLAN_CATALOG.items():
         entry = {

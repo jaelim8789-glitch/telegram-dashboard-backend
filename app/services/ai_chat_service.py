@@ -125,7 +125,13 @@ async def _recent_history(db: AsyncSession, tenant_id: str, telegram_user_id: st
 async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        # 30s was too tight once replies routinely run into the thousands of
+        # tokens (think_mode = 3x _MAX_TOKENS) and the self-hosted GPU box
+        # queues concurrent requests -- was causing routine 502s on
+        # /api/ai/guest/chat under normal multi-user load, not an actual
+        # outage. Matches the read timeout ai_chat_v2_service.py already
+        # uses for the logged-in path.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=120)) as client:
             response = await client.post(
                 f"{settings.deepseek_api_base}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},

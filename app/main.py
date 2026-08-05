@@ -458,7 +458,7 @@ app.include_router(trust_router, dependencies=_auth_required)
 app.include_router(automation_router, dependencies=_auth_required)
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(require_api_key_or_admin)])
 async def metrics():
     """Prometheus exposition-format metrics (ported from TeleMon/backend/monitoring.py)."""
     from fastapi.responses import PlainTextResponse
@@ -531,7 +531,7 @@ async def health():
     )
 
 
-@app.get("/api/metrics")
+@app.get("/api/metrics", dependencies=[Depends(require_api_key_or_admin)])
 async def api_metrics():
     """SessionManager metrics — connected accounts, reconnect stats, event counts."""
     session_manager = SessionManager()
