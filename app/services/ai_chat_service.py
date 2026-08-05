@@ -32,7 +32,12 @@ logger = get_logger(__name__)
 
 # Reject oversized input before spending any quota or making an API call.
 _MAX_INPUT_CHARS = 2000
-_MAX_TOKENS = 600
+# 600 was fine for a plain chat model, but the self-hosted reasoning model
+# behind DEEPSEEK_API_BASE spends a few hundred tokens "thinking" before any
+# real content -- with a tight budget the reply comes back empty every time
+# (finish_reason: length, hit mid-reasoning). 2000 matches ai_chat_v2_service's
+# _DEFAULT_MAX_TOKENS, confirmed sufficient by hand against the live model.
+_MAX_TOKENS = 2000
 
 
 @dataclass
