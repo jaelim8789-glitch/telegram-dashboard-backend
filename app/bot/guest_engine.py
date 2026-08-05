@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 from . import db as bot_db
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # ── AI 설정 ──────────────────────────────────────────────────────────
@@ -41,8 +43,8 @@ _DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 # ── 봇 멘션 접두사 (ai_employee.py와 공유) ────────────────────────────
 
 _BOT_MENTION_PREFIXES = ["@TeleMonBot", "@telemonbot", "@telemon_bot", "@TeleMon_Bot"]
-_DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-_DEEPSEEK_MODEL = "deepseek-chat"
+_DEEPSEEK_API_URL = settings.deepseek_api_base + "/chat/completions"
+_DEEPSEEK_MODEL = settings.deepseek_model or "deepseek-chat"
 
 
 # ── 컨텍스트 / 결정 자료구조 ─────────────────────────────────────────

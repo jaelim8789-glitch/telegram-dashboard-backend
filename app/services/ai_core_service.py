@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 _MAX_INPUT_CHARS = 4000
 _MAX_TOKENS = 1000
-_DEFAULT_MODEL = "deepseek-chat"
+_DEFAULT_MODEL = settings.deepseek_model or "deepseek-chat"
 
 # Feature names for usage tracking
 FEATURE_CHAT = "ai_chat"

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.ai_tools import TOOLS, TOOL_META, execute_tool, ToolResult
 from app.api.deps import get_current_identity, Identity
+from app.config import settings
 from app.core.logging import get_logger
 from app.database import get_db
 from app.models.ai_agent import AiAgent, AiChat, AiMessage
@@ -745,7 +746,7 @@ async def purchase_template(
 from pydantic import BaseModel
 
 class ChatCompletionRequest(BaseModel):
-    model: str = "deepseek-chat"
+    model: str = settings.deepseek_model or "deepseek-chat"
     messages: list[dict]
     stream: bool = False
     max_tokens: int = 4096
