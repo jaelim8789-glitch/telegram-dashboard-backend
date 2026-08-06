@@ -33,10 +33,15 @@ DEDUPE_COSINE_THRESHOLD = 0.85
 
 
 async def evaluate_memory_value(content: str, question: str = "") -> tuple[int, str]:
-    """Ask the LLM to score (0-100) and classify a fragment.
+    """Evaluate memory value (0-100) + category.
 
-    Returns (memory_score, category). score < threshold → don't store.
+    Uses the LLM when available, but always combines with a keyword heuristic
+    and returns the MAX score — so clear company/preference signals are never
+    lost to an LLM that returned 0 / failed to parse.
     """
+    llm_score = 0
+    llm_cat = "conversation_insights"
+
     prompt = (
         "대화 내용이 장기 기억으로 저장할 가치가 있는지 0~100 점수로 평가하고, "
         "카테고리를 정해주세요.\n\n"
@@ -58,18 +63,59 @@ async def evaluate_memory_value(content: str, question: str = "") -> tuple[int, 
         )
         if reply:
             import re
+            import json
             m = re.search(r'\{.*\}', reply, re.DOTALL)
             if m:
-                import json
                 data = json.loads(m.group(0))
-                score = int(data.get("score", 0))
-                cat = data.get("category", "conversation_insights")
-                if cat not in MEMORY_CATEGORIES:
-                    cat = "conversation_insights"
-                return max(0, min(100, score)), cat
+                llm_score = int(data.get("score", 0))
+                llm_cat = data.get("category", "conversation_insights")
+                if llm_cat not in MEMORY_CATEGORIES:
+                    llm_cat = "conversation_insights"
+            else:
+                sm = re.search(r'score[:\s]*(\d+)', reply, re.IGNORECASE)
+                cm = re.search(r'category[:\s]*"?([a-z_]+)"?', reply, re.IGNORECASE)
+                if sm:
+                    llm_score = int(sm.group(1))
+                if cm and cm.group(1) in MEMORY_CATEGORIES:
+                    llm_cat = cm.group(1)
     except Exception as exc:
-        logger.debug("memory_eval_failed", error=str(exc))
-    return 0, "conversation_insights"
+        logger.debug("memory_eval_llm_failed", error=str(exc))
+
+    # Keyword heuristic (always runs) — clear signals boost the score.
+    heur_score, heur_cat = _heuristic_memory_score(content)
+    if heur_score >= llm_score:
+        return min(100, heur_score), heur_cat
+    return max(0, min(100, llm_score)), llm_cat
+
+
+def _heuristic_memory_score(content: str) -> tuple[int, str]:
+    """Cheap keyword-based memory value + category (no LLM)."""
+    t = (content or "").strip()
+    signals = 0
+    cat = "conversation_insights"
+    for kw in ("우리 회사", "회사는", "이름은", "사장님", "대표님", "브랜드", "TeleMon"):
+        if kw in t:
+            signals += 2
+            cat = "company"
+    for kw in ("반말", "말투", "~로 해줘", "선호", "좋아해", "~하게", "해줘", "하세요"):
+        if kw in t:
+            signals += 2
+            cat = "preferences"
+            break  # single clear preference signal is enough
+    for kw in ("프로젝트", "진행 중", "개발 중", "만들고 있어"):
+        if kw in t:
+            signals += 2
+            cat = "projects"
+    for kw in ("목표", "목표는", "하고 싶어", "되기 위해"):
+        if kw in t:
+            signals += 2
+            cat = "goals"
+    if signals >= 2 and len(t) > 8:
+        return min(95, 60 + signals * 10), cat
+    # Short, unambiguous preference ("반말로 대답해") — save as preference.
+    if cat == "preferences" and len(t) > 3:
+        return 92, cat
+    return 0, cat
 
 
 async def _find_similar(db: AsyncSession, owner_type: str, owner_key: str, query_emb: list[float]) -> MemoryEntry | None:
