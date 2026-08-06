@@ -573,6 +573,33 @@ def _assistant_context(memory_context: list[str] | None, kb_context: list[str] |
 #  AI Self Review 
 
 
+def _is_rambling(text: str) -> bool:
+    """Heuristic: detects repetitive / looping answers (common with the
+    abliterated 14B when repeat_penalty was off). Cheap, no extra LLM call.
+
+    Returns True if the same sentence fragment repeats multiple times or a
+    single n-gram dominates the reply.
+    """
+    if not text or len(text) < 60:
+        return False
+    # Split into rough sentence fragments (by . ! ? \n)
+    frags = [f.strip() for f in re.split(r'[.!?\n]', text) if len(f.strip()) >= 8]
+    if len(frags) < 4:
+        return False
+    seen: dict[str, int] = {}
+    for f in frags:
+        # Use a distinctive n-gram key: first ~12 chars (short enough to catch
+        # repeated short sentences, long enough to avoid false positives).
+        key = f[:12]
+        seen[key] = seen.get(key, 0) + 1
+    # Count how many fragments are "extra" repeats beyond the first occurrence.
+    # e.g. 7× same sentence → 6 extra out of 7 → 0.86 → rambling.
+    extras = sum(c - 1 for c in seen.values())
+    if len(frags) == 0:
+        return False
+    return extras / len(frags) > 0.3
+
+
 async def self_review_answer(
     question: str,
     answer: str,
@@ -891,14 +918,14 @@ async def chat(
         "- 사고 과정(reasoning)도 반드시 한국어로 하세요.\n"
         "- 구체적이고 상세하게 답하세요. 두루뭉술하게 요약하지 마세요.\n"
         "- 실전 예시, 수치, 단계별 가이드를 반드시 포함하세요. 막연한 조언은 금지입니다.\n"
-        "- 한 줄, 두 줄로 끝내지 마세요. 일반 질문은 최소 10~15문장(300~500자 이상), "
-        "복잡한 질문은 20문장 이상으로 충분히 채우세요.\n"
+        "- 한 줄, 두 줄로 끝내지 마세요. **3~5개의 핵심 포인트를 잡고, 각 포인트를 2~3문장으로 "
+        "충분히 설명하세요.** 그래야 최소 300자 이상, 복잡한 질문은 500자 이상이 됩니다.\n"
         "- 표나 목록 등 가독성 있는 형식을 활용하세요. 필요하면 코드·공식·비교표도 쓰세요.\n"
         "- 자신의 의견을 명확히 밝히세요. \"제 생각엔 A보다 B가 낫습니다. 이유는…\"처럼 추천과 "
         "근거를 함께 제시하세요.\n"
         "- 확실하지 않으면 추측임을 밝히고, 정보가 부족하면 답을 주되 조건부로 안내하세요: "
         "\"상황에 따라 달라질 수 있는데, 구체적 상황을 알려주시면 더 정확히 준비해 드릴 수 있습니다.\"\n\n"
-        "━━━ 답변 구성 ━━━\n"
+        "━━━ 답변 구성 (모든 단계를 빠짐없이 채우세요) ━━━\n"
         "1. 핵심 답변 — 질문에 바로 답하는 1~2문장\n"
         "2. 상세 설명 — 배경과 원리 (3~5문장)\n"
         "3. 실전 예시 — 코드·수치·사례 (최소 1개)\n"
@@ -1299,7 +1326,9 @@ async def chat(
         # and use that instead — mirrors the non-stream branch's gate.
         if tool_calls_buffer:
             pass
-        elif len(full_content) < 40 and not request.context.get("disable_self_review"):
+        elif not request.context.get("disable_self_review") and (
+            len(full_content) < 40 or _is_rambling(full_content)
+        ):
             logger.info("ai_stream_quality_gate_retry", length=len(full_content))
             regen, _pt2, _ct2 = await _call_deepseek_nonstream(
                 messages, model=request.model, max_tokens=max_tokens,
@@ -1384,17 +1413,18 @@ async def chat(
         reply, confidence = extract_confidence(reply)
 
         # Quality gate (latency-friendly): only run self-review / regenerate
-        # when the answer is suspiciously short. Long answers skip the extra
-        # model call entirely — that was the main mobile-latency culprit.
+        # when the answer is suspiciously short OR clearly rambling. Good
+        # answers skip the extra model call — that was the mobile-latency fix.
         reply_len = len(reply) if reply else 0
         gate_enabled = not request.context.get("disable_self_review")
         # 40 chars = clearly a dead/refusal-style answer; anything longer is
-        # good enough to send without burning another model call.
+        # usually fine. Rambling repeats still get one regenerate.
         too_short = gate_enabled and reply_len < 40
-        if reply and gate_enabled and too_short:
+        rambling = gate_enabled and reply_len >= 40 and _is_rambling(reply or "")
+        if reply and gate_enabled and (too_short or rambling):
             passed, _reason = await self_review_answer(request.content, reply, kb_context)
             if not passed or reply_len < 20:
-                logger.info("ai_chat_quality_gate_retry", reason="too_short", length=reply_len)
+                logger.info("ai_chat_quality_gate_retry", reason="too_short" if too_short else "rambling", length=reply_len)
                 retried, _pt, _ct = await _call_deepseek_nonstream(
                     messages, model=request.model, max_tokens=max_tokens,
                 )
