@@ -67,6 +67,10 @@ _MAX_HISTORY_MESSAGES = 12
 # being passed verbatim — keeps context from overflowing (which makes the
 # model answer tersely to "save" tokens).
 _MAX_SUMMARY_LINES = 3
+
+# Per-session summary cache — the expensive history-condensing pass runs at
+# most once per session, not on every reply (huge mobile-latency win).
+_session_summary_cache: dict[str, str] = {}
 _MAX_INPUT_CHARS = 10000
 # The self-hosted reasoning model behind DEEPSEEK_API_BASE spends a chunk of
 # this on a separate "thinking" pass before any real content -- self-hosted
@@ -321,16 +325,22 @@ async def _build_history_messages(
 
     history: list[dict] = []
 
-    if older:
+    # Latency: these two summarization passes each cost an extra model call.
+    # Run them only ONCE per session (cached) and only when there's enough
+    # history to summarize — otherwise every reply pays the tax and mobile
+    # users feel it as "AI is too slow".
+    if older and _session_summary_cache.get(session_id) is None:
         summary = await _condense_history(older)
+        _session_summary_cache[session_id] = summary or ""
         if summary:
             history.append({"role": "system", "content": f"이전 대화 요약:\n{summary}"})
 
-    # D2: surface the user's recent interests/decisions so answers stay
-    # consistent with what they've been working on this session.
-    interests = await _extract_user_interests(recent)
-    if interests:
-        history.insert(0, {"role": "system", "content": f"사용자의 이번 세션 관심사:\n{interests}"})
+    # D2: user interests — only compute early in the session (first 3 turns);
+    # after that recent messages themselves carry the context.
+    if len(all_msgs) <= 6:
+        interests = await _extract_user_interests(recent)
+        if interests:
+            history.insert(0, {"role": "system", "content": f"사용자의 이번 세션 관심사:\n{interests}"})
 
     history.extend(
         {"role": msg.role, "content": msg.content}
@@ -1046,44 +1056,51 @@ async def chat(
         # (list[SearchResult], list[str]) tuple, not a list of dicts -- this
         # used to pass an invalid kwarg and then call .get() on Pydantic
         # models, so it always hit the except below and silently never ran.
-        try:
-            from app.services.knowledge_base import search_knowledge_base
-            kb_results, _kb_result_ids = await search_knowledge_base(
-                db, request.content, top_k=3, tenant_id=tenant_id,
-            )
-            # Retry with a broader query when the first pass had no/low hits —
-            # keeps RAG from silently returning nothing for an odd phrasing.
-            if not kb_results or max((r.score for r in kb_results), default=0) < 0.5:
-                retry_results, _ = await search_knowledge_base(
-                    db, request.content[:80], top_k=3, tenant_id=tenant_id,
+        # 5a+5b run in parallel — both are independent lookups, and running
+        # them concurrently cuts first-token latency (mobile users feel this
+        # as "AI responds faster").
+        async def _kb_pass() -> list:
+            try:
+                from app.services.knowledge_base import search_knowledge_base
+                results, _ = await search_knowledge_base(
+                    db, request.content, top_k=3, tenant_id=tenant_id,
                 )
-                if retry_results and max((r.score for r in retry_results), default=0) > (
-                    max((r.score for r in kb_results), default=0) if kb_results else 0
-                ):
-                    kb_results = retry_results
-            if kb_results:
-                for r in kb_results:
-                    if r.content:
-                        kb_context.append(r.content)
-                        kb_confidence = max(kb_confidence, r.score)
-                if kb_context:
-                    kb_text = "\n\n".join(
-                        f"[출처: {r.document_title} | 신뢰도: {r.score:.0%}]\n{r.content}"
-                        for r in kb_results if r.content
+                if not results or max((r.score for r in results), default=0) < 0.5:
+                    retry, _ = await search_knowledge_base(
+                        db, request.content[:80], top_k=3, tenant_id=tenant_id,
                     )
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            f"관련 지식 (Knowledge Base):\n{kb_text}\n\n"
-                            "Knowledge Base 내용을 참조해 답변했다면 반드시 "
-                            "[출처: 문서명] 형식으로 출처를 함께 표시하세요."
-                        ),
-                    })
-        except Exception as exc:
-            logger.warning("ai_chat_v2_kb_search_failed", error=str(exc))
+                    if retry and max((r.score for r in retry), default=0) > (
+                        max((r.score for r in results), default=0) if results else 0
+                    ):
+                        results = retry
+                return results
+            except Exception as exc:
+                logger.warning("ai_chat_v2_kb_search_failed", error=str(exc))
+                return []
 
-        # 5b. Graphiti Memory 검색 (장기 기억)
-        memory_context = await _enrich_with_memory(tenant_id, session.id, request.content)
+        kb_results, memory_context = await asyncio.gather(
+            _kb_pass(),
+            _enrich_with_memory(tenant_id, session.id, request.content),
+        )
+
+        for r in kb_results:
+            if r.content:
+                kb_context.append(r.content)
+                kb_confidence = max(kb_confidence, r.score)
+        if kb_context:
+            kb_text = "\n\n".join(
+                f"[출처: {r.document_title} | 신뢰도: {r.score:.0%}]\n{r.content}"
+                for r in kb_results if r.content
+            )
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"관련 지식 (Knowledge Base):\n{kb_text}\n\n"
+                    "Knowledge Base 내용을 참조해 답변했다면 반드시 "
+                    "[출처: 문서명] 형식으로 출처를 함께 표시하세요."
+                ),
+            })
+
         if memory_context:
             memory_text = "\n".join(f"- {m}" for m in memory_context)
             messages.append({
@@ -1162,9 +1179,11 @@ async def chat(
     # analysis/code/guide requests get a larger one so they can be thorough.
     intent = _classify_intent(request.content)
     if intent == "simple":
-        max_tokens = min(_DEFAULT_MAX_TOKENS, 1200)
+        max_tokens = min(_DEFAULT_MAX_TOKENS, 800)
     elif intent == "complex":
-        max_tokens = _DEFAULT_MAX_TOKENS * 2
+        # 14B GPU is slow at very long generations; keep the ceiling at the
+        # default so complex answers stay detailed but don't take forever.
+        max_tokens = _DEFAULT_MAX_TOKENS
     else:
         max_tokens = _DEFAULT_MAX_TOKENS
 
@@ -1307,7 +1326,7 @@ async def chat(
         # and use that instead — mirrors the non-stream branch's gate.
         if tool_calls_buffer:
             pass
-        elif len(full_content) < 80 and not request.context.get("disable_self_review"):
+        elif len(full_content) < 40 and not request.context.get("disable_self_review"):
             logger.info("ai_stream_quality_gate_retry", length=len(full_content))
             regen, _pt2, _ct2 = await _call_deepseek_nonstream(
                 messages, model=request.model, max_tokens=max_tokens,
@@ -1391,15 +1410,18 @@ async def chat(
             return
         reply, confidence = extract_confidence(reply)
 
-        # Quality gate: if the answer is too short to be useful, or fails
-        # self-review, regenerate once before sending. Keeps the quality
-        # floor without unbounded retries.
+        # Quality gate (latency-friendly): only run self-review / regenerate
+        # when the answer is suspiciously short. Long answers skip the extra
+        # model call entirely — that was the main mobile-latency culprit.
         reply_len = len(reply) if reply else 0
-        too_short = reply_len < 80 and not request.context.get("disable_self_review")
-        if reply and not request.context.get("disable_self_review"):
+        gate_enabled = not request.context.get("disable_self_review")
+        # 40 chars = clearly a dead/refusal-style answer; anything longer is
+        # good enough to send without burning another model call.
+        too_short = gate_enabled and reply_len < 40
+        if reply and gate_enabled and too_short:
             passed, _reason = await self_review_answer(request.content, reply, kb_context)
-            if not passed or too_short:
-                logger.info("ai_chat_quality_gate_retry", reason="too_short" if too_short else "self_review")
+            if not passed or reply_len < 20:
+                logger.info("ai_chat_quality_gate_retry", reason="too_short", length=reply_len)
                 retried, _pt, _ct = await _call_deepseek_nonstream(
                     messages, model=request.model, max_tokens=max_tokens,
                 )

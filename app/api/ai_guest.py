@@ -86,6 +86,8 @@ class GuestChatRequest(BaseModel):
     # a crafted request can't smuggle a huge prompt through this field.
     history: list[GuestChatMessage] = Field(default_factory=list, max_length=_MAX_HISTORY_MESSAGES)
     think_mode: bool = Field(default=False)
+    # Opt-in follow-up question suggestions (costs an extra model call).
+    suggest_follow_ups: bool = Field(default=False)
 
 
 class GuestChatResponse(BaseModel):
@@ -179,7 +181,9 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
     ok, remaining = try_deduct_guest_credits(client_ip, max(estimated_chars, 1))
 
-    suggested = await _suggest_follow_ups(payload.message, reply)
+    # Follow-up suggestions cost another model call — only generate them when
+    # the guest explicitly asked (opt-in) so the common case stays fast.
+    suggested = await _suggest_follow_ups(payload.message, reply) if payload.suggest_follow_ups else []
 
     return GuestChatResponse(
         reply=reply,
