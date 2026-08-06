@@ -14,7 +14,9 @@ FROM python:3.12-slim
 
 # fonts-nanum: Korean-capable TTF, needed by app/services/performance_card.py
 # to render the shareable stats card (python:3.12-slim ships no fonts at all).
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-nanum && rm -rf /var/lib/apt/lists/*
+# ffmpeg: needed by app/services/ai_vision_service.py to extract frames from
+# uploaded videos for AI vision analysis (qwen2.5vl).
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-nanum ffmpeg && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 appuser
 WORKDIR /app
