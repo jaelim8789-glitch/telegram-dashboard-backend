@@ -31,7 +31,7 @@ COPY alembic ./alembic
 COPY alembic.ini .
 COPY migration_helpers.py .
 
-RUN mkdir -p /app/media/broadcasts /app/logs && chown -R appuser:appuser /app /home/appuser/.local
+RUN mkdir -p /app/media/broadcasts /app/logs /app/data/uploads && chown -R appuser:appuser /app /home/appuser/.local
 USER appuser
 
 EXPOSE 8000
