@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 from migration_helpers import add_column_if_not_exists, create_table_if_not_exists
 
 revision = "add_ai_learning_tables"
-down_revision = "add_token_valid_after"
+down_revision = "create_kb_tables"
 branch_labels = None
 depends_on = None
 
