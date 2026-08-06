@@ -57,7 +57,7 @@ jobs:
 
       - run: |
           pip install uv
-          uv pip install --system -r requirements.txt
+          uv pip install --system -r requirements.txt -r requirements-dev.txt
         name: Install Python deps (uv)
 
       - run: alembic upgrade head
