@@ -4,6 +4,13 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class ToggleRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    is_active: bool | None = None
+    message_content: str | None = Field(default=None, max_length=4096)
+    target_chats: list[str] | None = None
+
+
 class ReplyMacroCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     target_chats: list[str] = Field(min_length=1, description="채팅방/그룹 ID 목록")

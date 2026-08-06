@@ -91,9 +91,11 @@ async def _fetch_groups(account_id: str, db: AsyncSession) -> list[dict]:
     try:
         return await list_groups(account)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        logger.error("runtime_error", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="서비스를 사용할 수 없습니다.")
 
 
 def _classify_size(participants: int) -> str:

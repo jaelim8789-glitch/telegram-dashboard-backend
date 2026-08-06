@@ -564,7 +564,24 @@ import os
 from fastapi.staticfiles import StaticFiles
 uploads_dir = os.path.join("data", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+
+class AttachmentStaticFiles(StaticFiles):
+    """StaticFiles that always forces download (Content-Disposition: attachment)
+    so uploaded content is never rendered inline by the browser.
+    This prevents stored XSS via SVG/images that may contain embedded scripts."""
+
+    async def __call__(self, scope, receive, send):
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                headers.append((b"content-disposition", b"attachment"))
+                message["headers"] = headers
+            await send(message)
+        await super().__call__(scope, receive, _send)
+
+
+app.mount("/uploads", AttachmentStaticFiles(directory=uploads_dir), name="uploads")
 
 
 # nginx is the only thing that can reach uvicorn directly (not internet-exposed

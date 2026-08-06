@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     telegram_guide_hub_links_json: str = "{}"
 
     environment: str = "development"
-    debug: bool = True
+    debug: bool = False
 
     @field_validator("debug", mode="before")
     @classmethod
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # that isn't strictly localhost-only.
     admin_username: str = Field(default="", alias="ADMIN_USERNAME")
     admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
-    admin_jwt_secret: str = Field(default="change-me-in-production", alias="ADMIN_JWT_SECRET")
+    admin_jwt_secret: str = Field(..., alias="ADMIN_JWT_SECRET")
     admin_jwt_expire_minutes: int = 60 * 24
 
     # SMS provider for phone-verification login (Sprint 6). "console" logs the code
@@ -206,8 +206,8 @@ class Settings(BaseSettings):
                 findings.append(field)
 
         # In production, debug must be explicitly set to false.
-        # The class default is True, which would expose /docs, /redoc, and
-        # detailed error traces to the public internet.
+        # The class default is False, which is safe; this check catches any
+        # environment that explicitly overrides it to true.
         if self.debug:
             findings.append("debug (must be false in production)")
 

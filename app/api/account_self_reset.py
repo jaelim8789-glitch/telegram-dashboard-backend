@@ -74,7 +74,8 @@ def _pool_key(phone: str) -> str:
 
 
 def _config_error_to_http(exc: RuntimeError) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    logger.warning("telegram_config_error", error=str(exc))
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram 계정 연결에 문제가 있습니다.")
 
 
 async def _reset_phone(db: AsyncSession, phone: str) -> None:

@@ -617,7 +617,8 @@ async def publish_guide_hub(db: AsyncSession = Depends(get_db)):
     try:
         chat_id, message_id, created = await publish_or_update_guide_hub(db)
     except GuideHubUnavailable as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        logger.warning("guide_hub_unavailable", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.")
     logger.info("guide_hub_publish_requested", chat_id=chat_id, message_id=message_id, created=created)
     return GuideHubPublishResponse(chat_id=chat_id, message_id=message_id, created=created)
 
@@ -653,7 +654,8 @@ async def create_style_profile(payload: StyleProfileAnalyzeRequest, db: AsyncSes
             detail="해당 텔레그램 계정이 인증되지 않았습니다. 계정 설정에서 다시 로그인해주세요.",
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        logger.warning("style_profile_analysis_error", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="스타일 프로필 분석 중 오류가 발생했습니다.")
 
 
 @router.get(
@@ -1435,7 +1437,8 @@ async def restart_service(
             result["message"] = f"Redis health: {redis_sev}"
 
     except Exception as exc:
-        result["message"] = str(exc)
+        logger.warning("service_restart_failed", error=str(exc))
+        result["message"] = "서비스 재시작 중 오류가 발생했습니다."
 
     logger.info("service_restart_attempted",
                 service=service_name,

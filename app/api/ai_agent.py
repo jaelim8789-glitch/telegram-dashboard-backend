@@ -592,7 +592,7 @@ async def execute_tool(
         raise
     except Exception as exc:
         logger.error("ai_agent_tool_failed", tool=msg.tool_name, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Tool 실행 중 오류가 발생했습니다: {str(exc)}")
+        raise HTTPException(status_code=500, detail="툴 실행 중 오류가 발생했습니다.")
 
     await record_usage(identity.tenant_id, "ai_chat", TOOL_PER_TOKEN)
 
@@ -650,7 +650,7 @@ async def confirm_tool(
         raise
     except Exception as exc:
         logger.error("ai_agent_confirm_tool_failed", tool=tool_name, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Tool 실행 중 오류가 발생했습니다: {str(exc)}")
+        raise HTTPException(status_code=500, detail="툴 실행 중 오류가 발생했습니다.")
 
     await record_usage(identity.tenant_id, "ai_chat", TOOL_PER_TOKEN)
 

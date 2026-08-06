@@ -689,7 +689,7 @@ async def upload_file_for_ai_chat(
 
     # Validate file type
     allowed_types = [
-        "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+        "image/jpeg", "image/png", "image/gif", "image/webp",
         "video/mp4", "video/webm", "video/ogg", "video/quicktime",
     ]
     if file.content_type not in allowed_types:

@@ -8,7 +8,7 @@ from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.crud import reply_macro as macro_crud
 from app.database import get_db
-from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroRead, ReplyMacroLogRead
+from app.schemas.reply_macro import ReplyMacroCreate, ReplyMacroRead, ReplyMacroLogRead, ToggleRequest
 from app.services.media import save_broadcast_media
 from app.services.random_reply_service import execute_random_reply
 
@@ -62,13 +62,18 @@ async def set_toggle_state(
     macro = await macro_crud.get_or_create_for_account(db, account_id)
 
     try:
-        body = await request.json()
+        raw = await request.json()
     except Exception:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="JSON body required.")
 
-    is_active = bool(body.get("is_active", macro.is_active))
-    message_content = body.get("message_content")
-    target_chats_raw = body.get("target_chats")
+    try:
+        body = ToggleRequest.model_validate(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid request body.")
+
+    is_active = body.is_active if body.is_active is not None else macro.is_active
+    message_content = body.message_content
+    target_chats_raw = body.target_chats
 
     if is_active and not (message_content or macro.message_content):
         raise HTTPException(status_code=422, detail="메시지 내용을 입력해야 켤 수 있습니다.")

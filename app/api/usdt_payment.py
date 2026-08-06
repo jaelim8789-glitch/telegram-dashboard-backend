@@ -114,7 +114,8 @@ async def request_api_key(plan: str, phone: str = "", request: Request = None):
         try:
             await purchase_service.upsert_pending_tenant(db, plan=plan, payment_ref=payment_ref, phone=phone)
         except purchase_service.PurchaseConflict as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+            logger.warning("purchase_conflict", error=str(exc))
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 처리된 결제 요청입니다.")
 
     if not phone:
         logger.warning("paid_signup_without_phone", payment_ref=payment_ref, plan=plan)

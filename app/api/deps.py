@@ -26,6 +26,10 @@ class Identity:
     tenant_id: str | None = None
     requires_reauth: bool = False
 
+    @property
+    def user_id(self) -> str | None:
+        return self.user.id if self.user is not None else None
+
 
 def _token_predates_forced_logout(user: User, payload: dict) -> bool:
     """True if this JWT was issued before an admin forced this user (or

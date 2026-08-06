@@ -138,7 +138,8 @@ async def get_dialogs(
     try:
         dialogs = await list_dialogs(account_id, limit=limit)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -223,7 +224,8 @@ async def _get_account_or_404(account_id: str, db: AsyncSession):
 
 
 def _config_error_to_http(exc: RuntimeError) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    logger.warning("telegram_config_error", error=str(exc))
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram 계정 연결에 문제가 있습니다. 관리자에게 문의하세요.")
 
 
 @router.put("/accounts/{account_id}/dialogs/{chat_id}/messages/{message_id}")
@@ -247,7 +249,7 @@ async def edit_message(
     try:
         result = await edit_chat_message(client, int(chat_id), message_id, payload.text)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -307,7 +309,7 @@ async def forward_message(
     try:
         result = await forward_chat_message(client, int(chat_id), message_id, int(payload.target_chat_id))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -337,7 +339,7 @@ async def send_reaction(
     try:
         await send_message_reaction(client, int(chat_id), message_id, payload.emoji)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -367,7 +369,7 @@ async def pin_message_endpoint(
     try:
         await pin_chat_message(client, int(chat_id), message_id, notify=payload.notify)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -397,7 +399,7 @@ async def unpin_message_endpoint(
     try:
         await unpin_chat_message(client, int(chat_id), message_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -426,7 +428,7 @@ async def block_user_endpoint(
     try:
         await block_user(client, int(chat_id))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -455,7 +457,7 @@ async def unblock_user_endpoint(
     try:
         await unblock_user(client, int(chat_id))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -589,7 +591,7 @@ async def get_chat_info(
     try:
         return await get_chat_details(client, int(chat_id), account_id=account_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
 
 
 @router.get("/accounts/{account_id}/dialogs/{chat_id}/avatar")
@@ -648,7 +650,8 @@ async def create_group(
     try:
         return await create_telegram_group(client, payload.title, payload.user_ids)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("create_group_failed", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="그룹 생성 중 오류가 발생했습니다.")
 
 
 class NotificationSettingsRequest(BaseModel):
@@ -702,7 +705,7 @@ async def export_chat(
     try:
         return await export_chat_history(client, int(chat_id), format)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="요청한 리소스를 찾을 수 없습니다.")
 
 
 @router.post("/accounts/{account_id}/dialogs/{chat_id}/send-sticker")
