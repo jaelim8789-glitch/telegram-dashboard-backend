@@ -711,3 +711,17 @@ async def upload_file_for_ai_chat(
         "mime_type": file.content_type,
         "size": len(contents),
     }
+
+
+#  Weekly AI Quality Report (user-facing)
+
+
+@router.get("/analytics/quality-report")
+async def ai_quality_report_endpoint(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Per-tenant AI quality summary — feedback, RAG effectiveness, learning."""
+    from app.services.ai_chat_v2_service import get_ai_quality_report
+    return await get_ai_quality_report(db, identity.tenant_id, days=days)

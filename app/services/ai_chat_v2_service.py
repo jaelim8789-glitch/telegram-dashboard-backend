@@ -439,6 +439,16 @@ async def _store_chat_memory(
         logger.warning("ai_chat_v2_memory_store_failed", error=str(exc))
 
 
+def _assistant_context(memory_context: list[str] | None, kb_context: list[str] | None) -> list | None:
+    """Stores memory + RAG usage metadata on the assistant message so we can
+    later measure whether KB-referenced answers actually get better feedback
+    than non-referenced ones (RAG effectiveness).
+    """
+    ctx = list(memory_context) if memory_context else []
+    base = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
+    return ctx + [base] if ctx else [base]
+
+
 #  AI Self Review 
 
 
@@ -826,6 +836,31 @@ async def chat(
 
     messages = [{"role": "system", "content": system_content}]
 
+    # 4.4. Inject learned quality rules — recently negatively-rated answers
+    # for this tenant are shown as "avoid this" examples so the model does
+    # not repeat the same failures. Lightweight: last 3, trimmed.
+    try:
+        bad_result = await db.execute(
+            select(AiChatMessageV2).where(
+                AiChatMessageV2.tenant_id == tenant_id,
+                AiChatMessageV2.role == "assistant",
+                AiChatMessageV2.feedback_score <= 2,
+                AiChatMessageV2.content.isnot(None),
+            ).order_by(AiChatMessageV2.created_at.desc()).limit(3)
+        )
+        bad_msgs = [m.content for m in bad_result.scalars().all() if m.content and m.content.strip()]
+        if bad_msgs:
+            examples = "\n".join(f"- {m[:200]}" for m in bad_msgs)
+            messages.append({
+                "role": "system",
+                "content": (
+                    "다음은 사용자가 '도움 안 됨' 평가를 내린 이전 답변들입니다. "
+                    "이런 식의 답변은 반복하지 마세요:\n" + examples
+                ),
+            })
+    except Exception as exc:
+        logger.debug("ai_quality_rules_inject_failed", error=str(exc))
+
     # 4.5. Inject user context (active account, group, etc.)
     if request.context:
         ctx_parts = []
@@ -1118,7 +1153,7 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=memory_context if memory_context else None,
+            memory_context=_assistant_context(memory_context, kb_context),
             memory_stored=False,
         )
         db.add(assistant_msg)
@@ -1199,7 +1234,7 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=memory_context if memory_context else None,
+            memory_context=_assistant_context(memory_context, kb_context),
             memory_stored=False,
         )
         db.add(assistant_msg)
@@ -1543,3 +1578,98 @@ async def ingest_positive_responses(
         total_positive=len(positive_msgs),
     )
     return ingested_count
+
+
+#  Weekly AI Quality Report
+
+
+async def get_ai_quality_report(db: AsyncSession, tenant_id: str, days: int = 7) -> dict:
+    """Per-tenant AI quality summary for the last N days.
+
+    Includes feedback distribution, RAG effectiveness (KB-referenced vs not),
+    learned candidates, and a short "what's improving" readout — surfaced to
+    the user so feedback quality is rewarded and the learning loop is visible.
+    """
+    from datetime import timedelta
+    from sqlalchemy import case, func
+    from app.core.time import utcnow_naive
+    from app.models.ai_chat_v2 import AiChatMessageV2
+    from app.models.knowledge_base import Document, KnowledgeCandidate
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Feedback stats
+    fb = await db.execute(
+        select(
+            func.count(AiChatMessageV2.id).label("total"),
+            func.count(case((AiChatMessageV2.feedback_score >= 4, 1))).label("positive"),
+            func.count(case((AiChatMessageV2.feedback_score <= 2, 1))).label("negative"),
+            func.avg(AiChatMessageV2.feedback_score).label("avg"),
+        ).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score.isnot(None),
+            AiChatMessageV2.created_at >= since,
+        )
+    )
+    f = fb.one()
+
+    # RAG effectiveness: compare avg feedback for messages that used RAG vs not.
+    rag = await db.execute(
+        select(
+            func.avg(AiChatMessageV2.feedback_score).label("rag_avg"),
+        ).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score.isnot(None),
+            AiChatMessageV2.created_at >= since,
+            AiChatMessageV2.memory_context.isnot(None),
+        )
+    )
+    no_rag = await db.execute(
+        select(
+            func.avg(AiChatMessageV2.feedback_score).label("no_rag_avg"),
+        ).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score.isnot(None),
+            AiChatMessageV2.created_at >= since,
+            AiChatMessageV2.memory_context.is_(None),
+        )
+    )
+
+    # Learned KB docs + pending candidates
+    kb_count = (await db.execute(
+        select(func.count(Document.id)).where(
+            Document.tenant_id == tenant_id, Document.source_type == "ai_learned",
+        )
+    )).scalar() or 0
+    pending_candidates = (await db.execute(
+        select(func.count(KnowledgeCandidate.id)).where(
+            KnowledgeCandidate.tenant_id == tenant_id,
+            KnowledgeCandidate.status == "pending",
+        )
+    )).scalar() or 0
+
+    total = f.total or 0
+    positive_rate = round((f.positive or 0) / total * 100, 1) if total else 0
+
+    return {
+        "period_days": days,
+        "feedback": {
+            "total": total,
+            "positive": f.positive or 0,
+            "negative": f.negative or 0,
+            "avg_score": round(float(f.avg or 0), 2),
+            "positive_rate": positive_rate,
+        },
+        "rag_effectiveness": {
+            "rag_avg_score": round(float(rag.scalar() or 0), 2),
+            "no_rag_avg_score": round(float(no_rag.scalar() or 0), 2),
+        },
+        "learning": {
+            "learned_kb_docs": kb_count,
+            "pending_candidates": pending_candidates,
+        },
+    }
