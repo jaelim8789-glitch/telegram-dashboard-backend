@@ -158,8 +158,16 @@ async def maybe_store_memory(
     # Embed for dedupe (best-effort; fall back to storing without embedding).
     emb = None
     try:
-        emb = (await embed_texts([content]))[0]
+        _emb = (await embed_texts([content]))[0]
+        # Zero vectors mean embedding isn't configured (kb_openai_api_key
+        # missing) — treat as no embedding, store without dedupe.
+        if _emb and any(abs(v) > 1e-9 for v in _emb[:16]):
+            emb = _emb
     except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.debug("memory_embed_failed", error=str(exc))
 
     if emb:
