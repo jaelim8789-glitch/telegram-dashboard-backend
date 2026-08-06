@@ -12,7 +12,7 @@ Endpoints:
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -675,7 +675,7 @@ async def confirm_tool_endpoint(
 
 @router.post("/upload")
 async def upload_file_for_ai_chat(
-    file: "UploadFile",
+    file: UploadFile,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
 ):
@@ -685,7 +685,6 @@ async def upload_file_for_ai_chat(
     """
     import os
     import uuid
-    from fastapi import UploadFile as UploadFileClass
 
     # Validate file type
     allowed_types = [
