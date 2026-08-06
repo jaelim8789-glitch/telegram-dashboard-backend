@@ -84,7 +84,7 @@ async def create_invoice(
         return result
     except RuntimeError as exc:
         logger.error("[nowpayments] create invoice failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail="결제 서비스를 일시적으로 사용할 수 없습니다.")
     except Exception as exc:
         logger.error("[nowpayments] create invoice unexpected error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to create invoice")

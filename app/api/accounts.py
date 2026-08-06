@@ -444,9 +444,10 @@ async def delete_account(
     try:
         await account_crud.delete_account(db, account)
     except ValueError as exc:
+        logger.warning("account_delete_failed", account_id=account_id, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
+            detail="계정 삭제 중 오류가 발생했습니다.",
         ) from exc
     logger.info("account_deleted", account_id=account_id)
 

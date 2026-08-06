@@ -363,7 +363,8 @@ async def one_click_action(
                     "finding": f"  {total}",
                 })
             except Exception as exc:
-                details.append({"step": "customer_pulse", "status": "failed", "finding": str(exc)})
+                logger.error("ai_copilot_customer_pulse_failed", error=str(exc))
+                details.append({"step": "customer_pulse", "status": "failed", "finding": "고객 펄스 분석 중 오류가 발생했습니다."})
                 all_ok = False
 
     elif payload.action == "weekly_report":

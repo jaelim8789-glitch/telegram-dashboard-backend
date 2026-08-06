@@ -104,7 +104,8 @@ async def toggle(
         else:
             await disable_auto_reply(account_id)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     logger.info("auto_reply_toggled", account_id=account_id, enabled=payload.enabled)
     return AutoReplyToggleResponse(account_id=account_id, auto_reply_enabled=payload.enabled)
 

@@ -67,7 +67,7 @@ async def get_link_preview(
         preview = await fetch_link_preview(url)
     except LinkPreviewError as exc:
         logger.info("link_preview_rejected", url=url, error=str(exc), status_code=exc.status_code)
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raise HTTPException(status_code=exc.status_code, detail="링크 미리보기를 가져올 수 없습니다.")
 
     response = LinkPreviewResponse(
         url=preview.url,

@@ -359,10 +359,11 @@ async def confirm_pending_action(
         else:
             return BotAiAgentResult(status="server_error", detail=f"지원하지 않는 도구입니다: {pending.tool_name}")
     except ValueError as exc:
-        return BotAiAgentResult(status="server_error", detail=f"실행 정보가 올바르지 않습니다: {str(exc)}")
+        logger.warning("bot_ai_agent_invalid_args", tool=pending.tool_name, error=str(exc))
+        return BotAiAgentResult(status="server_error", detail="실행 정보가 올바르지 않습니다.")
     except Exception as exc:
         logger.error("bot_ai_agent_confirm_failed", tool=pending.tool_name, error=str(exc))
-        return BotAiAgentResult(status="server_error", detail=f"실행 중 오류가 발생했습니다: {str(exc)}")
+        return BotAiAgentResult(status="server_error", detail="실행 중 오류가 발생했습니다.")
 
     _pending_actions.pop(telegram_user_id, None)
 

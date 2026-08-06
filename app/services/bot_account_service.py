@@ -196,7 +196,8 @@ async def start_purchase(db: AsyncSession, telegram_user_id: int, plan: str) -> 
     try:
         validate_plan_id(plan)
     except ValueError as exc:
-        return BotPurchaseResult(status="invalid_plan", detail=str(exc))
+        logger.warning("invalid_plan_submitted", plan=plan, error=str(exc))
+        return BotPurchaseResult(status="invalid_plan", detail="유효하지 않은 요금제입니다.")
 
     if plan == "free":
         return BotPurchaseResult(
@@ -222,7 +223,8 @@ async def start_purchase(db: AsyncSession, telegram_user_id: int, plan: str) -> 
     try:
         await purchase_service.upsert_pending_tenant(db, plan=plan, payment_ref=payment_ref, phone=identifier)
     except purchase_service.PurchaseConflict as exc:
-        return BotPurchaseResult(status="already_active", detail=str(exc))
+        logger.warning("purchase_conflict", plan=plan, error=str(exc))
+        return BotPurchaseResult(status="already_active", detail="이미 활성 결제가 존재합니다.")
 
     return BotPurchaseResult(
         status="ok",

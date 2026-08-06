@@ -44,7 +44,7 @@ async def search_groups(
         logger.error("group_search_failed", account_id=account.id, keyword=payload.keyword, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"그룹 검색에 실패했습니다: {exc}",
+            detail="그룹 검색에 실패했습니다.",
         )
 
     if not results:
@@ -98,12 +98,13 @@ async def join_groups(
     try:
         results = await join_selected_groups(account, payload.result_ids)
     except DailyJoinLimitExceededError as exc:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
+        logger.info("daily_join_limit_exceeded", limit=str(exc))
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="오늘 그룹 가입 한도에 도달했습니다.")
     except Exception as exc:
         logger.error("join_groups_failed", account_id=account.id, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"그룹 가입에 실패했습니다: {exc}",
+            detail="그룹 가입에 실패했습니다.",
         )
 
     return results

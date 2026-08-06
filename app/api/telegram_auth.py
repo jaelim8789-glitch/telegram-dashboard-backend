@@ -40,7 +40,8 @@ async def _get_account_or_404(account_id: str, db: AsyncSession) -> Account:
 
 
 def _config_error_to_http(exc: RuntimeError) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    logger.warning("telegram_config_error", error=str(exc))
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram 계정 연결에 문제가 있습니다.")
 
 
 async def _refresh_group_count_background(account_id: str) -> None:

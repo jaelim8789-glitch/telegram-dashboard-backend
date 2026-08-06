@@ -142,7 +142,7 @@ async def create_broadcast(
         except (json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"group_ids 형식이 올바르지 않습니다: {exc}",
+                detail="group_ids 형식이 올바르지 않습니다.",
             )
 
     # Parse recurring_interval_minutes
@@ -226,7 +226,7 @@ async def create_broadcast(
         except (json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"inline_buttons 형식이 올바르지 않습니다: {exc}",
+                detail="inline_buttons 형식이 올바르지 않습니다.",
             )
 
     # Validate: need at least recipients or group_ids

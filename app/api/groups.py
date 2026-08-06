@@ -59,14 +59,16 @@ async def read_groups(
             all_groups = await list_groups(account)
             _set_cached_groups(account_id, all_groups)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     except FloodWaitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        logger.warning("telemetry_error", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram 서비스를 일시적으로 사용할 수 없습니다.")
     except Exception as exc:
         logger.exception(f"Unexpected error fetching groups for {account_id}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Telegram API 오류가 발생했습니다.")
@@ -143,7 +145,8 @@ async def get_group_discovery_info(
             detail=f"Telegram rate limit exceeded. Retry after {exc.seconds} seconds.",
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        logger.warning("telemetry_error", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram 서비스를 일시적으로 사용할 수 없습니다.")
     except Exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Telegram API 오류가 발생했습니다.")
 

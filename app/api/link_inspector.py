@@ -37,12 +37,13 @@ async def inspect(
     try:
         items, duplicates_removed = await inspect_links(account, payload.links)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     except Exception as exc:
         logger.error("link_inspect_failed", account_id=account.id, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"링크 검사에 실패했습니다: {exc}",
+            detail="링크 검사에 실패했습니다.",
         )
 
     return LinkInspectResponse(
@@ -68,14 +69,16 @@ async def join(
     try:
         results = await join_selected_links(account, payload.targets)
     except AccountNotAuthenticatedError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.warning("account_not_authenticated", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계정 인증에 실패했습니다.")
     except DailyJoinLimitExceededError as exc:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
+        logger.info("daily_join_limit_exceeded", limit=str(exc))
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="오늘 그룹 가입 한도에 도달했습니다.")
     except Exception as exc:
         logger.error("link_inspector_join_failed", account_id=account.id, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"그룹 가입에 실패했습니다: {exc}",
+            detail="그룹 가입에 실패했습니다.",
         )
 
     return LinkJoinResponse(items=results)
