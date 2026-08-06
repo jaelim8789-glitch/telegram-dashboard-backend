@@ -46,7 +46,7 @@ async def get_toggle_state(
     await require_account_tenant_access(account_id, db, identity)
     await _get_account_or_404(account_id, db)
     macro = await macro_crud.get_or_create_for_account(db, account_id)
-    return {"is_active": macro.is_active, "message_content": macro.message_content}
+    return {"is_active": macro.is_active, "message_content": macro.message_content, "target_chats": json.loads(macro.target_chats or "[]"), "last_sent_at": macro.last_sent_at.isoformat() if macro.last_sent_at else None}
 
 
 @router.put("/toggle")
