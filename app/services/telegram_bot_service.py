@@ -665,11 +665,11 @@ async def notice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def aichat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle "🤖 AI Chat" — enters free-text chat mode with the DeepSeek assistant.
+    """Handle "🤖 AI Chat" — enters free-text chat mode with the Ollama assistant.
 
     Eligibility (linked + active sub/trial) is the same gate bot_api_key_service
     uses; only after that does this add the user to _active_ai_chat_users so
-    ai_chat_text_handler starts routing their free text to DeepSeek.
+    ai_chat_text_handler starts routing their free text to Ollama.
     """
     query = update.callback_query
     await query.answer()
@@ -786,7 +786,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handle "🏠 메인 메뉴" — return to the top-level menu from any submenu.
 
     Also exits AI Chat mode if the user was in it, so their free text stops
-    being routed to DeepSeek once they've navigated away.
+    being routed to Ollama once they've navigated away.
     """
     query = update.callback_query
     await query.answer()

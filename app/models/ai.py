@@ -33,7 +33,7 @@ class AiChatLog(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     log_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True, default={})
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
-    model: Mapped[str | None] = mapped_column(String(50), default="deepseek-chat")
+    model: Mapped[str | None] = mapped_column(String(50), default="ollama-chat")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

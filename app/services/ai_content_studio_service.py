@@ -1,7 +1,7 @@
 """
-AI Content Studio Service — 6 prompt templates + DeepSeek integration.
+AI Content Studio Service — 6 prompt templates + Ollama integration.
 
-Reuses ``call_deepseek`` from ``ai_core_service`` so the same DeepSeek
+Reuses ``call_ollama`` from ``ai_core_service`` so the same Ollama
 configuration, quota model, and usage tracking apply.
 """
 
@@ -13,7 +13,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.services.ai_core_service import call_deepseek, record_ai_usage
+from app.services.ai_core_service import call_ollama, record_ai_usage
 
 logger = get_logger(__name__)
 
@@ -251,7 +251,7 @@ async def generate_content(
     style_profile_id: str | None = None,
     db: AsyncSession | None = None,
 ) -> tuple[str | None, int, str | None]:
-    """Generate content via DeepSeek and record usage.
+    """Generate content via Ollama and record usage.
 
     Returns (generated_content, tokens_used, content_studio_content_id)
     or (None, 0, None) on failure.
@@ -272,7 +272,7 @@ async def generate_content(
         {"role": "user", "content": "위 지시에 따라 메시지를 생성해줘."},
     ]
 
-    reply, tokens, _ = await call_deepseek(messages)
+    reply, tokens, _ = await call_ollama(messages)
     if reply is None:
         return None, 0, None
 

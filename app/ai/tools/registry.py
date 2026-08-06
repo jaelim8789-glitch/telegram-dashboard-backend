@@ -138,7 +138,7 @@ class ToolRegistry:
     def get_openai_tools_schema(self) -> list[dict[str, Any]]:
         """Generate OpenAI-compatible tool schema for LLM function calling.
 
-        Returns a list of tool definitions formatted for OpenAI/DeepSeek
+        Returns a list of tool definitions formatted for OpenAI/Ollama
         function calling API.
         """
         tools = []

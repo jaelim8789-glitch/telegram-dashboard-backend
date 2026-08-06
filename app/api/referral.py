@@ -1,4 +1,4 @@
-﻿import io
+import io
 import json
 import random
 import string

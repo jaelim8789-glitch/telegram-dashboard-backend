@@ -1,8 +1,8 @@
-"""미니앱 전용 API 라우트 — DeepSeek 채팅, PixelOffice 상태"""
+"""미니앱 전용 API 라우트 — Ollama 채팅, PixelOffice 상태"""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
-from app.services.deepseek_service import chat_with_deepseek, parse_action
+from app.services.ollama_service import chat_with_ollama, parse_action
 
 router = APIRouter(prefix="/api/miniapp", tags=["miniapp"])
 
@@ -28,7 +28,7 @@ async def miniapp_chat(req: ChatRequest, request: Request):
         )
     if not req.messages:
         raise HTTPException(400, "messages required")
-    reply = await chat_with_deepseek(req.messages)
+    reply = await chat_with_ollama(req.messages)
     action = parse_action(reply)
     clean_reply = reply
     import re

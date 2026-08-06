@@ -1,7 +1,7 @@
 """
 AI API Provider  unified interface for external LLM API providers.
 
-Supports multiple providers (DeepSeek, OpenAI, Anthropic, etc.) with
+Supports multiple providers (Ollama, OpenAI, Anthropic, etc.) with
 rate limiting, retry logic, token tracking, and audit logging.
 """
 
@@ -33,7 +33,7 @@ class AiApiProvider:
         self,
         messages: list[dict[str, Any]],
         *,
-        provider: str = "deepseek",
+        provider: str = "ollama",
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,

@@ -35,7 +35,7 @@ from app.models.ai import (
     AiPlanLimit,
 )
 from app.services.ai_core_service import (
-    call_deepseek,
+    call_ollama,
     call_llm_for_tenant,
     store_memory,
     search_memory,
@@ -240,7 +240,7 @@ async def ai_chat(
     )
     history = history_result.scalars().all()
 
-    # Build messages for DeepSeek
+    # Build messages for Ollama
     system_prompt = AI_CHAT_SYSTEM_PROMPT
     if memory_context:
         system_prompt += f"\n\n[  ]\n{memory_context}"
@@ -250,8 +250,8 @@ async def ai_chat(
         messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": payload.message})
 
-    # Free-plan tenants route to the local Ollama model instead of DeepSeek
-    # (falls back to DeepSeek automatically if Ollama is unreachable).
+    # Free-plan tenants route to the local Ollama model instead of Ollama
+    # (falls back to Ollama automatically if Ollama is unreachable).
     tenant_plan_row = await db.execute(select(Tenant.plan).where(Tenant.id == tenant_id))
     tenant_plan = tenant_plan_row.scalar_one_or_none() or "free"
     reply, tokens_used, _ = await call_llm_for_tenant(tenant_plan, messages)
@@ -415,7 +415,7 @@ async def ai_reply_assistant(
         {"role": "user", "content": f"    :\n\n{payload.incoming_message}"},
     ]
 
-    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=500)
+    reply, tokens_used, _ = await call_ollama(messages, max_tokens=500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -534,7 +534,7 @@ async def ai_broadcast_assistant(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=800)
+    reply, tokens_used, _ = await call_ollama(messages, max_tokens=800)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -621,7 +621,7 @@ async def ai_operations_report(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply, tokens_used, _ = await call_deepseek(messages, max_tokens=1500)
+    reply, tokens_used, _ = await call_ollama(messages, max_tokens=1500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

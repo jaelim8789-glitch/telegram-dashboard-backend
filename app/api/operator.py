@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_identity, Identity
 from app.database import get_db
 from app.core.logging import get_logger
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 logger = get_logger(__name__)
@@ -90,7 +90,7 @@ async def operator_run(
     # ── Step 1: Planner (LLM으로 목표 분석 + 계획 생성) ──
     steps.append(OperatorStep(step="summary", status="running", detail="계획 생성 중..."))
     try:
-        planner_resp = await call_deepseek(
+        planner_resp = await call_ollama(
             messages=[
                 {"role": "system", "content": PLANNER_PROMPT},
                 {"role": "user", "content": f"목표: {goal}\n채널 수: {body.channels or 3}개\n계정: {body.account_id or '기본'}"},
@@ -130,7 +130,7 @@ async def operator_run(
 
 JSON 배열로 검색 키워드 5개를 제안하세요:
 {{"keywords": ["키워드1", "키워드2", ...], "target_description": "타겟 설명"}}"""
-        search_resp = await call_deepseek(
+        search_resp = await call_ollama(
             messages=[{"role": "user", "content": search_prompt}],
             temperature=0.3, max_tokens=400,
         )
@@ -159,7 +159,7 @@ JSON 배열로 검색 키워드 5개를 제안하세요:
 
 아래 JSON 형식으로 최종 발송 메시지를 작성하세요:
 {{"message": "발송 메시지 (200-500자)", "hashtags": ["#태그1", "#태그2"], "image_prompt": "이미지 생성 프롬프트 (영어)"}}"""
-        content_resp = await call_deepseek(
+        content_resp = await call_ollama(
             messages=[{"role": "user", "content": content_prompt}],
             temperature=0.7, max_tokens=600,
         )

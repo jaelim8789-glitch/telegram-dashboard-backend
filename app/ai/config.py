@@ -20,10 +20,10 @@ class AiPlatformConfig:
     """AI Platform configuration  singleton loaded once at startup."""
 
     #  LLM Provider 
-    llm_provider: str = "deepseek"  # deepseek | openai | anthropic | custom
+    llm_provider: str = "ollama"  # ollama | openai | anthropic | custom
     llm_api_key: str = ""
-    llm_api_base: str = "https://api.deepseek.com/v1"
-    llm_model: str = "deepseek-chat"
+    llm_api_base: str = "https://api.ollama.com/v1"
+    llm_model: str = "ollama-chat"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.7
     llm_timeout_seconds: int = 120
@@ -63,7 +63,7 @@ class AiPlatformConfig:
 
     #  API Integration 
     api_providers: dict[str, dict[str, Any]] = field(default_factory=dict)
-    api_default_provider: str = "deepseek"
+    api_default_provider: str = "ollama"
     api_cache_ttl_seconds: int = 300
 
     #  Observability 
@@ -75,9 +75,9 @@ class AiPlatformConfig:
     def from_settings(cls) -> AiPlatformConfig:
         """Load configuration from environment/app settings."""
         return cls(
-            llm_api_key=app_settings.deepseek_api_key,
-            llm_api_base=app_settings.deepseek_api_base,
-            llm_model=app_settings.deepseek_model or "deepseek-chat",
+            llm_api_key=app_settings.ollama_api_key,
+            llm_api_base=app_settings.ollama_api_base,
+            llm_model=app_settings.ollama_model or "ollama-chat",
             mcp_enabled=False,
             task_queue_backend="database",
             event_bus_backend="inmemory",

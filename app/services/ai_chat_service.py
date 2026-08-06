@@ -1,4 +1,4 @@
-"""Bot-facing "🤖 AI Chat" — a general-purpose DeepSeek-backed assistant reachable
+"""Bot-facing "🤖 AI Chat" — a general-purpose Ollama-backed assistant reachable
 from the Telegram ops menu. Mirrors how app.services.bot_api_key_service and
 app.services.bot_account_service are organized: all DB/business/HTTP logic lives
 here, telegram_bot_service.py only formats replies and wires callbacks/handlers.
@@ -12,7 +12,7 @@ Quota model: each tenant gets `monthly_ai_chat_limit` free replies per calendar
 month (tracked via the existing usage_tracker UsageRecord ledger, action=
 "ai_chat"). Once that's exhausted, `tenant.ai_chat_credit_balance` (topped up via
 the "ai_chat_pack_50" Telegram Stars add-on, see app/services/billing.py) is
-spent one credit per reply. A failed/timed-out DeepSeek call consumes neither.
+spent one credit per reply. A failed/timed-out Ollama call consumes neither.
 """
 
 import re
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 # Reject oversized input before spending any quota or making an API call.
 _MAX_INPUT_CHARS = 2000
 # 600 was fine for a plain chat model, but the self-hosted reasoning model
-# behind DEEPSEEK_API_BASE spends a few hundred tokens "thinking" before any
+# behind OLLAMA_API_BASE spends a few hundred tokens "thinking" before any
 # real content -- with a tight budget the reply comes back empty every time
 # (finish_reason: length, hit mid-reasoning). Self-hosted GPU means no
 # per-token cost, so budget generously rather than trim close to the edge.
@@ -52,7 +52,7 @@ class AiChatResult:
       * ``"quota_exceeded"``  — monthly quota used up and no Stars credit left
       * ``"rate_limited"``    — a previous request from this user is still in flight
       * ``"too_long"``        — input exceeds _MAX_INPUT_CHARS
-      * ``"server_error"``    — DeepSeek not configured, or the API call failed
+      * ``"server_error"``    — Ollama not configured, or the API call failed
     """
 
     status: str
@@ -163,13 +163,13 @@ def extract_confidence(text: str) -> tuple[str, str | None]:
     return text[: match.start()].rstrip(), match.group(1).lower()
 
 
-async def _call_deepseek(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
+async def _call_ollama(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
-    result = await _call_deepseek_full(messages, max_tokens=max_tokens)
+    result = await _call_ollama_full(messages, max_tokens=max_tokens)
     return result[0] if result else None
 
 
-async def _call_deepseek_full(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> tuple[str, str | None] | None:
+async def _call_ollama_full(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> tuple[str, str | None] | None:
     """Returns (content, reasoning) or None on any failure.
 
     The self-hosted reasoning model (Qwen3.6) returns its "thinking" pass in
@@ -198,7 +198,7 @@ async def _call_deepseek_full(messages: list[dict], max_tokens: int = _MAX_TOKEN
             message = data["choices"][0]["message"]
             return _strip_leaked_think_tags(message["content"]), message.get("reasoning")
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.error("ai_chat_deepseek_call_failed", error=str(exc))
+        logger.error("ai_chat_ollama_call_failed", error=str(exc))
         return None
 
 
@@ -254,7 +254,7 @@ async def _do_send(db: AsyncSession, telegram_user_id: int, text: str) -> AiChat
     history = await _recent_history(db, tenant.id, telegram_user_id_str)
     messages = [{"role": "system", "content": settings.ai_chat_system_prompt}, *history, {"role": "user", "content": text}]
 
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         return AiChatResult(status="server_error", detail="일시적인 오류로 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요.")
 

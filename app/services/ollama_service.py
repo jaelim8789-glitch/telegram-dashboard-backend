@@ -1,14 +1,14 @@
 """
-DeepSeek API 기반 챗봇 서비스 — OpenAI 호환 API 그대로 사용
+Ollama API 기반 챗봇 서비스 — OpenAI 호환 API 그대로 사용
 
-ai_core_service.call_deepseek()를 단일 클라이언트로 사용합니다.
+ai_core_service.call_ollama()를 단일 클라이언트로 사용합니다.
 """
 import json
 import logging
 import re
 from typing import Optional
 
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,10 @@ SYSTEM_PROMPT = """당신은 TeleMon 미니앱의 AI 어시스턴트입니다.
 답변은 200자 이내로 간결하게."""
 
 
-async def chat_with_deepseek(messages: list[dict], api_key: str = "") -> str:
-    """DeepSeek API를 호출합니다. ai_core_service의 call_deepseek를 사용합니다."""
+async def chat_with_ollama(messages: list[dict], api_key: str = "") -> str:
+    """Ollama API를 호출합니다. ai_core_service의 call_ollama를 사용합니다."""
     full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    reply, _tokens, _tool_calls = await call_deepseek(full_messages, max_tokens=500)
+    reply, _tokens, _tool_calls = await call_ollama(full_messages, max_tokens=500)
     if reply is None:
         return "죄송합니다. 일시적인 오류가 발생했습니다."
     return reply

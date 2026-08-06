@@ -38,13 +38,13 @@ logger = logging.getLogger(__name__)
 
 # ── AI 설정 ──────────────────────────────────────────────────────────
 
-_DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+_OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "")
 
 # ── 봇 멘션 접두사 (ai_employee.py와 공유) ────────────────────────────
 
 _BOT_MENTION_PREFIXES = ["@TeleMonBot", "@telemonbot", "@telemon_bot", "@TeleMon_Bot"]
-_DEEPSEEK_API_URL = settings.ollama_api_base + "/chat/completions"
-_DEEPSEEK_MODEL = settings.ollama_model or "deepseek-chat"
+_OLLAMA_API_URL = settings.ollama_api_base + "/chat/completions"
+_OLLAMA_MODEL = settings.ollama_model or "ollama-chat"
 
 
 # ── 컨텍스트 / 결정 자료구조 ─────────────────────────────────────────
@@ -112,12 +112,12 @@ async def _call_ai(
     context: RequestContext | None = None,
     system_prompt: str | None = None,
 ) -> str:
-    """DeepSeek (또는 다른 LLM)을 호출하고 응답 텍스트를 반환.
+    """Ollama (또는 다른 LLM)을 호출하고 응답 텍스트를 반환.
 
     이 함수가 이 모듈의 유일한 AI 호출 지점입니다.
     나중에 AI Employee가 추가될 때 이 함수 하나만 교체/확장하면 됩니다.
 
-    현재 구현: DEEPSEEK_API_KEY 환경변수가 설정되어 있으면 실제 API 호출,
+    현재 구현: OLLAMA_API_KEY 환경변수가 설정되어 있으면 실제 API 호출,
     없으면 안내 메시지를 반환합니다.
 
     Args:
@@ -125,7 +125,7 @@ async def _call_ai(
         context: 요청 컨텍스트 (로깅용, 선택).
         system_prompt: 시스템 메시지 오버라이드. None이면 기본 프롬프트 사용.
     """
-    if not _DEEPSEEK_API_KEY:
+    if not _OLLAMA_API_KEY:
         return "⏳ AI 연동 준비 중입니다. 곧 사용할 수 있어요!"
 
     if system_prompt is None:
@@ -143,13 +143,13 @@ async def _call_ai(
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                _DEEPSEEK_API_URL,
+                _OLLAMA_API_URL,
                 headers={
-                    "Authorization": f"Bearer {_DEEPSEEK_API_KEY}",
+                    "Authorization": f"Bearer {_OLLAMA_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": _DEEPSEEK_MODEL,
+                    "model": _OLLAMA_MODEL,
                     "messages": messages,
                     "temperature": 0.7,
                     "max_tokens": 1024,
@@ -159,7 +159,7 @@ async def _call_ai(
         data = resp.json()
         return data["choices"][0]["message"]["content"]
     except Exception:
-        logger.exception("[ai] DeepSeek API call failed")
+        logger.exception("[ai] Ollama API call failed")
         return "⚠️ AI 응답 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
 

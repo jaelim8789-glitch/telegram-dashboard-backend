@@ -36,7 +36,7 @@ _generating = False
 
 async def generate_and_store_ops_report() -> AiOpsReport | None:
     """Returns the created report, or None if generation was skipped/failed
-    (already in progress, data gathering failed, or DeepSeek call failed) —
+    (already in progress, data gathering failed, or Ollama call failed) —
     callers should treat None as "no report this time", not raise."""
     global _generating
     if _generating:
@@ -69,7 +69,7 @@ async def generate_and_store_ops_report() -> AiOpsReport | None:
             return None
 
         if report is None:
-            logger.warning("ai_ops_report_generation_skipped", reason="deepseek_call_failed")
+            logger.warning("ai_ops_report_generation_skipped", reason="ollama_call_failed")
             return None
 
         try:

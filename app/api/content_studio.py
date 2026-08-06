@@ -51,7 +51,7 @@ async def generate_content_studio(
 ) -> ContentGenerateResponse:
     """Generate marketing content using AI.
 
-    Accepts a content type and tone, calls DeepSeek, and returns the
+    Accepts a content type and tone, calls Ollama, and returns the
     generated message along with token usage.
     """
     tenant_id = identity.tenant_id or "anonymous"

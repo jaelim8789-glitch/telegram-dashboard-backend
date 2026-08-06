@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.crud import account as account_crud
 from app.models.style_profile import StyleProfile
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 from app.services.telegram_actions import AccountNotAuthenticatedError, get_authorized_client
 
 _MAX_CHANNEL_CHARS = 8000
@@ -73,7 +73,7 @@ async def analyze_style(
         if not allowed:
             raise ValueError(reason)
 
-    reply, _, _ = await call_deepseek(
+    reply, _, _ = await call_ollama(
         messages=[
             {"role": "system", "content": "You are a precise writing style analyst. Always respond with valid JSON only."},
             {"role": "user", "content": _STYLE_ANALYSIS_PROMPT.format(text=source_text)},
@@ -82,7 +82,7 @@ async def analyze_style(
     )
 
     if not reply:
-        raise ValueError("AI 분석 응답을 받지 못했습니다. DeepSeek API 키를 확인해주세요.")
+        raise ValueError("AI 분석 응답을 받지 못했습니다. Ollama API 키를 확인해주세요.")
 
     try:
         analysis = json.loads(reply)

@@ -32,7 +32,7 @@ class TranslateResponse(BaseModel):
 
 @router.post("/api/translate", response_model=TranslateResponse)
 async def translate_endpoint(payload: TranslateRequest, request: Request):
-    """Translate text using DeepSeek AI.
+    """Translate text using Ollama AI.
 
     Lightweight — no auth required for basic usage (translations happen during
     chat viewing). Rate-limited per IP to prevent AI cost abuse.

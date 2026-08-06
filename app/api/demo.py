@@ -2,7 +2,7 @@
 
 Powers the marketing /demo/chat page. Stateless — no session/DB
 persistence, no tenant context. Rate-limited per IP since it is
-reachable without login and spends a real DeepSeek API budget.
+reachable without login and spends a real Ollama API budget.
 """
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
 from app.core.rate_limiter import check_rate_limit, get_client_ip
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 router = APIRouter(prefix="/api/demo", tags=["demo"])
 logger = get_logger(__name__)
@@ -62,7 +62,7 @@ async def demo_ai_chat(payload: DemoChatRequest, request: Request) -> DemoChatRe
             messages.append({"role": turn.role, "content": turn.content[:_MAX_MESSAGE_LENGTH]})
     messages.append({"role": "user", "content": payload.message})
 
-    reply, _tokens, _tool_calls = await call_deepseek(messages, max_tokens=500)
+    reply, _tokens, _tool_calls = await call_ollama(messages, max_tokens=500)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

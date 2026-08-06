@@ -1,13 +1,13 @@
-"""Lightweight translation service backed by DeepSeek.
+"""Lightweight translation service backed by Ollama.
 
-Translates text between languages using the same DeepSeek infrastructure
+Translates text between languages using the same Ollama infrastructure
 already powering all TeleMon AI features. No external translation API needed.
 """
 
 from __future__ import annotations
 
 from app.core.logging import get_logger
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 logger = get_logger(__name__)
 
@@ -17,7 +17,7 @@ async def translate_text(
     target_lang: str = "ko",
     source_lang: str | None = None,
 ) -> str | None:
-    """Translate *text* into *target_lang* using DeepSeek.
+    """Translate *text* into *target_lang* using Ollama.
 
     Returns translated text or None on failure.
     """
@@ -49,7 +49,7 @@ async def translate_text(
             f"Output ONLY the translated text, nothing else.\n\n{text}"
         )
 
-    reply, _tokens, _tool_calls = await call_deepseek(
+    reply, _tokens, _tool_calls = await call_ollama(
         [{"role": "user", "content": prompt}],
         max_tokens=1024,
     )

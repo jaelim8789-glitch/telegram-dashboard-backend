@@ -24,7 +24,7 @@ from app.api.deps import get_current_identity, Identity
 from app.database import get_db
 from app.core.logging import get_logger
 from app.models.growth_loop import AutonomousGrowthLoop
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 router = APIRouter(prefix="/api/growth-loop", tags=["growth-loop"])
 logger = get_logger(__name__)
@@ -137,7 +137,7 @@ async def _run_growth_cycle(
             else:
                 cycle_context = "First cycle — use the initial strategy message."
 
-            gen_resp = await call_deepseek(
+            gen_resp = await call_ollama(
                 messages=[
                     {
                         "role": "system",
@@ -163,7 +163,7 @@ async def _run_growth_cycle(
             success_rate = min(round((delivered_count / max(sent_count, 1)) * 100, 1), 99.9)
 
             # ── Analyze performance ──
-            analysis_resp = await call_deepseek(
+            analysis_resp = await call_ollama(
                 messages=[
                     {"role": "system", "content": CYCLE_ANALYSIS_PROMPT.format(
                         goal=loop.goal, message=content, sent_count=sent_count,
@@ -240,7 +240,7 @@ async def start_growth_loop(
         raise HTTPException(status_code=404, detail="목표를 입력해주세요")
 
     # Generate initial strategy via LLM
-    strategy_resp = await call_deepseek(
+    strategy_resp = await call_ollama(
         messages=[
             {"role": "system", "content": GROWTH_STRATEGY_PROMPT.format(
                 goal=body.goal, channels=body.channel_count,

@@ -33,7 +33,7 @@ from app.schemas.ai_reply_v2 import (
     SuggestionReviewRequest,
     SuggestionFeedbackRequest,
 )
-from app.services.ai_core_service import call_deepseek, search_memory, store_memory
+from app.services.ai_core_service import call_ollama, search_memory, store_memory
 
 logger = get_logger(__name__)
 
@@ -334,7 +334,7 @@ async def _generate_conversation_summary(
         {"role": "user", "content": f"Conversation:\n{messages_text}"},
     ]
 
-    reply, _, _ = await call_deepseek(prompt, max_tokens=200)
+    reply, _, _ = await call_ollama(prompt, max_tokens=200)
     return reply
 
 
@@ -477,8 +477,8 @@ async def generate_suggestions(
         "content": f"Incoming message from {request.user_name or 'user'}: {request.incoming_message[:2000]}",
     })
 
-    # 6. Call DeepSeek
-    reply_text, tokens_used, _ = await call_deepseek(messages, max_tokens=_DEFAULT_MAX_TOKENS)
+    # 6. Call Ollama
+    reply_text, tokens_used, _ = await call_ollama(messages, max_tokens=_DEFAULT_MAX_TOKENS)
     if reply_text is None:
         logger.error("ai_reply_v2_generation_failed", account_id=request.account_id)
         return None
@@ -563,7 +563,7 @@ async def generate_suggestions(
 
 
 def _parse_suggestions(raw_text: str) -> dict[str, Any] | None:
-    """Parse the JSON response from DeepSeek into structured suggestions."""
+    """Parse the JSON response from Ollama into structured suggestions."""
     # Try to extract JSON from the response
     text = raw_text.strip()
 

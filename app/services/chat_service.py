@@ -6,7 +6,7 @@ from sqlalchemy import select, delete, or_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import Conversation, Message
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 # ── 시스템 프롬프트 ─────────────────────────────────────────────────────
 SYSTEM_PROMPT = """당신은 TeleMon의 AI 운영 비서입니다. TeleMon은 Telegram 계정 운영을 자동화하는 플랫폼입니다.
@@ -82,7 +82,7 @@ async def ask_ai(db: AsyncSession, conversation_id: str, tenant_id: str, questio
     history.extend({"role": m.role, "content": m.content} for m in msgs)
 
     # 3. AI 호출
-    answer, _, _ = await call_deepseek(history, max_tokens=2000)
+    answer, _, _ = await call_ollama(history, max_tokens=2000)
 
     # 4. AI 응답 저장
     if answer:
@@ -99,7 +99,7 @@ async def ask_ai(db: AsyncSession, conversation_id: str, tenant_id: str, questio
 async def ask_ai_stream(conversation_id: str, tenant_id: str, question: str):
     """SSE 스트리밍 버전. async generator가 chunks를 yield."""
     from app.database import async_session_maker
-    from app.services.ai_core_service import _call_deepseek_stream
+    from app.services.ai_core_service import _call_ollama_stream
 
     # DB 저장은 별도 세션
     async with async_session_maker() as db:
@@ -110,7 +110,7 @@ async def ask_ai_stream(conversation_id: str, tenant_id: str, question: str):
     history.extend({"role": m.role, "content": m.content} for m in msgs)
 
     full = ""
-    async for chunk, _usage in _call_deepseek_stream(history, max_tokens=2000):
+    async for chunk, _usage in _call_ollama_stream(history, max_tokens=2000):
         if chunk:
             full += chunk
             yield json.dumps({"token": chunk}) + "\n"

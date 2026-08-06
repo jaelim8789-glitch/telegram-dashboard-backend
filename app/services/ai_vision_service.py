@@ -6,7 +6,7 @@ Ollama의 비전 모델(qwen2.5vl)을 사용해 첨부된 이미지/동영상을
 
 설정:
 - AI_VISION_MODEL (기본: qwen2.5vl:7b)
-- AI_VISION_API_BASE (기본: DEEPSEEK_API_BASE, 같은 Ollama 박스)
+- AI_VISION_API_BASE (기본: OLLAMA_API_BASE, 같은 Ollama 박스)
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@ from app.api.deps import Identity
 from app.core.logging import get_logger
 from app.core.telegram_identity import tg_identifier
 from app.models.tenant import AiChatMessage, Tenant
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 from app.services.usage_tracker import get_monthly_usage, record_usage
 
 logger = get_logger(__name__)
@@ -248,7 +248,7 @@ async def _do_send(db: AsyncSession, telegram_user_id: int, text: str) -> BotAiA
     history = await _recent_history(db, tenant.id, str(telegram_user_id))
     messages = [{"role": "system", "content": _build_system_prompt()}, *history, {"role": "user", "content": text}]
 
-    answer, _, tool_calls = await call_deepseek(messages, max_tokens=1500, tools=TOOLS)
+    answer, _, tool_calls = await call_ollama(messages, max_tokens=1500, tools=TOOLS)
 
     pending_action: PendingAction | None = None
     tool_failures: list[str] = []
@@ -292,7 +292,7 @@ async def _do_send(db: AsyncSession, telegram_user_id: int, text: str) -> BotAiA
                 tool_failures.append(f"{tool_name}: {tr.error or '실행 실패'}")
 
         if not pending_action and (len(messages) > len(history) + 2 or tool_failures):
-            follow_up, _, _ = await call_deepseek(messages, max_tokens=1200)
+            follow_up, _, _ = await call_ollama(messages, max_tokens=1200)
             if follow_up:
                 answer = follow_up
             elif tool_failures and not answer:

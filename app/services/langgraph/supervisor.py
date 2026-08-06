@@ -6,7 +6,7 @@ a list of worker keys (or "noop"). This is the foundation the MCP Gateway uses
 to decide which MCP server(s) should handle a tool call.
 
 In Phase 1 the supervisor is a simple keyword/intent router (no LLM required),
-so it works even when DeepSeek is unconfigured. Later phases can swap the
+so it works even when Ollama is unconfigured. Later phases can swap the
 supervisor for an LLM-driven planner without changing the worker contract.
 """
 

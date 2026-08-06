@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
@@ -113,29 +113,20 @@ class Settings(BaseSettings):
     # this.
     api_base_url: str = "http://localhost:8000"
 
-    # Local LLM (Ollama) — the only inference backend now. DeepSeek API has
-    # been fully removed from the stack. DEEPSEEK_* env keys remain for
-    # deployment compatibility — they point at the self-hosted Ollama GPU.
-    # validation_alias makes OLLAMA_* win if set, else falls back to DEEPSEEK_*.
-    ollama_api_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("OLLAMA_API_KEY", "DEEPSEEK_API_KEY"),
-    )
+    # Local LLM (Ollama) — the only inference backend.
+    # fully removed; only OLLAMA_* are used.
+    ollama_api_key: str = Field(default="", validation_alias="OLLAMA_API_KEY")
     ollama_api_base: str = Field(
         default="http://172.18.0.1:11434/v1",
-        validation_alias=AliasChoices("OLLAMA_API_BASE", "DEEPSEEK_API_BASE"),
+        validation_alias="OLLAMA_API_BASE",
     )
     ollama_model: str = Field(
         default="huihui_ai/qwen3-abliterated:14b",
-        validation_alias=AliasChoices("OLLAMA_MODEL", "DEEPSEEK_MODEL"),
+        validation_alias="OLLAMA_MODEL",
     )
-    # Backward-compat aliases (deprecated — use ollama_*).
-    deepseek_api_key: str = ""
-    deepseek_api_base: str = "http://172.18.0.1:11434/v1"
-    deepseek_model: str = "huihui_ai/qwen3-abliterated:14b"
     ollama_enabled: bool = True
     ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
-    # How many past turns (user+assistant pairs) to include as context for DeepSeek.
+    # How many past turns (user+assistant pairs) to include as context.
     ai_chat_history_turns: int = 10
 
     # Graphiti 장기 메모리 (off by default). Set graphiti_enabled=true and fill

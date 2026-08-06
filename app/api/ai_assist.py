@@ -1,7 +1,7 @@
 """AI Assist API — LLM-powered operational features.
 
-All endpoints reuse ``_call_deepseek`` from ``app.services.ai_chat_service`` so the
-same DeepSeek configuration, provider, and quota model applies. No new provider
+All endpoints reuse ``_call_ollama`` from ``app.services.ai_chat_service`` so the
+same Ollama configuration, provider, and quota model applies. No new provider
 or separate API key is introduced.
 
 Endpoints are suggestion-only: nothing in this router sends a Telegram message
@@ -22,7 +22,7 @@ from app.crud.ai_broadcast_draft import create_draft, list_recent_drafts
 from app.crud.ai_ops_report import list_recent_reports
 from app.database import get_db
 from app.services.ai_analysis_service import DELIVERY_SYSTEM_PROMPT, analyze_text_report
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _call_ollama
 from app.services.ai_ops_service import generate_and_store_ops_report
 from app.services.ai_reply_service import generate_reply_suggestion
 from app.services.lead_capture import get_lead_count, get_leads
@@ -160,7 +160,7 @@ async def api_generate_message(
     identity: Identity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> GenerateMessageResponse:
-    """Generate a Telegram broadcast message draft using DeepSeek."""
+    """Generate a Telegram broadcast message draft using Ollama."""
     memory = await build_telemon_memory_context(db, identity, payload.prompt)
     messages = [
         {
@@ -182,7 +182,7 @@ async def api_generate_message(
         {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": payload.prompt},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="  .")
     return GenerateMessageResponse(content=reply.strip())
@@ -236,7 +236,7 @@ async def api_suggest_reply(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"[  ]\n{data_summary}"},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 답장 생성에 실패했습니다.")
     return SuggestReplyResponse(reply=reply.strip())
@@ -285,7 +285,7 @@ async def api_optimize_broadcast(
         {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": user_content},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 메시지 최적화에 실패했습니다.")
 
@@ -330,7 +330,7 @@ async def api_generate_broadcast(
         {"role": "system", "content": memory.text or "[TeleMon 전용 Memory] 데이터 없음"},
         {"role": "user", "content": payload.prompt},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 발송 생성에 실패했습니다.")
 
@@ -579,7 +579,7 @@ async def api_recommend_send_time(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"[발송 시간 데이터]\n{data_summary}"},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     reasoning = reply.strip() if reply else f"과거 {total}건 데이터 기준, UTC {top_hour}시 (한국 {readable})가 가장 발송량이 많았습니다."
 
     return SendTimeRecommendationResponse(
@@ -692,7 +692,7 @@ async def api_dashboard_summary(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
 
     if reply is None:
         return DashboardSummaryResponse(

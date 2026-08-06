@@ -1,11 +1,11 @@
-"""Shared "analyze this data with DeepSeek and extract anomaly/insight lines"
+"""Shared "analyze this data with Ollama and extract anomaly/insight lines"
 logic, used by both app.api.ai_assist (on-demand, operator-triggered) and
 app.services.ai_ops_service (periodic scheduled report). Extracted so the two
 call sites share one system-prompt-building + parsing implementation instead
-of duplicating it. Reuses _call_deepseek — no new provider.
+of duplicating it. Reuses _call_ollama — no new provider.
 """
 
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _call_ollama
 
 _ANOMALY_KEYWORDS = ["이상", "주의", "경고", "위험", "증가", "감소"]
 
@@ -29,14 +29,14 @@ DELIVERY_SYSTEM_PROMPT = (
 async def analyze_text_report(
     system_prompt: str, user_prompt: str, *, max_anomalies: int = 5
 ) -> tuple[str | None, list[str]]:
-    """Sends system_prompt + user_prompt to DeepSeek and splits out anomaly/
+    """Sends system_prompt + user_prompt to Ollama and splits out anomaly/
     insight lines (those containing ";" plus one of _ANOMALY_KEYWORDS) from the
-    full report text. Returns (None, []) if the DeepSeek call fails."""
+    full report text. Returns (None, []) if the Ollama call fails."""
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         return None, []
 

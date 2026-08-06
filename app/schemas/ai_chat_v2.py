@@ -7,12 +7,12 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 
-# The provider/model actually behind this is whatever DEEPSEEK_API_BASE +
-# DEEPSEEK_MODEL point at right now -- was a hardcoded "deepseek-chat"
+# The provider/model actually behind this is whatever OLLAMA_API_BASE +
+# OLLAMA_MODEL point at right now -- was a hardcoded "ollama-chat"
 # literal, silently breaking (or worse, silently ignoring model swaps) any
 # time that env var moved to a self-hosted model with a different name,
 # since nothing on the frontend ever overrides this default.
-_default_model = lambda: settings.deepseek_model  # noqa: E731
+_default_model = lambda: settings.ollama_model  # noqa: E731
 
 
 #  Session 

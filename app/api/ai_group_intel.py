@@ -1,10 +1,10 @@
 """AI Group Intelligence  analyzes Telegram groups an account belongs to.
 
-Uses DeepSeek to classify groups by topic, engagement level, size, and
+Uses Ollama to classify groups by topic, engagement level, size, and
 recommend the best targets for a broadcast goal.
 
-All endpoints reuse ``_call_deepseek`` from ``app.services.ai_chat_service``
-so the same DeepSeek configuration, provider, and quota model applies.
+All endpoints reuse ``_call_ollama`` from ``app.services.ai_chat_service``
+so the same Ollama configuration, provider, and quota model applies.
 Every endpoint is gated by the standard authentication dependency.
 """
 
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import Identity, get_current_identity, require_account_tenant_access
 from app.crud import account as account_crud
 from app.database import get_db
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _call_ollama
 from app.services.telegram_actions import AccountNotAuthenticatedError, list_groups
 
 router = APIRouter(prefix="/api/ai/groups", tags=["ai-group-intel"])
@@ -120,7 +120,7 @@ async def analyze_groups(
 ) -> AnalyzeGroupsResponse:
     """Analyze and classify all groups/channels an account belongs to.
 
-    Uses DeepSeek to classify each group's topic, engagement level,
+    Uses Ollama to classify each group's topic, engagement level,
     and language based on its title and metadata.
     """
     await require_account_tenant_access(account_id, db, identity)
@@ -171,7 +171,7 @@ async def analyze_groups(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -276,7 +276,7 @@ async def recommend_best_targets(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

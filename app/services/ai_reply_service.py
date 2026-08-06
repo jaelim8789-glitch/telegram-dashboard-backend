@@ -2,10 +2,10 @@
 AI fallback (per-account opt-in, see Account.ai_fallback_reply_enabled).
 
 Suggestion-only by design: nothing in this module ever sends a Telegram
-message. It only drafts text (via the shared DeepSeek call in
+message. It only drafts text (via the shared Ollama call in
 app.services.ai_chat_service) and, for the auto-reply fallback path,
 persists it as an AutoReplySuggestion for an operator to review and send
-manually. No new LLM provider — reuses _call_deepseek exactly like
+manually. No new LLM provider — reuses _call_ollama exactly like
 app.api.ai_assist and app.services.ai_chat_service.
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.auto_reply import AutoReplySuggestion
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _call_ollama
 
 logger = get_logger(__name__)
 
@@ -30,14 +30,14 @@ _SYSTEM_PROMPT = (
 
 
 async def generate_reply_suggestion(incoming_message: str) -> str | None:
-    """Draft a reply to `incoming_message`. Returns None on any DeepSeek failure
+    """Draft a reply to `incoming_message`. Returns None on any Ollama failure
     (not-configured, timeout, HTTP error) — callers should treat None as
     "no suggestion available" rather than raise."""
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": incoming_message},
     ]
-    reply = await _call_deepseek(messages)
+    reply = await _call_ollama(messages)
     return reply.strip() if reply else None
 
 
@@ -51,7 +51,7 @@ async def record_auto_reply_suggestion(
     trigger_message: str,
 ) -> AutoReplySuggestion | None:
     """Draft and persist a suggestion for a message that matched no AutoReplyRule.
-    Returns None (and persists nothing) if DeepSeek couldn't produce a reply —
+    Returns None (and persists nothing) if Ollama couldn't produce a reply —
     this must never raise into the Telethon event handler that calls it."""
     suggested_reply = await generate_reply_suggestion(trigger_message)
     if suggested_reply is None:

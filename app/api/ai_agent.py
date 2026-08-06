@@ -11,7 +11,7 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.database import get_db
 from app.models.ai_agent import AiAgent, AiChat, AiMessage
-from app.services.ai_core_service import call_deepseek, _call_deepseek_stream
+from app.services.ai_core_service import call_ollama, _call_ollama_stream
 from app.services.usage_tracker import get_monthly_usage, record_usage
 
 router = APIRouter(prefix="/api/ai", tags=["ai-agent"])
@@ -256,7 +256,7 @@ async def send_message(
     messages.extend({"role": m.role, "content": m.content} for m in history)
 
     # AI 호출 (with Function Calling tools)
-    answer, tokens, tool_calls = await call_deepseek(messages, max_tokens=2000, tools=TOOLS)
+    answer, tokens, tool_calls = await call_ollama(messages, max_tokens=2000, tools=TOOLS)
 
     # ── Handle tool_calls ──────────────────────────────────────────
     pending_confirmation = None
@@ -307,7 +307,7 @@ async def send_message(
 
         # Read tool 결과가 있으면 AI 재호출하여 자연어 응답 생성
         if tool_results and not pending_confirmation:
-            follow_up, follow_tokens, _ = await call_deepseek(messages, max_tokens=1500)
+            follow_up, follow_tokens, _ = await call_ollama(messages, max_tokens=1500)
             if follow_up:
                 answer = follow_up
                 tokens += follow_tokens
@@ -386,7 +386,7 @@ async def send_message_stream(
     async def _stream():
         full = ""
         real_tokens = 0
-        async for chunk, usage in _call_deepseek_stream(messages, max_tokens=2000):
+        async for chunk, usage in _call_ollama_stream(messages, max_tokens=2000):
             if chunk:
                 full += chunk
                 yield json.dumps({"token": chunk}) + "\n"
@@ -746,7 +746,7 @@ async def purchase_template(
 from pydantic import BaseModel
 
 class ChatCompletionRequest(BaseModel):
-    model: str = settings.ollama_model or "deepseek-chat"
+    model: str = settings.ollama_model or "ollama-chat"
     messages: list[dict]
     stream: bool = False
     max_tokens: int = 4096
@@ -760,7 +760,7 @@ async def chat_completions_proxy(
 ):
     """프론트엔드 ai-chat.ts의 백엔드 프록시.
 
-    브라우저가 DeepSeek API를 직접 호출하지 않고 이 엔드포인트를
+    브라우저가 Ollama API를 직접 호출하지 않고 이 엔드포인트를
     통해 요청하므로 API 키가 클라이언트에 노출되지 않는다.
     """
     if not settings.ollama_api_base:
@@ -772,7 +772,7 @@ async def chat_completions_proxy(
 
     if body.stream:
         async def sse_stream():
-            async for content, tokens in _call_deepseek_stream(
+            async for content, tokens in _call_ollama_stream(
                 messages=body.messages,
                 max_tokens=body.max_tokens,
                 model=body.model,
@@ -794,7 +794,7 @@ async def chat_completions_proxy(
             },
         )
 
-    reply, tokens, _ = await call_deepseek(
+    reply, tokens, _ = await call_ollama(
         messages=body.messages,
         max_tokens=body.max_tokens,
         model=body.model,

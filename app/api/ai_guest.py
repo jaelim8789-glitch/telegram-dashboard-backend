@@ -2,7 +2,7 @@
 
 Epic 26: the biggest drop-off point in the current funnel is "I just want to
 try the AI, why do I need to sign up + connect Telegram first?". This gives
-anyone a real (not mocked/fabricated) DeepSeek-backed chat at /ai, rate
+anyone a real (not mocked/fabricated) Ollama-backed chat at /ai, rate
 limited per IP, with nothing persisted server-side -- the conversation lives
 only in the browser (sessionStorage) and disappears on refresh.
 
@@ -24,7 +24,7 @@ from app.core.logging import get_logger
 from app.core.rate_limiter import get_client_ip
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
-from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full, extract_confidence
+from app.services.ai_chat_service import _MAX_TOKENS, _call_ollama_full, extract_confidence
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 from app.services.guest_credit_service import (
     GUEST_CREDITS_PER_REFILL,
@@ -154,7 +154,7 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     # The model always reasons internally regardless of budget -- think_mode
     # only controls whether that reasoning gets shown to the user, not how
     # much token budget the call gets.
-    result = await _call_deepseek_full(messages, max_tokens=_MAX_TOKENS)
+    result = await _call_ollama_full(messages, max_tokens=_MAX_TOKENS)
     if result is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
     reply, reasoning = result
@@ -212,7 +212,7 @@ async def _suggest_follow_ups(question: str, reply: str) -> list[str]:
             '형식: 각 질문을 "- "로 시작해서 줄바꿈으로 구분. '
             "질문만 출력하고 다른 말은 하지 마세요."
         )
-        result = await _call_deepseek_full(
+        result = await _call_ollama_full(
             [{"role": "user", "content": prompt}],
             max_tokens=150,
         )
@@ -271,7 +271,7 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
                     answer=log.reply[:5000],
                     feedback_score=5.0,  # 게스트는 thumbs_up만 있으므로 5점으로 설정
                     feedback_count=1,
-                    model_name="deepseek-chat",
+                    model_name="ollama-chat",
                     tokens_used=0,
                     response_time_ms=0,
                     ai_version="guest",

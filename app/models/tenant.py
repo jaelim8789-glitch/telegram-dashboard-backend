@@ -179,7 +179,7 @@ class AiChatMessage(Base):
     """A single turn (user or assistant) in a tenant's bot "AI Chat" conversation.
 
     Kept per (tenant_id, telegram_user_id) so ai_chat_service can rebuild recent
-    context for DeepSeek and so history survives a bot process restart.
+    context for Ollama and so history survives a bot process restart.
     """
 
     __tablename__ = "ai_chat_messages"

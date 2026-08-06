@@ -1,7 +1,7 @@
 """AI Chat 2.0 Service.
 
 Core service for:
-- SSE streaming responses from DeepSeek
+- SSE streaming responses from Ollama
 - Session management (CRUD, auto-summary)
 - Graphiti long-term memory integration
 - Prompt template system with variable substitution
@@ -39,7 +39,7 @@ from app.schemas.ai_chat_v2 import (
 )
 from app.api.ai_tools import TOOLS as _ALL_TOOLS
 from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, CONFIDENCE_STREAM_HOLDBACK
-from app.services.ai_core_service import call_deepseek, search_memory, store_memory
+from app.services.ai_core_service import call_ollama, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 
@@ -72,7 +72,7 @@ _MAX_SUMMARY_LINES = 3
 # most once per session, not on every reply (huge mobile-latency win).
 _session_summary_cache: dict[str, str] = {}
 _MAX_INPUT_CHARS = 10000
-# The self-hosted reasoning model behind DEEPSEEK_API_BASE spends a chunk of
+# The self-hosted reasoning model behind OLLAMA_API_BASE spends a chunk of
 # this on a separate "thinking" pass before any real content -- self-hosted
 # GPU means no per-token cost, so budget generously rather than trim close
 # to the edge.
@@ -242,7 +242,7 @@ async def _update_session_summary(
         {"role": "user", "content": f"Conversation:\n{text}"},
     ]
 
-    reply, _, _ = await call_deepseek(prompt, max_tokens=150)
+    reply, _, _ = await call_ollama(prompt, max_tokens=150)
     if reply:
         session.summary = reply.strip()
         session.summary_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -357,7 +357,7 @@ async def _extract_user_interests(recent: list[AiChatMessageV2]) -> str:
         return ""
     try:
         joined = "\n".join(f"- {u[:120]}" for u in user_msgs[-6:])
-        result = await call_deepseek(
+        result = await call_ollama(
             [{
                 "role": "user",
                 "content": (
@@ -383,7 +383,7 @@ async def _condense_history(older: list[AiChatMessageV2]) -> str:
         text = "\n".join(
             f"{'사용자' if m.role == 'user' else 'AI'}: {m.content[:200]}" for m in older[-20:]
         )
-        result = await call_deepseek(
+        result = await call_ollama(
             [{
                 "role": "user",
                 "content": (
@@ -649,7 +649,7 @@ async def self_review_answer(
             f"문제 없으면 \"PASS\"만, 문제 있으면 \"FAIL: 이유\" 형태로만 답변하세요."
         )
 
-        result, _tokens, _tool_calls = await call_deepseek(
+        result, _tokens, _tool_calls = await call_ollama(
             [{"role": "user", "content": review_prompt}],
             max_tokens=200,
         )
@@ -708,7 +708,7 @@ async def create_knowledge_candidate(
         model_name=model_name or "unknown",
         tokens_used=tokens_used,
         response_time_ms=response_time_ms,
-        ai_version=settings.ollama_model or "deepseek-chat",
+        ai_version=settings.ollama_model or "ollama-chat",
         prompt_version="v1",
         status="pending",
     )
@@ -722,17 +722,17 @@ async def create_knowledge_candidate(
     )
 
 
-#  Streaming DeepSeek Call 
+#  Streaming Ollama Call 
 
 
-async def _stream_deepseek(
+async def _stream_ollama(
     messages: list[dict],
     model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     tools: list[dict] | None = None,
     temperature: float = 0.7,
 ) -> AsyncGenerator[tuple[str, str], None]:
-    """Stream response from DeepSeek API, yielding ("content"|"reasoning"|"tool_call", text) tuples.
+    """Stream response from Ollama API, yielding ("content"|"reasoning"|"tool_call", text) tuples.
 
     The self-hosted reasoning model streams its "thinking" pass in a separate
     `delta.reasoning` field before/alongside `delta.content` -- callers that
@@ -740,7 +740,7 @@ async def _stream_deepseek(
     """
     client = _get_client()
     payload = {
-        "model": model or settings.ollama_model or "deepseek-chat",
+        "model": model or settings.ollama_model or "ollama-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": True,
@@ -816,7 +816,7 @@ async def _stream_deepseek(
                 raise
 
 
-async def _call_deepseek_nonstream(
+async def _call_ollama_nonstream(
     messages: list[dict],
     model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
@@ -825,7 +825,7 @@ async def _call_deepseek_nonstream(
     """Non-streaming call with token tracking. Returns (content, prompt_tokens, completion_tokens)."""
     client = _get_client()
     payload = {
-        "model": model or settings.ollama_model or "deepseek-chat",
+        "model": model or settings.ollama_model or "ollama-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
@@ -1237,7 +1237,7 @@ async def chat(
         # flushed to the client mid-stream -- see extract_confidence().
         pending = ""
         try:
-            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None, temperature=effective_temperature):
+            async for kind, text in _stream_ollama(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None, temperature=effective_temperature):
                 if kind == "reasoning":
                     full_reasoning += text
                     if not effective_think_mode:
@@ -1334,7 +1334,7 @@ async def chat(
             full_content = ""
             full_confidence = None
             pending = ""
-            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature):
+            async for kind, text in _stream_ollama(messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature):
                 if kind == "content":
                     text = text.replace("<think>", "").replace("</think>", "")
                     if text:
@@ -1364,7 +1364,7 @@ async def chat(
             len(full_content) < 40 or _is_rambling(full_content) or _is_refusal(full_content)
         ):
             logger.info("ai_stream_quality_gate_retry", length=len(full_content))
-            regen, _pt2, _ct2 = await _call_deepseek_nonstream(
+            regen, _pt2, _ct2 = await _call_ollama_nonstream(
                 messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
             )
             if regen and len(regen) > len(full_content):
@@ -1438,7 +1438,7 @@ async def chat(
 
     else:
         # Non-streaming response
-        reply, prompt_tokens, completion_tokens = await _call_deepseek_nonstream(
+        reply, prompt_tokens, completion_tokens = await _call_ollama_nonstream(
             messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
         )
         if reply is None:
@@ -1461,7 +1461,7 @@ async def chat(
             if not passed or reply_len < 20:
                 reason = "too_short" if too_short else ("refusal" if refusal else "rambling")
                 logger.info("ai_chat_quality_gate_retry", reason=reason, length=reply_len)
-                retried, _pt, _ct = await _call_deepseek_nonstream(
+                retried, _pt, _ct = await _call_ollama_nonstream(
                     messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
                 )
                 if retried and len(retried) > reply_len:

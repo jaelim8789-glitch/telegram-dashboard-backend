@@ -6,8 +6,8 @@ Provides:
 - AI recommendations with reasons & confidence scores
 - Production-ready endpoint design
 
-All endpoints reuse ``_call_deepseek`` from ``app.services.ai_chat_service``
-so the same DeepSeek configuration, provider, and quota model applies.
+All endpoints reuse ``_call_ollama`` from ``app.services.ai_chat_service``
+so the same Ollama configuration, provider, and quota model applies.
 """
 
 import json
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity
 from app.database import get_db
-from app.services.ai_chat_service import _call_deepseek
+from app.services.ai_chat_service import _call_ollama
 from app.services.delivery_analytics import get_account_performance, get_failure_breakdown, get_summary
 from app.services.lead_capture import get_lead_count, get_leads
 from app.services.telemon_memory_service import build_telemon_memory_context
@@ -209,12 +209,12 @@ async def _gather_context_data(
     return "\n".join(ctx_lines), sources
 
 
-async def _call_deepseek_with_timeout(messages: list[dict], timeout_seconds: int = 30) -> str | None:
-    """Wrapper for _call_deepseek with individual timeout awareness."""
+async def _call_ollama_with_timeout(messages: list[dict], timeout_seconds: int = 30) -> str | None:
+    """Wrapper for _call_ollama with individual timeout awareness."""
     try:
-        return await _call_deepseek(messages)
+        return await _call_ollama(messages)
     except Exception as exc:
-        logger.error("ai_copilot_deepseek_failed", error=str(exc))
+        logger.error("ai_copilot_ollama_failed", error=str(exc))
         return None
 
 
@@ -273,7 +273,7 @@ async def copilot_chat(
         {"role": "user", "content": payload.message},
     ]
 
-    reply = await _call_deepseek_with_timeout(messages)
+    reply = await _call_ollama_with_timeout(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -342,7 +342,7 @@ async def one_click_action(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        reply = await _call_deepseek_with_timeout(messages)
+        reply = await _call_ollama_with_timeout(messages)
         if reply:
             details.append({
                 "step": "delivery_health",
@@ -387,7 +387,7 @@ async def one_click_action(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        reply = await _call_deepseek_with_timeout(messages)
+        reply = await _call_ollama_with_timeout(messages)
         if reply:
             details.append({
                 "step": "weekly_report",
@@ -416,7 +416,7 @@ async def one_click_action(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        reply = await _call_deepseek_with_timeout(messages)
+        reply = await _call_ollama_with_timeout(messages)
         if reply:
             details.append({
                 "step": "broadcast_optimization",
@@ -444,7 +444,7 @@ async def one_click_action(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        reply = await _call_deepseek_with_timeout(messages)
+        reply = await _call_ollama_with_timeout(messages)
         if reply:
             details.append({
                 "step": "customer_insights",
@@ -471,7 +471,7 @@ async def one_click_action(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        reply = await _call_deepseek_with_timeout(messages)
+        reply = await _call_ollama_with_timeout(messages)
         if reply:
             details.append({
                 "step": "reply_audit",
@@ -551,7 +551,7 @@ async def get_recommendations(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply = await _call_deepseek_with_timeout(messages)
+    reply = await _call_ollama_with_timeout(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -594,7 +594,7 @@ async def refresh_recommendations(
     db: AsyncSession = Depends(get_db),
 ) -> RecommendationsResponse:
     """Force-refresh AI recommendations (identical to GET but explicit
-    that this triggers a new DeepSeek call every time  no caching)."""
+    that this triggers a new Ollama call every time  no caching)."""
     return await get_recommendations(days=days, identity=identity, db=db)
 
 
@@ -642,7 +642,7 @@ async def smart_send_time(
         {"role": "user", "content": user_prompt},
     ]
 
-    reply = await _call_deepseek_with_timeout(messages)
+    reply = await _call_ollama_with_timeout(messages)
     if reply is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

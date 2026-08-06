@@ -21,7 +21,7 @@ class AiChatSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200), default="New Chat")
-    model: Mapped[str] = mapped_column(String(50), default="deepseek-chat")
+    model: Mapped[str] = mapped_column(String(50), default="ollama-chat")
 
     # Session metadata
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
@@ -71,7 +71,7 @@ class AiChatMessageV2(Base):
     tokens_prompt: Mapped[int] = mapped_column(Integer, default=0)
     tokens_completion: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    model: Mapped[str] = mapped_column(String(50), default="deepseek-chat")
+    model: Mapped[str] = mapped_column(String(50), default="ollama-chat")
 
     # Memory integration
     memory_context: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)

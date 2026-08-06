@@ -57,7 +57,7 @@ class ApiProviderConfigResponse(BaseModel):
 
 
 class ApiCallRequest(BaseModel):
-    provider: str = Field("deepseek", max_length=50)
+    provider: str = Field("ollama", max_length=50)
     model: str | None = None
     messages: list[dict[str, Any]] = Field(..., min_length=1)
     max_tokens: int | None = None

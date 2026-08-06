@@ -21,7 +21,7 @@ class AiApiProviderConfig(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     provider_name: Mapped[str] = mapped_column(String(50), nullable=False)
-    # deepseek | openai | anthropic | google | custom
+    # ollama | openai | anthropic | google | custom
     api_base_url: Mapped[str] = mapped_column(String(255), nullable=False)
     api_key_encrypted: Mapped[str] = mapped_column(String(500), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)

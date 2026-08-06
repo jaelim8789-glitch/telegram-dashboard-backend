@@ -1,10 +1,10 @@
 """
-TeleMon AI Core Service — shared DeepSeek client, Graphiti memory integration,
+TeleMon AI Core Service — shared Ollama client, Graphiti memory integration,
 and usage tracking for all AI features (Chat, Reply Assistant, Broadcast Assistant,
 Operations Report).
 
 Every AI feature routes through this module so that:
-- The same DeepSeek configuration (model, base URL, API key) is used everywhere.
+- The same Ollama configuration (model, base URL, API key) is used everywhere.
 - Graphiti long-term memory is consistently applied per-tenant.
 - Usage quotas and credits are enforced uniformly.
 - All AI interactions are logged for audit.
@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 _MAX_INPUT_CHARS = 4000
 _MAX_TOKENS = 1000
-_DEFAULT_MODEL = settings.ollama_model or "deepseek-chat"
+_DEFAULT_MODEL = settings.ollama_model or "ollama-chat"
 
 # Feature names for usage tracking
 FEATURE_CHAT = "ai_chat"
@@ -71,16 +71,16 @@ def _set_in_flight(tenant_id: str, feature: str, value: bool) -> None:
         _in_flight.pop(key, None)
 
 
-# ─── DeepSeek API Call ────────────────────────────────────────────────────
+# ─── Ollama API Call ─────────────────────────────────────────────────────
 
 
-async def call_deepseek(
+async def call_ollama(
     messages: list[dict],
     max_tokens: int = _MAX_TOKENS,
     model: str | None = None,
     tools: list[dict] | None = None,
 ) -> tuple[str | None, int, list[dict] | None]:
-    """Call DeepSeek API and return (reply_text, tokens_used, tool_calls).
+    """Call Ollama API and return (reply_text, tokens_used, tool_calls).
 
     Returns (None, 0, None) on any failure.
     If tools are provided, the response may include tool_calls instead of content.
@@ -113,13 +113,13 @@ async def call_deepseek(
 
             return content, tokens, tool_calls
     except httpx.TimeoutException:
-        logger.error("ai_deepseek_timeout")
+        logger.error("ai_ollama_timeout")
         return None, 0, None
     except httpx.HTTPStatusError as exc:
-        logger.error("ai_deepseek_http_error", status=exc.response.status_code, body=exc.response.text[:500])
+        logger.error("ai_ollama_http_error", status=exc.response.status_code, body=exc.response.text[:500])
         return None, 0, None
     except (httpx.HTTPError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
-        logger.error("ai_deepseek_call_failed", error=str(exc))
+        logger.error("ai_ollama_call_failed", error=str(exc))
         return None, 0, None
 
 
@@ -132,16 +132,16 @@ async def call_ollama(
 ) -> tuple[str | None, int, list[dict] | None]:
     """Call the local Ollama server and return (reply_text, tokens_used, tool_calls).
 
-    Same return shape as call_deepseek so callers can treat them
+    Same return shape as call_ollama so callers can treat them
     interchangeably. tool_calls is always None -- the local model isn't
     wired up for tool-calling. Returns (None, 0, None) on any failure so a
-    down/unreachable Ollama degrades the same way a missing DeepSeek key
+    down/unreachable Ollama degrades the same way a missing Ollama key
     does, instead of crashing the request.
     """
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                f"{settings.ollama_base_url}/api/chat",
+                f"{settings.ollama_api_base}/api/chat",
                 json={
                     "model": model or settings.ollama_model,
                     "messages": messages,
@@ -168,20 +168,20 @@ async def call_llm_for_tenant(
     model: str | None = None,
     tools: list[dict] | None = None,
 ) -> tuple[str | None, int, list[dict] | None]:
-    """Routes to the local Ollama model for free-plan tenants, DeepSeek for
-    everyone else (pro/team) -- keeps DeepSeek's per-message API cost off the
-    much larger free user base. Falls back to DeepSeek if Ollama fails, so a
+    """Routes to the local Ollama model for free-plan tenants, Ollama for
+    everyone else (pro/team) -- keeps Ollama's per-message API cost off the
+    much larger free user base. Falls back to Ollama if Ollama fails, so a
     free user still gets a real answer instead of a dead end (at the cost of
-    the DeepSeek call that routing was meant to avoid, but only on failure)."""
+    the Ollama call that routing was meant to avoid, but only on failure)."""
     if settings.ollama_enabled and tenant_plan == "free":
         reply, tokens, _ = await call_ollama(messages, model=None)
         if reply is not None:
             return reply, tokens, None
-        logger.warning("ollama_failed_falling_back_to_deepseek")
-    return await call_deepseek(messages, max_tokens=max_tokens, model=model, tools=tools)
+        logger.warning("ollama_failed_falling_back_to_ollama")
+    return await call_ollama(messages, max_tokens=max_tokens, model=model, tools=tools)
 
 
-async def _call_deepseek_stream(
+async def _call_ollama_stream(
     messages: list[dict],
     max_tokens: int = _MAX_TOKENS,
     model: str | None = None,
@@ -226,7 +226,7 @@ async def _call_deepseek_stream(
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
     except Exception as exc:
-        logger.error("ai_deepseek_stream_error", error=str(exc))
+        logger.error("ai_ollama_stream_error", error=str(exc))
         yield (None, 0)
 
 

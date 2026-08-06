@@ -9,7 +9,7 @@ from telethon.tl import functions
 from telethon.tl.types import ChatBannedRights
 
 from app.core.logging import get_logger
-from app.services.ai_core_service import call_deepseek
+from app.services.ai_core_service import call_ollama
 
 logger = get_logger(__name__)
 
@@ -105,7 +105,7 @@ async def _ai_risk_score(message: str, rule_score: int, reasons: list[str]) -> t
         },
         ensure_ascii=False,
     )
-    reply, _, _ = await call_deepseek(
+    reply, _, _ = await call_ollama(
         [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
         max_tokens=120,
     )
