@@ -621,6 +621,7 @@ def _assistant_context(
     base: dict = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
     if answer:
         base["quality_score"] = _quality_score(question, answer)
+        base["domain"] = _classify_domain(question)
     return ctx + [base] if ctx else [base]
 
 
@@ -1602,8 +1603,9 @@ async def chat(
                 temperature=0.8,
             )
             if refined and len(refined) > len(reply):
-                logger.info("ai_chat_2pass_refined", delta=len(refined) - len(reply))
+                logger.info("ai_chat_2pass_refined", delta=len(refined) - len(reply), domain=domain, tenant_id=tenant_id)
                 reply, confidence = extract_confidence(refined)
+                refined_used = True
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1619,6 +1621,10 @@ async def chat(
             memory_context=_assistant_context(memory_context, kb_context, answer=reply, question=request.content),
             memory_stored=False,
         )
+        if locals().get("refined_used"):
+            _meta = assistant_msg.memory_context or []
+            _meta.append({"refined": True})
+            assistant_msg.memory_context = _meta
         db.add(assistant_msg)
 
         session.message_count += 2
@@ -2086,4 +2092,106 @@ async def get_ai_quality_report(db: AsyncSession, tenant_id: str, days: int = 7)
             "learned_kb_docs": kb_count,
             "pending_candidates": pending_candidates,
         },
+    }
+
+
+#  Admin AI Quality Analytics (Q8 + Q9 + Q10)
+
+
+async def get_admin_quality_analytics(db: AsyncSession, days: int = 7) -> dict:
+    """Admin-facing AI quality analytics.
+
+    Q8: aggregate answer quality_score (0-100) trend over time.
+    Q10: domain benchmark — average quality_score + feedback per domain.
+    Q9: low-quality answers (quality_score < 40) listed as improvement
+        candidates so admins can feed them into the learning queue.
+    """
+    from datetime import timedelta
+    from sqlalchemy import func
+    from app.core.time import utcnow_naive
+    from app.models.ai_chat_v2 import AiChatMessageV2
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Pull all assistant messages with memory_context (which holds quality_score)
+    rows = (await db.execute(
+        select(AiChatMessageV2).where(
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.created_at >= since,
+        ).order_by(AiChatMessageV2.created_at.desc()).limit(2000)
+    )).scalars().all()
+
+    # Q8: daily avg quality score
+    daily: dict[str, list[int]] = {}
+    # Q10: domain buckets
+    domains: dict[str, dict] = {}
+    # Q9: low-quality candidates
+    low_quality: list[dict] = []
+
+    for m in rows:
+        meta = m.memory_context or []
+        qs = None
+        domain = "general"
+        for item in meta:
+            if isinstance(item, dict):
+                if "quality_score" in item:
+                    qs = item.get("quality_score")
+                if "domain" in item:
+                    domain = item.get("domain", "general")
+        # If domain wasn't stored in meta, classify from content
+        if domain == "general" and m.content:
+            domain = _classify_domain(m.content)
+
+        # Q10: domain benchmark
+        if qs is not None:
+            b = domains.setdefault(domain, {"count": 0, "score_sum": 0.0, "positive": 0, "negative": 0})
+            b["count"] += 1
+            b["score_sum"] += float(qs)
+            if m.feedback_score is not None:
+                if m.feedback_score >= 4:
+                    b["positive"] += 1
+                elif m.feedback_score <= 2:
+                    b["negative"] += 1
+
+        # Q8: daily trend
+        if qs is not None and m.created_at:
+            day = m.created_at.strftime("%Y-%m-%d")
+            daily.setdefault(day, []).append(int(qs))
+
+        # Q9: low-quality improvement candidates
+        if qs is not None and qs < 40 and m.content and len(m.content) > 5:
+            low_quality.append({
+                "id": m.id,
+                "session_id": m.session_id,
+                "domain": domain,
+                "quality_score": int(qs),
+                "content_preview": m.content[:200],
+            })
+
+    domain_summary = {
+        k: {
+            "count": v["count"],
+            "avg_score": round(v["score_sum"] / v["count"], 1) if v["count"] else 0,
+            "positive": v["positive"],
+            "negative": v["negative"],
+        }
+        for k, v in domains.items()
+    }
+
+    daily_summary = {
+        day: {
+            "avg": round(sum(scores) / len(scores), 1) if scores else 0,
+            "count": len(scores),
+        }
+        for day, scores in sorted(daily.items())
+    }
+
+    return {
+        "period_days": days,
+        "quality_trend": daily_summary,
+        "domain_benchmark": domain_summary,
+        "low_quality_candidates": low_quality[:100],
+        "low_quality_count": len(low_quality),
+        "total_messages": len(rows),
     }

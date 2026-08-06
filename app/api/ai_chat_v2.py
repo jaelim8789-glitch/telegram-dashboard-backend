@@ -736,3 +736,15 @@ async def ai_quality_report_endpoint(
     """Per-tenant AI quality summary — feedback, RAG effectiveness, learning."""
     from app.services.ai_chat_v2_service import get_ai_quality_report
     return await get_ai_quality_report(db, identity.tenant_id, days=days)
+
+
+@router.get("/analytics/quality-admin")
+async def ai_quality_admin_endpoint(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+):
+    """Admin AI quality analytics — quality trend, domain benchmark,
+    low-quality improvement candidates (Q8/Q9/Q10)."""
+    from app.services.ai_chat_v2_service import get_admin_quality_analytics
+    return await get_admin_quality_analytics(db, days=days)
