@@ -24,6 +24,7 @@ from app.database import get_db
 from app.models.ai_chat_v2 import AiChatMessageV2
 from app.schemas.ai_chat_v2 import (
     ChatRequest,
+    MessageCreate,
     MessageFeedback,
     MessageRead,
     PromptTemplateCreate,
@@ -39,6 +40,7 @@ from app.schemas.ai_chat_v2 import (
 )
 from app.services.ai_chat_v2_service import (
     chat,
+    copy_message,
     create_session,
     create_template,
     delete_session,
@@ -167,6 +169,22 @@ async def get_messages(
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     return await get_session_messages(db, session_id, identity.tenant_id, limit, offset)
+
+
+@router.post("/sessions/{session_id}/messages", response_model=MessageRead, status_code=status.HTTP_201_CREATED)
+async def copy_message_endpoint(
+    session_id: str,
+    payload: MessageCreate,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Copy a message verbatim into a session -- used by session branching
+    on the frontend to seed a new conversation with an existing prefix. Not
+    an AI call: no generation, no credit deduction."""
+    msg = await copy_message(db, session_id, identity.tenant_id, payload.role, payload.content, payload.model)
+    if msg is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    return msg
 
 
 #  Message Feedback 

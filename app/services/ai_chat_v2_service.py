@@ -141,6 +141,8 @@ async def update_session(
         session.session_metadata = payload.metadata
     if payload.is_archived is not None:
         session.is_archived = payload.is_archived
+    if payload.is_pinned is not None:
+        session.is_pinned = payload.is_pinned
 
     await db.commit()
     await db.refresh(session)
@@ -173,7 +175,7 @@ async def list_sessions(
     query = (
         select(AiChatSession)
         .where(AiChatSession.tenant_id == tenant_id)
-        .order_by(desc(AiChatSession.updated_at))
+        .order_by(desc(AiChatSession.is_pinned), desc(AiChatSession.updated_at))
         .offset(offset)
         .limit(limit)
     )
@@ -260,6 +262,37 @@ async def get_session_messages(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def copy_message(
+    db: AsyncSession,
+    session_id: str,
+    tenant_id: str,
+    role: str,
+    content: str,
+    model: str,
+) -> AiChatMessageV2 | None:
+    """Insert a message verbatim into a session (used for branching an
+    existing conversation into a new session). Not an AI call -- no
+    generation, no credit deduction, just copying already-paid-for content.
+    Returns None if the session doesn't belong to this tenant.
+    """
+    session = await get_session(db, session_id, tenant_id)
+    if session is None:
+        return None
+    msg = AiChatMessageV2(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        tenant_id=tenant_id,
+        role=role,
+        content=content,
+        model=model,
+    )
+    db.add(msg)
+    session.message_count += 1
+    await db.commit()
+    await db.refresh(msg)
+    return msg
 
 
 async def _build_history_messages(

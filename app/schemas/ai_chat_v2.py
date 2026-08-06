@@ -31,6 +31,7 @@ class SessionUpdate(BaseModel):
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
     is_archived: bool | None = None
+    is_pinned: bool | None = None
 
 
 class SessionRead(BaseModel):
@@ -54,6 +55,7 @@ class SessionRead(BaseModel):
     total_tokens: int
     source: str
     is_archived: bool
+    is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -68,6 +70,7 @@ class SessionSummary(BaseModel):
     message_count: int
     total_tokens: int
     source: str
+    is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -80,6 +83,10 @@ class MessageCreate(BaseModel):
     session_id: str
     content: str = Field(..., min_length=1, max_length=10000)
     model: str = Field(default_factory=_default_model, max_length=50)
+    # Used by session branching to copy an existing message verbatim into a
+    # new session -- not an AI call, so no credit deduction/generation
+    # happens here.
+    role: str = Field(default="user", pattern=r"^(user|assistant)$")
 
 
 class MessageRead(BaseModel):

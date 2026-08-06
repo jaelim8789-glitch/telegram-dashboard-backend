@@ -45,6 +45,9 @@ class AiChatSession(Base):
     # Soft delete
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Pinned to top of the session list
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class AiChatMessageV2(Base):
     """AI Chat 2.0 message within a session.
