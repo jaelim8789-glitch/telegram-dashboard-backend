@@ -41,19 +41,20 @@ from app.api.ai_tools import TOOLS as _ALL_TOOLS
 from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, CONFIDENCE_STREAM_HOLDBACK
 from app.services.ai_core_service import call_deepseek, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
+from app.services.ai_think_mode_heuristics import should_skip_think_mode
 
 # Trimmed down from ai_tools.TOOLS to only the tools that actually work:
-# - send_broadcast's confirm-execute path always returned a fake
-#   {"pending": True} without ever delivering the message, while the UI
-#   reported it as sent (app/services/bot_ai_agent_service.py has a real
-#   _execute_send_broadcast, just not hooked up here yet).
 # - get_account_list called app.crud.account.get_accounts, which doesn't
 #   exist in that module at all -- ImportError on every call.
 # - get_group_list called app.api.groups._get_all_groups_for_tenant, which
 #   likewise doesn't exist -- same crash.
-# The remaining 6 (delivery_analytics-backed) tools call real functions with
-# matching signatures.
-_BROKEN_OR_UNSAFE_TOOLS = {"send_broadcast", "get_account_list", "get_group_list"}
+# send_broadcast used to be excluded here too (its confirm-execute path
+# always returned a fake {"pending": True} without ever delivering the
+# message), but execute_tool() now calls the real
+# bot_ai_agent_service._execute_send_broadcast, and the /confirm-tool
+# endpoint is the only place that ever invokes it for a write tool -- so
+# it's safe to expose again.
+_BROKEN_OR_UNSAFE_TOOLS = {"get_account_list", "get_group_list"}
 TOOLS = [t for t in _ALL_TOOLS if t["function"]["name"] not in _BROKEN_OR_UNSAFE_TOOLS]
 
 logger = get_logger(__name__)
@@ -647,6 +648,20 @@ async def chat(
         yield f"data: {json.dumps({'type': 'error', 'content': 'Session not found'})}\n\n"
         return
 
+    # 1.4. Short greeting/ack messages never need a reasoning pass -- force
+    # think_mode off regardless of the frontend toggle to skip the
+    # reasoning-stream overhead. Logged with before/after so the latency
+    # improvement can be measured post-deploy.
+    if request.think_mode and should_skip_think_mode(request.content):
+        logger.info(
+            "ai_chat_v2_think_mode_auto_skipped",
+            tenant_id=tenant_id,
+            requested_think_mode=True,
+            effective_think_mode=False,
+            content_length=len(request.content),
+        )
+        request.think_mode = False
+
     # 1.5. Check character credits (pre-check with estimated max)
     from app.models.tenant import Tenant
     tenant = await db.get(Tenant, tenant_id)
@@ -728,7 +743,18 @@ async def chat(
         "답변을 마친 뒤 마지막 줄에, 그 답변에 대한 당신의 확신도를 다음 형식으로만 "
         "정확히 표시하세요 (본문에서 언급하지 말고 이 마커만 맨 끝에 추가): "
         "[CONFIDENCE: high] 또는 [CONFIDENCE: medium] 또는 [CONFIDENCE: low]. "
-        "정보가 부족해 되묻기만 한 경우는 [CONFIDENCE: medium]으로 표시하세요."
+        "정보가 부족해 되묻기만 한 경우는 [CONFIDENCE: medium]으로 표시하세요.\n\n"
+        "## 메시지 초안 작성\n"
+        "사용자가 \"홍보문구 써줘\", \"공지문 작성해줘\", \"이런 내용으로 메시지 써줘\" 처럼 "
+        "발송용 메시지 초안을 요청하면(도구 호출이 아니라 순수 텍스트 생성으로 처리):\n"
+        "1. 바로 발송해도 되는 완성된 형태의 메시지 초안을 작성하세요. 설명이나 대안 나열이 "
+        "아니라 실제로 복사해서 보낼 수 있는 완성문이어야 합니다.\n"
+        "2. 초안은 반드시 markdown 인용문(`>`) 또는 코드블록(```)으로 본문과 명확히 구분해서 "
+        "제시하세요. 그 앞뒤에 부가 설명을 붙여도 되지만, 초안 블록 자체는 순수한 메시지 내용만 "
+        "담아야 합니다.\n"
+        "3. 초안을 제시한 직후에는 반드시 \"이대로 발송하시겠어요?\"로 마무리하세요.\n"
+        "4. 이 초안 작성은 send_broadcast 도구 호출과 별개입니다. 사용자가 실제 발송을 요청하기 "
+        "전까지는 도구를 호출하지 마세요."
     )
 
     # Apply template if specified

@@ -614,16 +614,26 @@ async def confirm_tool_endpoint(
     if not result.success:
         raise HTTPException(status_code=400, detail=result.error)
 
-    # Save the tool result as an assistant message
+    # Save the tool result as an assistant message. For send_broadcast,
+    # surface the real delivered/failed counts up front so the "completed"
+    # message reflects what actually happened, not just that the tool ran.
     session_id = payload.get("session_id")
     if session_id:
         from app.models.ai_chat_v2 import AiChatMessageV2
+
+        if tool_name == "send_broadcast" and isinstance(result.result, dict):
+            delivered = result.result.get("delivered", 0)
+            failed = result.result.get("failed", 0)
+            summary_line = f"✅ 발송 완료 — 성공 {delivered}건 / 실패 {failed}건\n\n"
+        else:
+            summary_line = f"✅ {meta.get('label', tool_name)} 실행 완료\n\n"
+
         msg = AiChatMessageV2(
             id=str(uuid.uuid4()),
             session_id=session_id,
             tenant_id=identity.tenant_id,
             role="assistant",
-            content=f"✅ {meta.get('label', tool_name)} 실행 완료\n\n{json.dumps(result.result, ensure_ascii=False, default=str)}",
+            content=summary_line + json.dumps(result.result, ensure_ascii=False, default=str),
             model="tool",
         )
         db.add(msg)

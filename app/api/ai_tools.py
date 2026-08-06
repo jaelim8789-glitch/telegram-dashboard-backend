@@ -253,12 +253,13 @@ async def execute_tool(
             return ToolResult(success=True, tool_name=tool_name, result={"groups": groups})
 
         elif tool_name == "send_broadcast":
-            # Write tool  not executed here, will be confirmed separately
-            return ToolResult(
-                success=True,
-                tool_name=tool_name,
-                result={"pending": True, "arguments": arguments},
-            )
+            # Write tool  requires prior user confirmation via the
+            # /confirm-tool endpoint. That endpoint calls execute_tool()
+            # again after confirmation, at which point we actually send.
+            from app.services.bot_ai_agent_service import _execute_send_broadcast
+
+            result = await _execute_send_broadcast(arguments)
+            return ToolResult(success=True, tool_name=tool_name, result=result)
 
         else:
             return ToolResult(

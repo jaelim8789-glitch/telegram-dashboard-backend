@@ -25,6 +25,7 @@ from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_aft
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
 from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full, extract_confidence
+from app.services.ai_think_mode_heuristics import should_skip_think_mode
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
@@ -116,6 +117,20 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
     messages.append({"role": "user", "content": payload.message})
 
+    # Short greeting/ack messages never need a reasoning pass shown to the
+    # user -- force think_mode off regardless of the toggle sent from the
+    # frontend. Logged with before/after so the improvement can be measured.
+    effective_think_mode = payload.think_mode
+    if effective_think_mode and should_skip_think_mode(payload.message):
+        logger.info(
+            "guest_ai_chat_think_mode_auto_skipped",
+            ip=client_ip,
+            requested_think_mode=True,
+            effective_think_mode=False,
+            content_length=len(payload.message),
+        )
+        effective_think_mode = False
+
     # The model always reasons internally regardless of budget -- think_mode
     # only controls whether that reasoning gets shown to the user, not how
     # much token budget the call gets.
@@ -124,7 +139,7 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
     reply, reasoning = result
     reply, confidence = extract_confidence(reply)
-    reasoning = reasoning if payload.think_mode else None
+    reasoning = reasoning if effective_think_mode else None
 
     logger.info("guest_ai_chat_reply", ip=client_ip, confidence=confidence)
 
