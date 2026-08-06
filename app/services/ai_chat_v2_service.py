@@ -61,7 +61,12 @@ logger = get_logger(__name__)
 
 #  Constants 
 
-_MAX_HISTORY_MESSAGES = 50
+_MAX_HISTORY_MESSAGES = 12
+# When a session has more history than _MAX_HISTORY_MESSAGES, the older tail
+# is condensed into this many "earlier conversation summary" lines instead of
+# being passed verbatim — keeps context from overflowing (which makes the
+# model answer tersely to "save" tokens).
+_MAX_SUMMARY_LINES = 3
 _MAX_INPUT_CHARS = 10000
 # The self-hosted reasoning model behind DEEPSEEK_API_BASE spends a chunk of
 # this on a separate "thinking" pass before any real content -- self-hosted
@@ -301,12 +306,58 @@ async def _build_history_messages(
     tenant_id: str,
     max_messages: int = _MAX_HISTORY_MESSAGES,
 ) -> list[dict]:
-    """Build the message history array for the DeepSeek API call."""
-    messages = await get_session_messages(db, session_id, tenant_id, limit=max_messages)
-    return [
+    """Build the message history array for the AI call.
+
+    Keeps only the most recent *max_messages*. If the session is longer, the
+    older tail is condensed into a short summary system line (best-effort) so
+    context stays lean and the model answers fully instead of tersely.
+    """
+    all_msgs = await get_session_messages(db, session_id, tenant_id, limit=200)
+    if not all_msgs:
+        return []
+
+    recent = all_msgs[-max_messages:]
+    older = all_msgs[:-max_messages] if len(all_msgs) > max_messages else []
+
+    history: list[dict] = []
+
+    if older:
+        summary = await _condense_history(older)
+        if summary:
+            history.append({"role": "system", "content": f"이전 대화 요약:\n{summary}"})
+
+    history.extend(
         {"role": msg.role, "content": msg.content}
-        for msg in messages
-    ]
+        for msg in recent
+        if msg.role in ("user", "assistant") and msg.content
+    )
+    return history
+
+
+async def _condense_history(older: list[AiChatMessageV2]) -> str:
+    """Best-effort: summarize an older message tail into a few lines."""
+    if not older:
+        return ""
+    try:
+        text = "\n".join(
+            f"{'사용자' if m.role == 'user' else 'AI'}: {m.content[:200]}" for m in older[-20:]
+        )
+        result = await call_deepseek(
+            [{
+                "role": "user",
+                "content": (
+                    "아래 대화 내용을 한국어로 3줄 이내로 간결하게 요약해주세요. "
+                    "핵심 주제, 사용자가 원했던 것, 결정된 사항만 담으세요.\n\n" + text
+                ),
+            }],
+            max_tokens=200,
+        )
+        summary, _, _ = result if result else (None, 0, 0)
+        if summary and summary.strip():
+            return summary.strip()[:600]
+    except Exception as exc:
+        logger.debug("ai_history_condense_failed", error=str(exc))
+    return ""
 
 
 #  Prompt Templates 
@@ -578,6 +629,8 @@ async def _stream_deepseek(
         # pushes longer, richer replies. `stop` prevents premature end-of-turn.
         "temperature": 0.7,
         "top_p": 0.9,
+        "frequency_penalty": 0.3,
+        "presence_penalty": 0.3,
         "stop": ["\n\n\n", "Human:", "사용자:"],
     }
     if tools:
@@ -649,6 +702,8 @@ async def _call_deepseek_nonstream(
         "stream": False,
         "temperature": 0.7,
         "top_p": 0.9,
+        "frequency_penalty": 0.3,
+        "presence_penalty": 0.3,
         "stop": ["\n\n\n", "Human:", "사용자:"],
     }
 
@@ -777,7 +832,20 @@ async def chat(
         "5. **팁 & 주의사항** — 놓치기 쉬운 포인트, 최적화 방법\n"
         "6. **핵심 액션 정리** — 긴 답변의 마지막에는 \"지금 바로 할 수 있는 핵심 2~3가지\"를 "
         "간결히 정리해 주세요. 사용자가 \"도움을 받았다\"는 확신을 갖게 하고, 이어서 진행하도록 돕습니다.\n"
-        "7. **후속 질문** — 더 탐구할 만한 주제 제안\n"
+        "7. **후속 질문** — 더 탐구할 만한 주제 제안\n\n"
+        "## 답변 예시 (이 정도 길이·구성으로 답하세요)\n"
+        "질문: \"텔레그램 마케팅을 시작하려면 뭐부터 해야 하나요?\"\n"
+        "답변:\n"
+        "핵심부터 말씀드리면, 텔레그램 마케팅은 크게 ①타겟 설정 ②채널 구축 ③콘텐츠 "
+        "전략 ④도달·관리 이 4단계로 시작하는 것이 가장 실용적입니다.\n"
+        "먼저 타겟이 누구인지 명확히 해야 합니다. 제품/서비스에 관심 있는 사람이 "
+        "어떤 채널에 있는지, 어떤 말투에 반응하는지가 전략의 기반이 됩니다... "
+        "(중략)... 이렇게 하면 처음부터 무작정 발송하는 것보다 훨씬 높은 도달률을 "
+        "기대할 수 있습니다.\n"
+        "지금 바로 할 수 있는 것: 1) 타겟 페르소나 1줄 정의 2) 채널 이름·아이콘 설정 "
+        "3) 첫 소개글 초안 작성\n"
+        "질문자님이 원하시면, 계정 안전하게 운영하는 발송 간격과 FloodWait 예방법까지 "
+        "더 깊게 정리해 드릴 수 있을 것 같습니다.\n\n"
         "## 대화 이어가기 (결제·이용 유도)\n"
         "- **답변을 마칠 때는 반드시 사용자가 더 원하는 답변을 이끌어낼 수 있도록 심화 유도로 마무리하세요.**\n"
         "- 대표 문구 예시: \"질문자님이 원하시면 더 깊게 봐서 더 원하는 답변을 드릴 수 있을 것 같습니다.\", "
@@ -1225,16 +1293,19 @@ async def chat(
             return
         reply, confidence = extract_confidence(reply)
 
-        # Self-review: if the answer fails review, regenerate once before
-        # sending. Keeps the quality floor without unbounded retries.
+        # Quality gate: if the answer is too short to be useful, or fails
+        # self-review, regenerate once before sending. Keeps the quality
+        # floor without unbounded retries.
+        reply_len = len(reply) if reply else 0
+        too_short = reply_len < 80 and not request.context.get("disable_self_review")
         if reply and not request.context.get("disable_self_review"):
             passed, _reason = await self_review_answer(request.content, reply, kb_context)
-            if not passed:
-                logger.info("ai_chat_self_review_fail_retry")
+            if not passed or too_short:
+                logger.info("ai_chat_quality_gate_retry", reason="too_short" if too_short else "self_review")
                 retried, _pt, _ct = await _call_deepseek_nonstream(
                     messages, model=request.model, max_tokens=max_tokens,
                 )
-                if retried:
+                if retried and len(retried) > reply_len:
                     reply, confidence = extract_confidence(retried)
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
