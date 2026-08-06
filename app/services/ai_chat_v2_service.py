@@ -335,9 +335,11 @@ async def _build_history_messages(
         if summary:
             history.append({"role": "system", "content": f"이전 대화 요약:\n{summary}"})
 
-    # D2: user interests — only compute early in the session (first 3 turns);
-    # after that recent messages themselves carry the context.
-    if len(all_msgs) <= 6:
+    # D2: user interests — compute early in the session AND refresh every
+    # 20 turns so long conversations keep a coherent, up-to-date context.
+    # Cached per session to avoid an LLM call on every reply.
+    turn_count = len(all_msgs)
+    if turn_count <= 6 or (turn_count > 20 and turn_count % 20 <= 2):
         interests = await _extract_user_interests(recent)
         if interests:
             history.insert(0, {"role": "system", "content": f"사용자의 이번 세션 관심사:\n{interests}"})
@@ -560,14 +562,88 @@ def _classify_intent(text: str) -> str:
     return "standard"
 
 
-def _assistant_context(memory_context: list[str] | None, kb_context: list[str] | None) -> list | None:
-    """Stores memory + RAG usage metadata on the assistant message so we can
-    later measure whether KB-referenced answers actually get better feedback
-    than non-referenced ones (RAG effectiveness).
+_CODE_HINTS = ("코드", "코딩", "python", "javascript", "함수", "api", "버그", "에러", "구현", "스크립트", "sql", "리액트", "next", "타입", "클래스", "데이터베이스", "서버", "웹")
+_MARKETING_HINTS = ("마케팅", "발송", "광고", "홍보", "고객", "전환", "프로모션", "캠페인", "브랜드", "타겟", "세일즈", "vip", "그룹", "채널", "텔레그램")
+_ANALYSIS_HINTS = ("분석", "통계", "데이터", "비교", "추세", "성과", "수치", "지표", "리포트", "원인", "효과", "측정", "kpi")
+
+
+def _classify_domain(text: str) -> str:
+    """Rough domain classification: 'code' | 'marketing' | 'analysis' | 'general'.
+
+    Drives domain-specific system-prompt steering (C2) so the 14B model gets
+    a tailored example/format per topic. Pure heuristic — no extra LLM call.
+    """
+    t = (text or "").strip().lower()
+    score = {"code": 0, "marketing": 0, "analysis": 0}
+    for h in _CODE_HINTS:
+        if h in t:
+            score["code"] += 1
+    for h in _MARKETING_HINTS:
+        if h in t:
+            score["marketing"] += 1
+    for h in _ANALYSIS_HINTS:
+        if h in t:
+            score["analysis"] += 1
+    best = max(score, key=lambda k: score[k])
+    return best if score[best] > 0 else "general"
+
+
+def _domain_steering(domain: str) -> str:
+    """Return a short system-prompt injection tailored to the detected domain."""
+    if domain == "code":
+        return (
+            "이 질문은 코드/개발 관련입니다. 코드 블록을 중심으로, "
+            "왜 이렇게 짜는지 원리와 함께 단계별로 설명하세요. 실행 가능한 예시를 반드시 포함하세요."
+        )
+    if domain == "marketing":
+        return (
+            "이 질문은 마케팅/발송 관련입니다. 타겟 설정 → 채널 → 콘텐츠 → 도달·관리 흐름으로 "
+            "답하고, 구체적 수치와 실전 예시(문구/시나리오)를 포함하세요."
+        )
+    if domain == "analysis":
+        return (
+            "이 질문은 분석/데이터 관련입니다. 원인 → 영향 → 시사점 구조로 답하고, "
+            "가능하면 표나 수치로 정리하세요."
+        )
+    return ""
+
+
+def _assistant_context(
+    memory_context: list[str] | None,
+    kb_context: list[str] | None,
+    answer: str = "",
+    question: str = "",
+) -> list | None:
+    """Stores memory + RAG + quality metadata on the assistant message so we
+    can later measure RAG effectiveness and answer quality per domain.
     """
     ctx = list(memory_context) if memory_context else []
-    base = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
+    base: dict = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
+    if answer:
+        base["quality_score"] = _quality_score(question, answer)
     return ctx + [base] if ctx else [base]
+
+
+def _quality_score(question: str, answer: str) -> int:
+    """Compute a 0-100 quality score for an answer (heuristic, no LLM call).
+
+    Penalizes: too short, rambling, refusal-style. Rewards: reasonable length
+    and coverage. Used to log answer quality per domain for later analysis.
+    """
+    score = 100
+    alen = len(answer or "")
+    # Length floor: <40 chars is basically a dead answer.
+    if alen < 40:
+        score -= 50
+    elif alen < 100:
+        score -= 25
+    elif alen >= 300:
+        score += 5
+    if _is_rambling(answer):
+        score -= 40
+    if _is_refusal(answer):
+        score -= 60
+    return max(0, min(100, score))
 
 
 #  AI Self Review 
@@ -974,6 +1050,9 @@ async def chat(
         "- \"더 도와드릴까요?\"처럼 뻔한 반복 대신, 아직 다루지 못한 구체적 하위 주제를 하나씩 짚어서 "
         "다음 질문을 유도하세요. 예: \"이 주제에는 비용/효율/리스크 관점도 있는데, 장단점을 비교해서 정리해 드릴까요?\"\n"
         "- 같은 문구를 매번 쓰지 말고 답변 내용에 맞게 조금씩 다르게 표현하세요.\n"
+        "- 답변이 실제로 도움이 됐는지 확인하는 멘트로 마무리하는 것도 좋습니다. "
+        "예: \"이 답변이 도움이 되셨나요? 다른 각도로 다시 정리해 드릴까요?\" — 피드백을 먼저 받아 "
+        "품질을 다듬고, 필요하면 이어서 답변합니다.\n"
         "- 절대로 \"결제\"나 \"크레딧\"을 직접 언급하지 마세요. \"더 깊은 분석 / 더 원하는 답변 준비\"라는 "
         "가치 제안으로만 자연스럽게 이어가세요.\n\n"
         "━━━ 확신도 표시 ━━━\n"
@@ -1058,8 +1137,36 @@ async def chat(
             joined = "\n".join(f"- {str(m)[:300]}" for m in recent[-5:])
             ctx_parts.append(f"사용자가 최근 보고 있는 대화 메시지:\n{joined}")
         if ctx_parts:
-            # Response style steering (default/concise/detailed/code).
+            # Response style steering (default/concise/detailed/code) — D1:
+            # remember the tenant's preferred style across sessions.
             style = request.context.get("style")
+            if style not in ("concise", "detailed", "code", None):
+                style = None
+            if style:
+                try:
+                    from app.models.system_setting import SystemSetting
+                    existing = await db.execute(
+                        select(SystemSetting).where(SystemSetting.key == f"style:{tenant_id}").limit(1)
+                    )
+                    row = existing.scalar_one_or_none()
+                    if row:
+                        row.value = style
+                    else:
+                        db.add(SystemSetting(id=str(uuid.uuid4()), key=f"style:{tenant_id}", value=style))
+                    await db.commit()
+                except Exception as exc:
+                    logger.debug("ai_style_save_failed", error=str(exc))
+            else:
+                try:
+                    from app.models.system_setting import SystemSetting
+                    existing = await db.execute(
+                        select(SystemSetting).where(SystemSetting.key == f"style:{tenant_id}").limit(1)
+                    )
+                    row = existing.scalar_one_or_none()
+                    if row and row.value in ("concise", "detailed", "code"):
+                        style = row.value
+                except Exception as exc:
+                    logger.debug("ai_style_load_failed", error=str(exc))
             if style == "concise":
                 ctx_parts.append("답변 스타일: 간결하게 — 핵심만 요약해 2~3문장 안에 답하세요.")
             elif style == "detailed":
@@ -1220,6 +1327,13 @@ async def chat(
         # temperature keeps answers lively/natural vs. the old flat 0.7.
         max_tokens = _DEFAULT_MAX_TOKENS
         effective_temperature = 0.8
+
+    # 8c. Domain steering (C2): detect topic and inject a tailored system
+    # prompt so the 14B model uses the right format per domain.
+    domain = _classify_domain(request.content)
+    steering = _domain_steering(domain)
+    if steering:
+        messages.append({"role": "system", "content": steering})
 
     # 8b. Auto think-mode for complex requests: reasoning pass improves final
     # answer quality even though the model always reasons internally anyway.
@@ -1388,7 +1502,7 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=_assistant_context(memory_context, kb_context),
+            memory_context=_assistant_context(memory_context, kb_context, answer=full_content, question=request.content),
             memory_stored=False,
         )
         db.add(assistant_msg)
@@ -1467,6 +1581,30 @@ async def chat(
                 if retried and len(retried) > reply_len:
                     reply, confidence = extract_confidence(retried)
 
+        # C1: 2-pass refinement for paid plans on complex questions — the
+        # draft is regenerated with "add missing angles/correct errors" to
+        # make the answer richer. Only for pro/max (they pay for quality);
+        # free plans skip to keep latency & cost low.
+        refine_enabled = (
+            request.context.get("refine_answer", False)
+            or (tenant is not None and tenant.plan in ("pro", "max") and intent == "complex")
+        )
+        if refine_enabled and reply and len(reply) >= 40:
+            refine_prompt = (
+                "다음 답변을 개선하세요: 빠진 관점·예시를 추가하고, 오류가 있으면 고치고, "
+                "더 완성도 있게 정리하세요. 핵심은 유지하되 더 풍부하게.\n\n"
+                f"질문: {request.content[:400]}\n답변: {reply[:1500]}"
+            )
+            refined, _pt3, _ct3 = await _call_ollama_nonstream(
+                [{"role": "user", "content": refine_prompt}],
+                model=request.model,
+                max_tokens=max_tokens,
+                temperature=0.8,
+            )
+            if refined and len(refined) > len(reply):
+                logger.info("ai_chat_2pass_refined", delta=len(refined) - len(reply))
+                reply, confidence = extract_confidence(refined)
+
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
             id=str(uuid.uuid4()),
@@ -1478,7 +1616,7 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=_assistant_context(memory_context, kb_context),
+            memory_context=_assistant_context(memory_context, kb_context, answer=reply, question=request.content),
             memory_stored=False,
         )
         db.add(assistant_msg)
