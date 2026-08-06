@@ -1640,9 +1640,12 @@ async def get_ai_quality_report(db: AsyncSession, tenant_id: str, days: int = 7)
     )
 
     # Learned KB docs + pending candidates
+    # ingest_positive_responses() (see above) actually stores these with
+    # source_type="ai_chat_positive" and collection="ai_learned" -- this
+    # was filtering on the wrong field and always returned 0.
     kb_count = (await db.execute(
         select(func.count(Document.id)).where(
-            Document.tenant_id == tenant_id, Document.source_type == "ai_learned",
+            Document.tenant_id == tenant_id, Document.source_type == "ai_chat_positive",
         )
     )).scalar() or 0
     pending_candidates = (await db.execute(
