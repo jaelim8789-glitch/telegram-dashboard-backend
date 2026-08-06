@@ -273,7 +273,11 @@ def send_alert(
     """Send an alert via webhook (Discord/Slack/Telegram compatible).
 
     Falls back to log warning if webhook URL not configured.
+    Also sends to Telegram if TELEGRAM_ALERT_CHAT_ID is set.
     """
+    # Telegram alert
+    _send_telegram_alert(title, message, severity)
+
     if not ALERT_WEBHOOK_URL:
         logger.warning("Alert not sent (no ALERT_WEBHOOK_URL): %s - %s", title, message)
         return
@@ -306,6 +310,34 @@ def send_alert(
         logger.info("Alert sent: %s [%s]", title, severity)
     except Exception as e:
         logger.error("Failed to send alert via webhook: %s", e)
+
+
+def _send_telegram_alert(title: str, message: str, severity: str) -> None:
+    """Send alert to Telegram chat if configured."""
+    import os
+
+    chat_id = os.environ.get("TELEGRAM_ALERT_CHAT_ID")
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+    if not chat_id or not bot_token:
+        return
+
+    severity_emoji = {"critical": "🚨", "warning": "⚠️", "error": "❌", "info": "ℹ️"}.get(severity, "📢")
+    text = f"{severity_emoji} **{title}**\n\n{message}"
+
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = json.dumps({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("telegram_alert_sent", title=title)
+    except Exception as exc:
+        logger.warning("telegram_alert_failed", error=str(exc))
 
 
 def alert_error(title: str, message: str, metadata: dict[str, Any] | None = None) -> None:

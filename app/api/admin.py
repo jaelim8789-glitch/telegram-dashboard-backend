@@ -1380,6 +1380,144 @@ async def get_health_score():
     return await get_incident_engine().health_score()
 
 
+@router.post("/incidents/{incident_name}/acknowledge", dependencies=[Depends(require_admin)])
+async def acknowledge_incident(
+    incident_name: str,
+    identity: Identity = Depends(require_admin),
+):
+    """Acknowledge an active incident."""
+    from app.services.incident_engine import get_incident_engine
+    engine = get_incident_engine()
+    success = await engine.acknowledge_incident(incident_name, identity.user_id or "admin")
+    if not success:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"success": True, "message": f"Incident '{incident_name}' acknowledged"}
+
+
+@router.post("/services/{service_name}/restart", dependencies=[Depends(require_admin)])
+async def restart_service(
+    service_name: str,
+    identity: Identity = Depends(require_admin),
+):
+    """Attempt to restart a managed service."""
+    allowed_services = ["scheduler", "worker", "redis"]
+    if service_name not in allowed_services:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown service. Allowed: {', '.join(allowed_services)}"
+        )
+
+    result = {"service": service_name, "success": False, "message": ""}
+
+    try:
+        if service_name == "scheduler":
+            from app.scheduler.scheduler import scheduler, start_scheduler
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+            start_scheduler()
+            result["success"] = True
+            result["message"] = "Scheduler restarted"
+
+        elif service_name == "worker":
+            # Worker is managed by the queue — trigger a health check
+            from app.services.incident_engine import get_incident_engine
+            engine = get_incident_engine()
+            queue_sev = await engine._check_queue()
+            result["success"] = queue_sev == "ok"
+            result["message"] = f"Queue health: {queue_sev}"
+
+        elif service_name == "redis":
+            # Just check connectivity
+            from app.services.incident_engine import get_incident_engine
+            engine = get_incident_engine()
+            redis_sev, _ = await engine._check_redis()
+            result["success"] = redis_sev == "ok"
+            result["message"] = f"Redis health: {redis_sev}"
+
+    except Exception as exc:
+        result["message"] = str(exc)
+
+    logger.info("service_restart_attempted",
+                service=service_name,
+                success=result["success"],
+                admin=identity.user_id)
+
+    return result
+
+
+@router.get("/incidents/db-history", dependencies=[Depends(require_admin)])
+async def get_incident_db_history(
+    days: int = Query(default=30, ge=1, le=365),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Get permanent incident history from database."""
+    from datetime import timedelta
+    from app.models.incident import IncidentLog
+    from app.core.time import utcnow_naive
+
+    since = utcnow_naive() - timedelta(days=days)
+    result = await db.execute(
+        select(IncidentLog).where(
+            IncidentLog.opened_at >= since
+        ).order_by(IncidentLog.opened_at.desc()).limit(limit)
+    )
+    incidents = result.scalars().all()
+
+    return [
+        {
+            "id": i.id,
+            "name": i.name,
+            "severity": i.severity,
+            "detail": i.detail,
+            "status": i.status,
+            "acknowledged": i.acknowledged,
+            "acknowledged_by": i.acknowledged_by,
+            "acknowledged_at": str(i.acknowledged_at) if i.acknowledged_at else None,
+            "recovery_attempts": i.recovery_attempts,
+            "opened_at": str(i.opened_at),
+            "resolved_at": str(i.resolved_at) if i.resolved_at else None,
+        }
+        for i in incidents
+    ]
+
+
+@router.get("/stream")
+async def admin_stream(identity: Identity = Depends(require_admin)):
+    """SSE endpoint for real-time admin updates."""
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    import json
+
+    async def event_generator():
+        from app.services.incident_engine import get_incident_engine
+        engine = get_incident_engine()
+        last_score = None
+
+        while True:
+            try:
+                # Health score
+                score = await engine.health_score()
+                if score != last_score:
+                    yield f"data: {json.dumps({'type': 'health_score', 'data': score})}\n\n"
+                    last_score = score
+
+                # Active incidents
+                incidents = await engine.active_incidents()
+                yield f"data: {json.dumps({'type': 'incidents', 'data': incidents})}\n\n"
+
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── AI chat visibility (guest + logged-in) ──────────────────────────────
 
 

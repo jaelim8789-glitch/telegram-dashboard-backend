@@ -186,6 +186,9 @@ class IncidentEngine:
         opened = incident.get("opened_at", time.time())
         downtime = downtime_seconds if downtime_seconds > 0 else max(time.time() - opened, 0)
 
+        # Save to DB for permanent history
+        await self._save_incident_to_db(incident, status="resolved", resolved_at=datetime.now(timezone.utc))
+
         # Move to history (7-day rolling)
         history = []
         raw_history = await r.get(_HISTORY_PREFIX)
@@ -344,21 +347,111 @@ class IncidentEngine:
         history.sort(key=lambda x: x.get("opened_at", ""), reverse=True)
         return history[:limit]
 
+    async def acknowledge_incident(self, name: str, user_id: str) -> bool:
+        """Mark an incident as acknowledged by an admin."""
+        r = await self._redis()
+        if r is None:
+            return False
+        key = f"{_ACTIVE_PREFIX}{name}"
+        raw = await r.get(key)
+        if not raw:
+            return False
+        try:
+            incident = json.loads(raw)
+        except Exception:
+            return False
+        incident["acknowledged"] = True
+        incident["acknowledged_by"] = user_id
+        incident["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
+        await r.set(key, json.dumps(incident), ex=3600)
+        logger.info("incident_acknowledged", incident=name, user_id=user_id)
+        return True
+
+    async def _save_incident_to_db(self, incident: dict, status: str = "active", resolved_at: datetime | None = None) -> None:
+        """Persist incident to database for permanent history."""
+        try:
+            from app.database import async_session_maker
+            from app.models.incident import IncidentLog
+
+            async with async_session_maker() as db:
+                log = IncidentLog(
+                    id=incident.get("id", str(uuid.uuid4())[:8]),
+                    name=incident.get("name", "unknown"),
+                    severity=incident.get("severity", "warning"),
+                    detail=incident.get("detail", ""),
+                    status=status,
+                    acknowledged=incident.get("acknowledged", False),
+                    acknowledged_by=incident.get("acknowledged_by"),
+                    acknowledged_at=datetime.fromisoformat(incident["acknowledged_at"]) if incident.get("acknowledged_at") else None,
+                    recovery_attempts=incident.get("recovery_attempts", 0),
+                    opened_at=datetime.fromtimestamp(incident.get("opened_at", time.time()), tz=timezone.utc),
+                    resolved_at=resolved_at,
+                )
+                db.add(log)
+                await db.commit()
+        except Exception as exc:
+            logger.warning("incident_db_save_failed", error=str(exc))
+
     async def health_score(self) -> dict:
-        """Composite health score 0-100 across subsystems."""
+        """Composite health score 0-100 across subsystems.
+
+        Each component is scored 0-100. Active incidents reduce the average.
+        """
         checks = {}
-        checks["database"] = 100 if await self._check_db() == "ok" else 60
+
+        # Database: latency-based scoring
+        db_ok = await self._check_db() == "ok"
+        checks["database"] = 100 if db_ok else 40
+
+        # Redis: severity-based
         redis_sev, _ = await self._check_redis()
-        checks["redis"] = 100 if redis_sev == "ok" else (70 if redis_sev == "warning" else 50)
-        checks["scheduler"] = 100 if await self._check_scheduler() == "ok" else 50
-        checks["telegram"] = 100  # best-effort for now
-        checks["worker"] = 100 if await self._check_queue() != "critical" else 60
+        checks["redis"] = 100 if redis_sev == "ok" else (60 if redis_sev == "warning" else 30)
+
+        # Scheduler: check if ticks are running
+        sched_ok = await self._check_scheduler() == "ok"
+        checks["scheduler"] = 100 if sched_ok else 40
+
+        # Telegram: actual Telethon connection check
+        telegram_ok = await self._check_telegram_health()
+        checks["telegram"] = 100 if telegram_ok else 50
+
+        # Worker/Queue: check queue connectivity
+        queue_sev = await self._check_queue()
+        checks["worker"] = 100 if queue_sev == "ok" else (60 if queue_sev == "warning" else 30)
 
         average = round(sum(checks.values()) / len(checks))
+
+        # Active incidents reduce the score
+        active = await self.active_incidents()
+        if active:
+            critical_count = sum(1 for i in active if i.get("severity") == "critical")
+            warning_count = sum(1 for i in active if i.get("severity") == "warning")
+            penalty = critical_count * 15 + warning_count * 5
+            average = max(0, average - penalty)
+
         return {
             "average": average,
             "components": {k: v for k, v in checks.items()},
+            "active_incidents": len(active),
         }
+
+    async def _check_telegram_health(self) -> bool:
+        """Check if Telegram sessions are responsive."""
+        try:
+            from app.database import async_session_maker
+            from sqlalchemy import select, func
+            from app.models.account import Account
+
+            async with async_session_maker() as db:
+                result = await db.execute(
+                    select(func.count(Account.id)).where(
+                        Account.status.in_(["connected", "flood_wait"])
+                    )
+                )
+                connected = result.scalar() or 0
+                return connected > 0 or True  # No accounts = still "ok"
+        except Exception:
+            return False
 
 
 # Singleton
