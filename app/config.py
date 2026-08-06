@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
@@ -114,11 +114,21 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
 
     # Local LLM (Ollama) — the only inference backend now. DeepSeek API has
-    # been fully removed from the stack. The env keys (DEEPSEEK_*) remain only
-    # for deployment compatibility; they point at the self-hosted Ollama GPU.
-    ollama_api_key: str = ""
-    ollama_api_base: str = "http://172.18.0.1:11434/v1"
-    ollama_model: str = "huihui_ai/qwen3-abliterated:14b"
+    # been fully removed from the stack. DEEPSEEK_* env keys remain for
+    # deployment compatibility — they point at the self-hosted Ollama GPU.
+    # validation_alias makes OLLAMA_* win if set, else falls back to DEEPSEEK_*.
+    ollama_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_API_KEY", "DEEPSEEK_API_KEY"),
+    )
+    ollama_api_base: str = Field(
+        default="http://172.18.0.1:11434/v1",
+        validation_alias=AliasChoices("OLLAMA_API_BASE", "DEEPSEEK_API_BASE"),
+    )
+    ollama_model: str = Field(
+        default="huihui_ai/qwen3-abliterated:14b",
+        validation_alias=AliasChoices("OLLAMA_MODEL", "DEEPSEEK_MODEL"),
+    )
     # Backward-compat aliases (deprecated — use ollama_*).
     deepseek_api_key: str = ""
     deepseek_api_base: str = "http://172.18.0.1:11434/v1"
