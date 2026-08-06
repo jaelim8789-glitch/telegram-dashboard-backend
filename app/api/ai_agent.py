@@ -746,7 +746,7 @@ async def purchase_template(
 from pydantic import BaseModel
 
 class ChatCompletionRequest(BaseModel):
-    model: str = settings.deepseek_model or "deepseek-chat"
+    model: str = settings.ollama_model or "deepseek-chat"
     messages: list[dict]
     stream: bool = False
     max_tokens: int = 4096
@@ -763,7 +763,7 @@ async def chat_completions_proxy(
     브라우저가 DeepSeek API를 직접 호출하지 않고 이 엔드포인트를
     통해 요청하므로 API 키가 클라이언트에 노출되지 않는다.
     """
-    if not settings.deepseek_api_key:
+    if not settings.ollama_api_base:
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=501,

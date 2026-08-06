@@ -185,10 +185,10 @@ async def _call_deepseek_full(messages: list[dict], max_tokens: int = _MAX_TOKEN
         # uses for the logged-in path.
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=120)) as client:
             response = await client.post(
-                f"{settings.deepseek_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                f"{settings.ollama_api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
                 json={
-                    "model": settings.deepseek_model,
+                    "model": settings.ollama_model,
                     "messages": messages,
                     "max_tokens": max_tokens,
                 },
@@ -223,7 +223,7 @@ async def send_message(db: AsyncSession, telegram_user_id: int, text: str) -> Ai
 
 
 async def _do_send(db: AsyncSession, telegram_user_id: int, text: str) -> AiChatResult:
-    if not settings.deepseek_api_key:
+    if not settings.ollama_api_base:
         return AiChatResult(status="server_error", detail="AI Chat이 아직 설정되지 않았습니다. 잠시 후 다시 시도해주세요.")
 
     tenant = await _find_tenant(db, telegram_user_id)

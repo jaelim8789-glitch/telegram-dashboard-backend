@@ -130,7 +130,7 @@ async def guest_credits(request: Request):
 async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSession = Depends(get_db)):
     client_ip = get_client_ip(request)
 
-    if not settings.deepseek_api_key:
+    if not settings.ollama_api_base:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 서비스를 일시적으로 사용할 수 없습니다.")
 
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]

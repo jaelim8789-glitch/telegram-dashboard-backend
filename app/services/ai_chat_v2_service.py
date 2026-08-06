@@ -93,7 +93,7 @@ def _get_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(_DEFAULT_TIMEOUT, read=_STREAM_TIMEOUT),
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=50),
-            headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+            headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
         )
     return _client
 
@@ -600,6 +600,28 @@ def _is_rambling(text: str) -> bool:
     return extras / len(frags) > 0.3
 
 
+_REFUSAL_HINTS = (
+    "죄송합니다", "죄송해요", "도와드릴 수 없", "도와줄 수 없", "하지 않겠",
+    "할 수 없습니다", "안 됩니다", "불가능", "거부", "할 수 없어요",
+    "제 역할이 아닙니다", "답변할 수 없", "could not help", "can't help",
+)
+
+
+def _is_refusal(text: str) -> bool:
+    """Heuristic: detects refusal / dead-end answers that should be retried.
+    The system prompt forbids refusing any question, so a refusal usually means
+    the model fell into a refusal pattern — regenerate it.
+    """
+    if not text:
+        return False
+    low = text.lower()
+    if len(text) < 80:
+        for hint in _REFUSAL_HINTS:
+            if hint in low:
+                return True
+    return False
+
+
 async def self_review_answer(
     question: str,
     answer: str,
@@ -686,7 +708,7 @@ async def create_knowledge_candidate(
         model_name=model_name or "unknown",
         tokens_used=tokens_used,
         response_time_ms=response_time_ms,
-        ai_version=settings.deepseek_model or "deepseek-chat",
+        ai_version=settings.ollama_model or "deepseek-chat",
         prompt_version="v1",
         status="pending",
     )
@@ -708,6 +730,7 @@ async def _stream_deepseek(
     model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     tools: list[dict] | None = None,
+    temperature: float = 0.7,
 ) -> AsyncGenerator[tuple[str, str], None]:
     """Stream response from DeepSeek API, yielding ("content"|"reasoning"|"tool_call", text) tuples.
 
@@ -717,19 +740,18 @@ async def _stream_deepseek(
     """
     client = _get_client()
     payload = {
-        "model": model or settings.deepseek_model or "deepseek-chat",
+        "model": model or settings.ollama_model or "deepseek-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": True,
         # Keep answers detailed & varied. The abliterated local model defaults
-        # to a terse/conservative tone; a slightly higher temperature + top_p
         # pushes longer, richer replies. `stop` prevents premature end-of-turn.
         # seed/top_k/repeat_penalty must be TOP-LEVEL for Ollama's OpenAI
         # compatible endpoint (0.32 verified) — the nested "options" object is
         # ignored there. The model's own default is repeat_penalty=1 (no
         # repetition suppression), which is why answers ramble; 1.1 fixes it.
         # Fixed seed gives deterministic output for regression testing.
-        "temperature": 0.7,
+        "temperature": temperature,
         "top_p": 0.9,
         "frequency_penalty": 0.3,
         "presence_penalty": 0.3,
@@ -747,7 +769,7 @@ async def _stream_deepseek(
         try:
             async with client.stream(
                 "POST",
-                f"{settings.deepseek_api_base}/chat/completions",
+                f"{settings.ollama_api_base}/chat/completions",
                 json=payload,
             ) as response:
                 response.raise_for_status()
@@ -798,15 +820,16 @@ async def _call_deepseek_nonstream(
     messages: list[dict],
     model: str | None = None,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
+    temperature: float = 0.7,
 ) -> tuple[str | None, int, int]:
     """Non-streaming call with token tracking. Returns (content, prompt_tokens, completion_tokens)."""
     client = _get_client()
     payload = {
-        "model": model or settings.deepseek_model or "deepseek-chat",
+        "model": model or settings.ollama_model or "deepseek-chat",
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
-        "temperature": 0.7,
+        "temperature": temperature,
         "top_p": 0.9,
         "frequency_penalty": 0.3,
         "presence_penalty": 0.3,
@@ -820,7 +843,7 @@ async def _call_deepseek_nonstream(
     for attempt in range(_RETRY_MAX):
         try:
             response = await client.post(
-                f"{settings.deepseek_api_base}/chat/completions",
+                f"{settings.ollama_api_base}/chat/completions",
                 json=payload,
             )
             response.raise_for_status()
@@ -880,10 +903,14 @@ async def chat(
         request.think_mode = False
 
     # 1.5. Check character credits (pre-check with estimated max)
+    # Pre-check uses a realistic upper bound (question + ~2000 chars of answer)
+    # instead of _DEFAULT_MAX_TOKENS*2 (8000+ chars) — the old estimate blocked
+    # users with 5000 credits because the estimate was far larger than any real
+    # answer. Actual usage is still deducted accurately after generation.
     from app.models.tenant import Tenant
     tenant = await db.get(Tenant, tenant_id)
     if tenant and tenant.plan != "admin":
-        estimated_chars = len(request.content) + _DEFAULT_MAX_TOKENS * 2  # rough estimate
+        estimated_chars = len(request.content) + 2000
         ok, remaining = await check_and_deduct_credits(tenant, db, estimated_chars)
         if not ok:
             yield f"data: {json.dumps({'type': 'error', 'content': '크레딧이 부족합니다. 플랜을 업그레이드하거나 내일 다시 시도해주세요.'})}\n\n"
@@ -1180,12 +1207,19 @@ async def chat(
     intent = _classify_intent(request.content)
     if intent == "simple":
         max_tokens = min(_DEFAULT_MAX_TOKENS, 800)
+        # Short factual answers → low temperature for precision.
+        effective_temperature = 0.4
     elif intent == "complex":
         # 14B GPU is slow at very long generations; keep the ceiling at the
         # default so complex answers stay detailed but don't take forever.
         max_tokens = _DEFAULT_MAX_TOKENS
+        # Analysis/creative/code → higher temperature for richer output.
+        effective_temperature = 0.8
     else:
+        # Standard questions (the bulk of traffic) also get 0.8 — higher
+        # temperature keeps answers lively/natural vs. the old flat 0.7.
         max_tokens = _DEFAULT_MAX_TOKENS
+        effective_temperature = 0.8
 
     # 8b. Auto think-mode for complex requests: reasoning pass improves final
     # answer quality even though the model always reasons internally anyway.
@@ -1203,7 +1237,7 @@ async def chat(
         # flushed to the client mid-stream -- see extract_confidence().
         pending = ""
         try:
-            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None):
+            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None, temperature=effective_temperature):
                 if kind == "reasoning":
                     full_reasoning += text
                     if not effective_think_mode:
@@ -1300,7 +1334,7 @@ async def chat(
             full_content = ""
             full_confidence = None
             pending = ""
-            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens):
+            async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature):
                 if kind == "content":
                     text = text.replace("<think>", "").replace("</think>", "")
                     if text:
@@ -1327,11 +1361,11 @@ async def chat(
         if tool_calls_buffer:
             pass
         elif not request.context.get("disable_self_review") and (
-            len(full_content) < 40 or _is_rambling(full_content)
+            len(full_content) < 40 or _is_rambling(full_content) or _is_refusal(full_content)
         ):
             logger.info("ai_stream_quality_gate_retry", length=len(full_content))
             regen, _pt2, _ct2 = await _call_deepseek_nonstream(
-                messages, model=request.model, max_tokens=max_tokens,
+                messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
             )
             if regen and len(regen) > len(full_content):
                 full_content, full_confidence = extract_confidence(regen)
@@ -1405,7 +1439,7 @@ async def chat(
     else:
         # Non-streaming response
         reply, prompt_tokens, completion_tokens = await _call_deepseek_nonstream(
-            messages, model=request.model, max_tokens=max_tokens,
+            messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
         )
         if reply is None:
             yield f"data: {json.dumps({'type': 'error', 'content': 'AI service unavailable. Please try again.'})}\n\n"
@@ -1421,12 +1455,14 @@ async def chat(
         # usually fine. Rambling repeats still get one regenerate.
         too_short = gate_enabled and reply_len < 40
         rambling = gate_enabled and reply_len >= 40 and _is_rambling(reply or "")
-        if reply and gate_enabled and (too_short or rambling):
+        refusal = gate_enabled and _is_refusal(reply or "")
+        if reply and gate_enabled and (too_short or rambling or refusal):
             passed, _reason = await self_review_answer(request.content, reply, kb_context)
             if not passed or reply_len < 20:
-                logger.info("ai_chat_quality_gate_retry", reason="too_short" if too_short else "rambling", length=reply_len)
+                reason = "too_short" if too_short else ("refusal" if refusal else "rambling")
+                logger.info("ai_chat_quality_gate_retry", reason=reason, length=reply_len)
                 retried, _pt, _ct = await _call_deepseek_nonstream(
-                    messages, model=request.model, max_tokens=max_tokens,
+                    messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
                 )
                 if retried and len(retried) > reply_len:
                     reply, confidence = extract_confidence(retried)

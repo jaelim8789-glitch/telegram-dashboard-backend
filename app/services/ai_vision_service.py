@@ -24,7 +24,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_VISION_MODEL = os.environ.get("AI_VISION_MODEL", "qwen2.5vl:7b")
-_VISION_API_BASE = os.environ.get("AI_VISION_API_BASE", settings.deepseek_api_base or "http://localhost:11434/v1")
+_VISION_API_BASE = os.environ.get("AI_VISION_API_BASE", settings.ollama_api_base or "http://localhost:11434/v1")
 
 # ffmpeg이 있는 경우에만 동영상 프레임 추출 시도
 _FFMPEG = os.environ.get("AI_FFMPEG_PATH", "ffmpeg")

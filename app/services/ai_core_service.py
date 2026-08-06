@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 _MAX_INPUT_CHARS = 4000
 _MAX_TOKENS = 1000
-_DEFAULT_MODEL = settings.deepseek_model or "deepseek-chat"
+_DEFAULT_MODEL = settings.ollama_model or "deepseek-chat"
 
 # Feature names for usage tracking
 FEATURE_CHAT = "ai_chat"
@@ -85,12 +85,8 @@ async def call_deepseek(
     Returns (None, 0, None) on any failure.
     If tools are provided, the response may include tool_calls instead of content.
     """
-    if not settings.deepseek_api_key:
-        logger.warning("deepseek_api_key not configured")
-        return None, 0, None
-
     payload: dict = {
-        "model": model or settings.deepseek_model or _DEFAULT_MODEL,
+        "model": model or settings.ollama_model or _DEFAULT_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
     }
@@ -101,8 +97,8 @@ async def call_deepseek(
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                f"{settings.deepseek_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                f"{settings.ollama_api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
                 json=payload,
             )
             response.raise_for_status()
@@ -196,17 +192,14 @@ async def _call_deepseek_stream(
     전달된다 (stream_options.include_usage=True). content-only 호출부와 호환되도록
     content 문자열과 함께 정수를 yield한다.
     """
-    if not settings.deepseek_api_key:
-        logger.warning("deepseek_api_key not configured")
-        return
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream(
                 "POST",
-                f"{settings.deepseek_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                f"{settings.ollama_api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
                 json={
-                    "model": model or settings.deepseek_model or _DEFAULT_MODEL,
+                    "model": model or settings.ollama_model or _DEFAULT_MODEL,
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "stream": True,
