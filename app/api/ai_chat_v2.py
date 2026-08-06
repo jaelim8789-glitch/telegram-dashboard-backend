@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_identity, Identity, require_account_tenant_access, require_admin
+from app.api.deps import get_current_identity, get_current_tenant_id, Identity, require_account_tenant_access, require_admin
 from app.core.logging import get_logger
 from app.core.time import utcnow_naive
 from app.database import get_db
@@ -67,9 +67,14 @@ async def create_session_endpoint(
     payload: SessionCreate,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
-    """Create a new chat session."""
-    session = await create_session(db, identity.tenant_id, payload)
+    """Create a new chat session.
+
+    Uses get_current_tenant_id so admins (identity.tenant_id is None) still
+    get their resolved admin tenant instead of a 500 FK error.
+    """
+    session = await create_session(db, tenant_id, payload)
     logger.info("session_created", session_id=session.id)
     return session
 
@@ -81,9 +86,10 @@ async def list_sessions_endpoint(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
-    """List sessions for the current tenant."""
-    return await list_sessions(db, identity.tenant_id, include_archived, limit, offset)
+    """List sessions for the current tenant (admin → resolved admin tenant)."""
+    return await list_sessions(db, tenant_id, include_archived, limit, offset)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)
@@ -91,9 +97,10 @@ async def get_session_endpoint(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """Get a session by ID."""
-    session = await get_session(db, session_id, identity.tenant_id)
+    session = await get_session(db, session_id, tenant_id)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     return session
@@ -105,9 +112,10 @@ async def update_session_endpoint(
     payload: SessionUpdate,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """Update a session."""
-    session = await update_session(db, session_id, identity.tenant_id, payload)
+    session = await update_session(db, session_id, tenant_id, payload)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     return session
@@ -118,9 +126,10 @@ async def delete_session_endpoint(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """Archive (soft-delete) a session."""
-    deleted = await delete_session(db, session_id, identity.tenant_id)
+    deleted = await delete_session(db, session_id, tenant_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
@@ -133,6 +142,7 @@ async def chat_endpoint(
     payload: ChatRequest,
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """Send a message and stream the AI response via SSE.
 
@@ -142,7 +152,7 @@ async def chat_endpoint(
     - data: {"type": "error", "content": "..."}  (on failure)
     """
     return StreamingResponse(
-        chat(db, identity.tenant_id, payload),
+        chat(db, tenant_id, payload),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -162,13 +172,14 @@ async def get_messages(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(get_current_identity),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """Get messages for a session (oldest first)."""
     # Verify session belongs to tenant
-    session = await get_session(db, session_id, identity.tenant_id)
+    session = await get_session(db, session_id, tenant_id)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
-    return await get_session_messages(db, session_id, identity.tenant_id, limit, offset)
+    return await get_session_messages(db, session_id, tenant_id, limit, offset)
 
 
 @router.post("/sessions/{session_id}/messages", response_model=MessageRead, status_code=status.HTTP_201_CREATED)
