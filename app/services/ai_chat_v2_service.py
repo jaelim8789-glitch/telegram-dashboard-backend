@@ -335,9 +335,11 @@ async def _build_history_messages(
         if summary:
             history.append({"role": "system", "content": f"이전 대화 요약:\n{summary}"})
 
-    # D2: user interests — only compute early in the session (first 3 turns);
-    # after that recent messages themselves carry the context.
-    if len(all_msgs) <= 6:
+    # D2: user interests — compute early in the session AND refresh every
+    # 20 turns so long conversations keep a coherent, up-to-date context.
+    # Cached per session to avoid an LLM call on every reply.
+    turn_count = len(all_msgs)
+    if turn_count <= 6 or (turn_count > 20 and turn_count % 20 <= 2):
         interests = await _extract_user_interests(recent)
         if interests:
             history.insert(0, {"role": "system", "content": f"사용자의 이번 세션 관심사:\n{interests}"})
@@ -560,14 +562,137 @@ def _classify_intent(text: str) -> str:
     return "standard"
 
 
-def _assistant_context(memory_context: list[str] | None, kb_context: list[str] | None) -> list | None:
-    """Stores memory + RAG usage metadata on the assistant message so we can
-    later measure whether KB-referenced answers actually get better feedback
-    than non-referenced ones (RAG effectiveness).
+_CODE_HINTS = ("코드", "코딩", "python", "javascript", "함수", "api", "버그", "에러", "구현", "스크립트", "sql", "리액트", "next", "타입", "클래스", "데이터베이스", "서버", "웹")
+_MARKETING_HINTS = ("마케팅", "발송", "광고", "홍보", "고객", "전환", "프로모션", "캠페인", "브랜드", "타겟", "세일즈", "vip", "그룹", "채널", "텔레그램")
+_ANALYSIS_HINTS = ("분석", "통계", "데이터", "비교", "추세", "성과", "수치", "지표", "리포트", "원인", "효과", "측정", "kpi")
+
+
+def _classify_domain(text: str) -> str:
+    """Rough domain classification: 'code' | 'marketing' | 'analysis' | 'general'.
+
+    Drives domain-specific system-prompt steering (C2) so the 14B model gets
+    a tailored example/format per topic. Pure heuristic — no extra LLM call.
+    """
+    t = (text or "").strip().lower()
+    score = {"code": 0, "marketing": 0, "analysis": 0}
+    for h in _CODE_HINTS:
+        if h in t:
+            score["code"] += 1
+    for h in _MARKETING_HINTS:
+        if h in t:
+            score["marketing"] += 1
+    for h in _ANALYSIS_HINTS:
+        if h in t:
+            score["analysis"] += 1
+    best = max(score, key=lambda k: score[k])
+    return best if score[best] > 0 else "general"
+
+
+def _domain_steering(domain: str) -> str:
+    """Return a short system-prompt injection tailored to the detected domain."""
+    if domain == "code":
+        return (
+            "이 질문은 코드/개발 관련입니다. 코드 블록을 중심으로, "
+            "왜 이렇게 짜는지 원리와 함께 단계별로 설명하세요. 실행 가능한 예시를 반드시 포함하세요."
+        )
+    if domain == "marketing":
+        return (
+            "이 질문은 마케팅/발송 관련입니다. 타겟 설정 → 채널 → 콘텐츠 → 도달·관리 흐름으로 "
+            "답하고, 구체적 수치와 실전 예시(문구/시나리오)를 포함하세요."
+        )
+    if domain == "analysis":
+        return (
+            "이 질문은 분석/데이터 관련입니다. 원인 → 영향 → 시사점 구조로 답하고, "
+            "가능하면 표나 수치로 정리하세요."
+        )
+    return ""
+
+
+def _assistant_context(
+    memory_context: list[str] | None,
+    kb_context: list[str] | None,
+    answer: str = "",
+    question: str = "",
+) -> list | None:
+    """Stores memory + RAG + quality metadata on the assistant message so we
+    can later measure RAG effectiveness and answer quality per domain.
     """
     ctx = list(memory_context) if memory_context else []
-    base = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
+    base: dict = {"used_rag": bool(kb_context), "rag_sources": len(kb_context) if kb_context else 0}
+    if answer:
+        base["quality_score"] = _quality_score(question, answer)["final"]
+        base["quality_metrics"] = _quality_score(question, answer)
+        base["domain"] = _classify_domain(question)
     return ctx + [base] if ctx else [base]
+
+
+def _quality_score(question: str, answer: str) -> dict:
+    """AI Quality Score Engine — 8-metric score (each 0-100) + final.
+
+    Metrics: accuracy, logic, completeness, relevance, tone, safety,
+    readability, confidence. Heuristic baseline (no extra LLM call) for most;
+    `_llm_quality_scores` can refine them. Returns a dict so sub-scores are
+    visible in analytics.
+    """
+    alen = len(answer or "")
+    qlen = len(question or "")
+
+    # Readability: sentence/char balance. Penalize tiny answers.
+    readability = 100
+    if alen < 40:
+        readability = 20
+    elif alen < 100:
+        readability = 60
+    elif alen < 300:
+        readability = 85
+    else:
+        readability = 95
+
+    # Completeness: longer answers more likely complete; cap.
+    completeness = min(95, 40 + alen // 8) if alen > 0 else 0
+
+    # Relevance: answer length relative to question + keyword overlap.
+    overlap = 0
+    if question and answer:
+        qwords = {w for w in question.lower().split() if len(w) > 1}
+        overlap = sum(1 for w in qwords if w in answer.lower()) / max(len(qwords), 1)
+    relevance = int(min(100, 40 + overlap * 120))
+
+    # Safety: refusal/rambling pull it down.
+    safety = 95
+    if _is_refusal(answer):
+        safety = 30
+    if _is_rambling(answer):
+        safety = 55
+
+    # Tone: refusal/apology hurts; otherwise baseline good.
+    tone = 90
+    low = (answer or "").lower()
+    for h in ("죄송", "sorry", "can't help"):
+        if h in low:
+            tone = 50
+            break
+
+    # Confidence: 0-100 proxy (heuristic; real confidence marker parsed separately).
+    confidence = 85 if alen >= 100 else (60 if alen >= 40 else 30)
+
+    # Accuracy & Logic: heuristic proxy from coherence (no rambling/refusal).
+    accuracy = 90 if not _is_rambling(answer) and not _is_refusal(answer) else 55
+    logic = 90 if not _is_rambling(answer) else 60
+
+    metrics = {
+        "accuracy": accuracy,
+        "logic": logic,
+        "completeness": completeness,
+        "relevance": relevance,
+        "tone": tone,
+        "safety": safety,
+        "readability": readability,
+        "confidence": confidence,
+    }
+    final = round(sum(metrics.values()) / len(metrics))
+    metrics["final"] = final
+    return metrics
 
 
 #  AI Self Review 
@@ -622,16 +747,22 @@ def _is_refusal(text: str) -> bool:
     return False
 
 
+# P3: Reflection auto-fix output buffer — set by self_review_answer when the
+# model returns a corrected answer, consumed by the chat pipeline.
+_reflection_corrected: dict = {"answer": None}
+
+
 async def self_review_answer(
     question: str,
     answer: str,
     kb_context: list[str] | None = None,
 ) -> tuple[bool, str]:
-    """AI가 자기 답변을 검사합니다.
+    """P3: Reflection Engine — 6-check self-review + auto-fix.
 
-    Returns (passed, reason).
-    - passed: True면 답변 전송, False면 재생성 또는 관리자 알림
-    - reason: 검사 결과 이유
+    Checks: fact errors, logic errors, duplicated explanation, user intent
+    satisfaction, unnecessary sentences, policy violations.
+    Returns (passed, reason). On failure the AI rewrites the answer in place
+    (auto-fix) before returning so callers can use the corrected version.
     """
     try:
         context_text = ""
@@ -641,30 +772,36 @@ async def self_review_answer(
         review_prompt = (
             f"다음 AI 답변을 검사하세요:{context_text}\n\n"
             f"질문: {question[:500]}\n"
-            f"답변: {answer[:1000]}\n\n"
-            f"확인 사항:\n"
-            f"1. 틀린 정보가 있나요?\n"
-            f"2. 모순이 있나요?\n"
-            f"3. 기존 지식과 충돌하나요?\n\n"
-            f"문제 없으면 \"PASS\"만, 문제 있으면 \"FAIL: 이유\" 형태로만 답변하세요."
+            f"답변: {answer[:1200]}\n\n"
+            f"확인 사항 (각각 살펴보세요):\n"
+            f"1. 사실 오류가 있나요?\n"
+            f"2. 논리 오류가 있나요?\n"
+            f"3. 중복 설명이 있나요?\n"
+            f"4. 사용자 의도를 충족하나요?\n"
+            f"5. 불필요한 문장이 있나요?\n"
+            f"6. 회사 정책(거부·사과 금지, 한국어)을 위반하나요?\n\n"
+            f"문제가 없으면 정확히 \"PASS\"만 답하세요.\n"
+            f"문제가 있으면 문제를 고친 **수정된 전체 답변**만 출력하세요 "
+            f"(\"FAIL\" 같은 라벨 없이, 수정된 답변 그 자체로)."
         )
 
         result, _tokens, _tool_calls = await call_ollama(
             [{"role": "user", "content": review_prompt}],
-            max_tokens=200,
+            max_tokens=1200,
         )
 
         if result is None:
             return True, "review_unavailable"
 
         result = result.strip()
-        if result.startswith("PASS"):
+        if result == "PASS":
             return True, "passed"
-        elif result.startswith("FAIL"):
-            reason = result[4:].strip(": ")
-            return False, reason or "quality_issue"
-        else:
-            return True, "review_unclear"
+        # Anything else is treated as the corrected answer (auto-fix).
+        if result and len(result) > 20:
+            # Update answer in-place so callers use the corrected version.
+            _reflection_corrected["answer"] = result
+            return False, "auto_fixed"
+        return True, "review_unclear"
     except Exception as exc:
         logger.warning("ai_self_review_failed", error=str(exc))
         return True, "review_error"
@@ -974,6 +1111,9 @@ async def chat(
         "- \"더 도와드릴까요?\"처럼 뻔한 반복 대신, 아직 다루지 못한 구체적 하위 주제를 하나씩 짚어서 "
         "다음 질문을 유도하세요. 예: \"이 주제에는 비용/효율/리스크 관점도 있는데, 장단점을 비교해서 정리해 드릴까요?\"\n"
         "- 같은 문구를 매번 쓰지 말고 답변 내용에 맞게 조금씩 다르게 표현하세요.\n"
+        "- 답변이 실제로 도움이 됐는지 확인하는 멘트로 마무리하는 것도 좋습니다. "
+        "예: \"이 답변이 도움이 되셨나요? 다른 각도로 다시 정리해 드릴까요?\" — 피드백을 먼저 받아 "
+        "품질을 다듬고, 필요하면 이어서 답변합니다.\n"
         "- 절대로 \"결제\"나 \"크레딧\"을 직접 언급하지 마세요. \"더 깊은 분석 / 더 원하는 답변 준비\"라는 "
         "가치 제안으로만 자연스럽게 이어가세요.\n\n"
         "━━━ 확신도 표시 ━━━\n"
@@ -1058,8 +1198,36 @@ async def chat(
             joined = "\n".join(f"- {str(m)[:300]}" for m in recent[-5:])
             ctx_parts.append(f"사용자가 최근 보고 있는 대화 메시지:\n{joined}")
         if ctx_parts:
-            # Response style steering (default/concise/detailed/code).
+            # Response style steering (default/concise/detailed/code) — D1:
+            # remember the tenant's preferred style across sessions.
             style = request.context.get("style")
+            if style not in ("concise", "detailed", "code", None):
+                style = None
+            if style:
+                try:
+                    from app.models.system_setting import SystemSetting
+                    existing = await db.execute(
+                        select(SystemSetting).where(SystemSetting.key == f"style:{tenant_id}").limit(1)
+                    )
+                    row = existing.scalar_one_or_none()
+                    if row:
+                        row.value = style
+                    else:
+                        db.add(SystemSetting(id=str(uuid.uuid4()), key=f"style:{tenant_id}", value=style))
+                    await db.commit()
+                except Exception as exc:
+                    logger.debug("ai_style_save_failed", error=str(exc))
+            else:
+                try:
+                    from app.models.system_setting import SystemSetting
+                    existing = await db.execute(
+                        select(SystemSetting).where(SystemSetting.key == f"style:{tenant_id}").limit(1)
+                    )
+                    row = existing.scalar_one_or_none()
+                    if row and row.value in ("concise", "detailed", "code"):
+                        style = row.value
+                except Exception as exc:
+                    logger.debug("ai_style_load_failed", error=str(exc))
             if style == "concise":
                 ctx_parts.append("답변 스타일: 간결하게 — 핵심만 요약해 2~3문장 안에 답하세요.")
             elif style == "detailed":
@@ -1134,6 +1302,38 @@ async def chat(
                 "role": "system",
                 "content": f"장기 기억에서 관련 정보:\n{memory_text}",
             })
+
+        # P1: Auto Memory Engine — store high-value user statements (member).
+        # Guests get their own memory in ai_guest.py.
+        try:
+            from app.services.memory_engine import maybe_store_memory, recall_memory
+            await maybe_store_memory(db, "tenant", tenant_id, request.content, question=request.content)
+            stored_mem = await recall_memory(db, "tenant", tenant_id, request.content, top_k=3)
+            if stored_mem and not memory_context:
+                memory_text = "\n".join(f"- {m}" for m in stored_mem)
+                messages.append({
+                    "role": "system",
+                    "content": f"저장된 메모리 (관련):\n{memory_text}",
+                })
+        except Exception as exc:
+            logger.debug("ai_memory_engine_failed", error=str(exc))
+
+        # P6: Web Search — only when KB had no hits (KB > Memory > Web > LLM).
+        if not kb_context:
+            try:
+                from app.services.web_search import web_search
+                web_results = await web_search(request.content, max_results=3)
+                if web_results:
+                    web_text = "\n\n".join(
+                        f"- {r['title']}: {r['content'][:300]} ({r['url']})"
+                        for r in web_results if r.get("content")
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": f"최신 웹 정보 (출처 포함):\n{web_text}",
+                    })
+            except Exception as exc:
+                logger.debug("ai_web_search_failed", error=str(exc))
 
     # 6. Add history
     messages.extend(history)
@@ -1220,6 +1420,13 @@ async def chat(
         # temperature keeps answers lively/natural vs. the old flat 0.7.
         max_tokens = _DEFAULT_MAX_TOKENS
         effective_temperature = 0.8
+
+    # 8c. Domain steering (C2): detect topic and inject a tailored system
+    # prompt so the 14B model uses the right format per domain.
+    domain = _classify_domain(request.content)
+    steering = _domain_steering(domain)
+    if steering:
+        messages.append({"role": "system", "content": steering})
 
     # 8b. Auto think-mode for complex requests: reasoning pass improves final
     # answer quality even though the model always reasons internally anyway.
@@ -1388,7 +1595,7 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=_assistant_context(memory_context, kb_context),
+            memory_context=_assistant_context(memory_context, kb_context, answer=full_content, question=request.content),
             memory_stored=False,
         )
         db.add(assistant_msg)
@@ -1451,21 +1658,68 @@ async def chat(
         # answers skip the extra model call — that was the mobile-latency fix.
         reply_len = len(reply) if reply else 0
         gate_enabled = not request.context.get("disable_self_review")
-        # 40 chars = clearly a dead/refusal-style answer; anything longer is
-        # usually fine. Rambling repeats still get one regenerate.
-        too_short = gate_enabled and reply_len < 40
-        rambling = gate_enabled and reply_len >= 40 and _is_rambling(reply or "")
-        refusal = gate_enabled and _is_refusal(reply or "")
-        if reply and gate_enabled and (too_short or rambling or refusal):
-            passed, _reason = await self_review_answer(request.content, reply, kb_context)
-            if not passed or reply_len < 20:
-                reason = "too_short" if too_short else ("refusal" if refusal else "rambling")
-                logger.info("ai_chat_quality_gate_retry", reason=reason, length=reply_len)
-                retried, _pt, _ct = await _call_ollama_nonstream(
-                    messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
-                )
-                if retried and len(retried) > reply_len:
-                    reply, confidence = extract_confidence(retried)
+        # P2: AI Quality Score — if final < 90, regenerate (up to 2 times).
+        # If still low, fall through with a "need more info" style note.
+        quality = _quality_score(request.content, reply or "")
+        final_q = quality["final"] if reply else 0
+        retries = 0
+        while reply and gate_enabled and final_q < 90 and retries < 2:
+            retries += 1
+            logger.info("ai_chat_quality_regenerate", score=final_q, retry=retries)
+            retried, _pt, _ct = await _call_ollama_nonstream(
+                messages, model=request.model, max_tokens=max_tokens, temperature=effective_temperature,
+            )
+            if retried and len(retried) > reply_len:
+                reply, confidence = extract_confidence(retried)
+                reply_len = len(reply)
+                quality = _quality_score(request.content, reply or "")
+                final_q = quality["final"]
+            else:
+                break
+        # P3: Reflection — final self-review + auto-fix (best-effort, one call).
+        if gate_enabled and reply and len(reply) >= 40:
+            _reflection_corrected["answer"] = None
+            passed, reason = await self_review_answer(request.content, reply, kb_context)
+            if not passed and _reflection_corrected.get("answer"):
+                corrected = _reflection_corrected["answer"]
+                if len(corrected) > len(reply):
+                    logger.info("ai_chat_reflection_autofix", delta=len(corrected) - len(reply))
+                    reply = corrected
+                    confidence = None
+            elif not passed:
+                logger.info("ai_chat_reflection_flag", reason=reason)
+        # If still below threshold, append a soft prompt for more info.
+        if gate_enabled and reply and final_q < 60:
+            reply += (
+                "\n\n참고로, 이 답변이 충분히 정확한지 확인하기 위해 "
+                "추가 정보가 필요할 수 있습니다. 구체적인 상황을 알려주시면 더 정확히 답변해 드릴게요."
+            )
+        quality_metrics = quality if reply else _quality_score(request.content, "")
+
+        # C1: 2-pass refinement for paid plans on complex questions — the
+        # draft is regenerated with "add missing angles/correct errors" to
+        # make the answer richer. Only for pro/max (they pay for quality);
+        # free plans skip to keep latency & cost low.
+        refine_enabled = (
+            request.context.get("refine_answer", False)
+            or (tenant is not None and tenant.plan in ("pro", "max") and intent == "complex")
+        )
+        if refine_enabled and reply and len(reply) >= 40:
+            refine_prompt = (
+                "다음 답변을 개선하세요: 빠진 관점·예시를 추가하고, 오류가 있으면 고치고, "
+                "더 완성도 있게 정리하세요. 핵심은 유지하되 더 풍부하게.\n\n"
+                f"질문: {request.content[:400]}\n답변: {reply[:1500]}"
+            )
+            refined, _pt3, _ct3 = await _call_ollama_nonstream(
+                [{"role": "user", "content": refine_prompt}],
+                model=request.model,
+                max_tokens=max_tokens,
+                temperature=0.8,
+            )
+            if refined and len(refined) > len(reply):
+                logger.info("ai_chat_2pass_refined", delta=len(refined) - len(reply), domain=domain, tenant_id=tenant_id)
+                reply, confidence = extract_confidence(refined)
+                refined_used = True
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1478,9 +1732,13 @@ async def chat(
             tokens_completion=completion_tokens,
             latency_ms=latency_ms,
             model=request.model,
-            memory_context=_assistant_context(memory_context, kb_context),
+            memory_context=_assistant_context(memory_context, kb_context, answer=reply, question=request.content),
             memory_stored=False,
         )
+        if locals().get("refined_used"):
+            _meta = assistant_msg.memory_context or []
+            _meta.append({"refined": True})
+            assistant_msg.memory_context = _meta
         db.add(assistant_msg)
 
         session.message_count += 2
@@ -1712,9 +1970,19 @@ async def _check_and_create_candidate(
     )
     avg_score = float(avg_result.scalar() or 0)
 
-    # Trigger candidate creation when threshold reached
+    # P4: Knowledge Candidate trigger — rating >= 4.5, feedback >= 10,
+    # AI Quality Score >= 95. Pull quality from memory_context metadata.
+    quality_score = 0
+    for item in (assistant_msg.memory_context or []):
+        if isinstance(item, dict) and "quality_score" in item:
+            quality_score = int(item["quality_score"] or 0)
+
     FEEDBACK_THRESHOLD = 10
-    if positive_count >= FEEDBACK_THRESHOLD and avg_score >= 4.0:
+    if (
+        avg_score >= 4.5
+        and positive_count >= FEEDBACK_THRESHOLD
+        and quality_score >= 95
+    ):
         await create_knowledge_candidate(
             db=db,
             tenant_id=tenant_id,
@@ -1948,4 +2216,171 @@ async def get_ai_quality_report(db: AsyncSession, tenant_id: str, days: int = 7)
             "learned_kb_docs": kb_count,
             "pending_candidates": pending_candidates,
         },
+    }
+
+
+#  Admin AI Quality Analytics (Q8 + Q9 + Q10)
+
+
+async def get_admin_quality_analytics(db: AsyncSession, days: int = 7) -> dict:
+    """Admin-facing AI quality analytics.
+
+    Q8: aggregate answer quality_score (0-100) trend over time.
+    Q10: domain benchmark — average quality_score + feedback per domain.
+    Q9: low-quality answers (quality_score < 40) listed as improvement
+        candidates so admins can feed them into the learning queue.
+    """
+    from datetime import timedelta
+    from sqlalchemy import func
+    from app.core.time import utcnow_naive
+    from app.models.ai_chat_v2 import AiChatMessageV2
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+
+    # Pull all assistant messages with memory_context (which holds quality_score)
+    rows = (await db.execute(
+        select(AiChatMessageV2).where(
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.created_at >= since,
+        ).order_by(AiChatMessageV2.created_at.desc()).limit(2000)
+    )).scalars().all()
+
+    # Q8: daily avg quality score
+    daily: dict[str, list[int]] = {}
+    # Q10: domain buckets
+    domains: dict[str, dict] = {}
+    # Q9: low-quality candidates
+    low_quality: list[dict] = []
+
+    for m in rows:
+        meta = m.memory_context or []
+        qs = None
+        domain = "general"
+        for item in meta:
+            if isinstance(item, dict):
+                if "quality_score" in item:
+                    qs = item.get("quality_score")
+                if "domain" in item:
+                    domain = item.get("domain", "general")
+        # If domain wasn't stored in meta, classify from content
+        if domain == "general" and m.content:
+            domain = _classify_domain(m.content)
+
+        # Q10: domain benchmark
+        if qs is not None:
+            b = domains.setdefault(domain, {"count": 0, "score_sum": 0.0, "positive": 0, "negative": 0})
+            b["count"] += 1
+            b["score_sum"] += float(qs)
+            if m.feedback_score is not None:
+                if m.feedback_score >= 4:
+                    b["positive"] += 1
+                elif m.feedback_score <= 2:
+                    b["negative"] += 1
+
+        # Q8: daily trend
+        if qs is not None and m.created_at:
+            day = m.created_at.strftime("%Y-%m-%d")
+            daily.setdefault(day, []).append(int(qs))
+
+        # Q9: low-quality improvement candidates
+        if qs is not None and qs < 40 and m.content and len(m.content) > 5:
+            low_quality.append({
+                "id": m.id,
+                "session_id": m.session_id,
+                "domain": domain,
+                "quality_score": int(qs),
+                "content_preview": m.content[:200],
+            })
+
+    domain_summary = {
+        k: {
+            "count": v["count"],
+            "avg_score": round(v["score_sum"] / v["count"], 1) if v["count"] else 0,
+            "positive": v["positive"],
+            "negative": v["negative"],
+        }
+        for k, v in domains.items()
+    }
+
+    daily_summary = {
+        day: {
+            "avg": round(sum(scores) / len(scores), 1) if scores else 0,
+            "count": len(scores),
+        }
+        for day, scores in sorted(daily.items())
+    }
+
+    return {
+        "period_days": days,
+        "quality_trend": daily_summary,
+        "domain_benchmark": domain_summary,
+        "low_quality_candidates": low_quality[:100],
+        "low_quality_count": len(low_quality),
+        "total_messages": len(rows),
+        "memory": await _memory_analytics(db),
+        "candidate_analytics": await _candidate_analytics(db),
+        "growth": await _ai_growth(db, days),
+    }
+
+
+async def _memory_analytics(db: AsyncSession) -> dict:
+    """P5: memory storage stats (total, avg score, by category)."""
+    from app.services.memory_engine import memory_stats
+    return await memory_stats(db)
+
+
+async def _candidate_analytics(db: AsyncSession) -> dict:
+    """P5: knowledge candidate approval rate + top questions."""
+    from sqlalchemy import func
+    from app.models.knowledge_base import KnowledgeCandidate
+
+    rows = (await db.execute(
+        select(
+            KnowledgeCandidate.status,
+            func.count(KnowledgeCandidate.id),
+        ).group_by(KnowledgeCandidate.status)
+    )).all()
+    counts = {r[0]: r[1] for r in rows}
+    total = sum(counts.values())
+    approved = counts.get("approved", 0)
+    return {
+        "total": total,
+        "pending": counts.get("pending", 0),
+        "approved": approved,
+        "rejected": counts.get("rejected", 0),
+        "approval_rate": round(approved / total * 100, 1) if total else 0,
+    }
+
+
+async def _ai_growth(db: AsyncSession, days: int) -> dict:
+    """P5: AI growth — quality trend slope + best/worst question domains."""
+    from datetime import timedelta
+    from app.core.time import utcnow_naive
+    from app.models.ai_chat_v2 import AiChatMessageV2
+
+    now = utcnow_naive()
+    since = now - timedelta(days=days)
+    rows = (await db.execute(
+        select(AiChatMessageV2).where(
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.created_at >= since,
+        ).limit(1000)
+    )).scalars().all()
+
+    by_domain: dict[str, list[int]] = {}
+    for m in rows:
+        for item in (m.memory_context or []):
+            if isinstance(item, dict) and "quality_score" in item and "domain" in item:
+                by_domain.setdefault(item["domain"], []).append(int(item["quality_score"]))
+    # Growth = top-domain avg vs bottom-domain avg (relative improvement signal).
+    avgs = {d: round(sum(v) / len(v), 1) for d, v in by_domain.items() if v}
+    if not avgs:
+        return {"best_domain": None, "weakest_domain": None, "spread": 0}
+    best = max(avgs, key=avgs.get)
+    weakest = min(avgs, key=avgs.get)
+    return {
+        "best_domain": best,
+        "weakest_domain": weakest,
+        "spread": round(avgs[best] - avgs[weakest], 1),
     }

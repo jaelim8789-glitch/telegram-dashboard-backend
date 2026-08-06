@@ -16,7 +16,7 @@ import asyncio
 import json
 import sys
 
-from app.services.ai_chat_v2_service import _call_deepseek_nonstream
+from app.services.ai_chat_v2_service import _call_ollama_nonstream
 
 MIN_ANSWER_CHARS = 80
 QUESTIONS = [
@@ -33,7 +33,7 @@ async def run() -> list[dict]:
     results = []
     for q in QUESTIONS:
         try:
-            reply, _, _ = await _call_deepseek_nonstream(
+            reply, _, _ = await _call_ollama_nonstream(
                 [{
                     "role": "system",
                     "content": (
