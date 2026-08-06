@@ -200,6 +200,7 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
                 source="random_reply",
                 source_id=macro.id,
                 reply_to_map={chat_id: chosen_msg.id},
+                inter_message_delay=0.2,  # 기본 1.0초 → 0.2초로 단축 (실시간 속도, 계정 차단 위험 감수)
             )
 
             try:

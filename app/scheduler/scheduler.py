@@ -41,7 +41,7 @@ except Exception:
 logger = get_logger(__name__)
 
 DISPATCH_INTERVAL_SECONDS = 30
-RANDOM_REPLY_INTERVAL_MINUTES = 30
+RANDOM_REPLY_INTERVAL_MINUTES = 1   # 사용자 요청: 실시간에 가깝게, 차단 위험 감수
 
 scheduler = AsyncIOScheduler()
 
