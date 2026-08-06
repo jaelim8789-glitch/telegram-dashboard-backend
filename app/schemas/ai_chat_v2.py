@@ -39,7 +39,16 @@ class SessionRead(BaseModel):
     title: str
     model: str
     tags: list[Any] | None = None
-    metadata: dict[str, Any] | None = None
+    # AiChatSession's Python attribute is session_metadata (mapped to DB
+    # column "metadata") specifically to avoid colliding with every
+    # SQLAlchemy declarative model's own class-level `.metadata` (the table
+    # registry) -- but reading `.metadata` off an ORM instance here silently
+    # returned that registry object instead of raising AttributeError, so
+    # FastAPI's response serialization failed on every single session
+    # create/list/get call ("Input should be a valid dictionary" for a real
+    # MetaData() instance). validation_alias points this field at the
+    # correct attribute while keeping the response JSON key as "metadata".
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="session_metadata")
     summary: str | None = None
     message_count: int
     total_tokens: int
@@ -48,7 +57,7 @@ class SessionRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class SessionSummary(BaseModel):
