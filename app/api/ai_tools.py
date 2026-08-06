@@ -165,6 +165,39 @@ TOOLS = [
             },
         },
     },
+    #  Conversation tools (AI = personal assistant) 
+    {
+        "type": "function",
+        "function": {
+            "name": "get_chat_messages",
+            "description": "텔레그램 특정 채팅/그룹의 최근 대화 메시지를 조회합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account_id": {"type": "string", "description": "계정 ID"},
+                    "chat_id": {"type": "integer", "description": "채팅/그룹 ID"},
+                    "limit": {"type": "integer", "description": "조회할 메시지 수 (기본 20)", "default": 20},
+                },
+                "required": ["account_id", "chat_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_chat_reply",
+            "description": "텔레그램 특정 채팅/그룹에 메시지를 보냅니다. 사용자 확인 후 실행됩니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account_id": {"type": "string", "description": "계정 ID"},
+                    "chat_id": {"type": "integer", "description": "채팅/그룹 ID"},
+                    "message": {"type": "string", "description": "보낼 메시지"},
+                },
+                "required": ["account_id", "chat_id", "message"],
+            },
+        },
+    },
 ]
 
 # Tool metadata: risk level, requires confirmation, description
@@ -177,6 +210,8 @@ TOOL_META: dict[str, dict[str, Any]] = {
     "get_account_list": {"category": "read", "requires_confirmation": False, "label": "  "},
     "get_group_list": {"category": "read", "requires_confirmation": False, "label": "  "},
     "get_source_analytics": {"category": "read", "requires_confirmation": False, "label": "  "},
+    "get_chat_messages": {"category": "read", "requires_confirmation": False, "label": "대화 조회"},
+    "send_chat_reply": {"category": "write", "requires_confirmation": True, "label": "답장 보내기"},
     "send_broadcast": {"category": "write", "requires_confirmation": True, "label": "  "},
 }
 
@@ -251,6 +286,26 @@ async def execute_tool(
             from app.api.groups import _get_all_groups_for_tenant
             groups = await _get_all_groups_for_tenant(identity)
             return ToolResult(success=True, tool_name=tool_name, result={"groups": groups})
+
+        elif tool_name == "get_chat_messages":
+            from app.services.chat_actions import fetch_messages
+            account_id = arguments.get("account_id")
+            chat_id = arguments.get("chat_id")
+            limit = arguments.get("limit", 20)
+            if not account_id or not chat_id:
+                return ToolResult(success=False, tool_name=tool_name, result=None, error="account_id와 chat_id가 필요합니다.")
+            msgs = await fetch_messages(account_id, int(chat_id), limit=int(limit))
+            return ToolResult(success=True, tool_name=tool_name, result={"messages": msgs[: int(limit)]})
+
+        elif tool_name == "send_chat_reply":
+            from app.services.chat_actions import send_chat_message
+            account_id = arguments.get("account_id")
+            chat_id = arguments.get("chat_id")
+            message = arguments.get("message", "")
+            if not account_id or not chat_id or not message:
+                return ToolResult(success=False, tool_name=tool_name, result=None, error="account_id, chat_id, message가 필요합니다.")
+            sent = await send_chat_message(account_id, int(chat_id), message)
+            return ToolResult(success=True, tool_name=tool_name, result={"sent": sent})
 
         elif tool_name == "send_broadcast":
             # Write tool  requires prior user confirmation via the

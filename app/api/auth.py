@@ -831,15 +831,18 @@ async def register_with_password(payload: RegisterWithPasswordRequest, request: 
     plan_def = get_plan("free")
     trial_hours = (plan_def["trial_days"] * 24) if plan_def else 72
     trial_expires = utcnow_naive() + timedelta(hours=trial_hours)
+    # New signups get a 24h Pro trial so they experience the full product
+    # (50M credits/mo + advanced model) before converting. After the window
+    # passes the tenant falls back to the free plan via the scheduler.
     tenant = Tenant(
         phone=placeholder_phone,
-        plan="free",
-        subscription_status="active",
+        plan="pro",
+        subscription_status="trial",
         trial_expires_at=trial_expires,
     )
     db.add(tenant)
     await db.flush()
-    await apply_plan_limits(db, tenant, "free")
+    await apply_plan_limits(db, tenant, "pro")
 
     raw_token, _ = await session_crud.create_session(
         db, user_id=user.id, tenant_id=tenant.id,

@@ -56,6 +56,8 @@ STARS_PRICES = {
     "analytics_report": 200,
     "extra_account_slot": 150,
     "ai_chat_pack_50": 50,
+    "ai_credit_pack_small": 100,
+    "ai_credit_pack_big": 300,
 }
 
 STARS_DESCRIPTIONS = {
@@ -65,12 +67,16 @@ STARS_DESCRIPTIONS = {
     "analytics_report": "📊 상세 분석 리포트 PDF",
     "extra_account_slot": "🔌 추가 계정 슬롯 1개 (월)",
     "ai_chat_pack_50": "🤖 AI Chat 50회 추가 사용권",
+    "ai_credit_pack_small": "💎 AI 크레딧 5,000 (소량)",
+    "ai_credit_pack_big": "💎 AI 크레딧 20,000",
 }
 
 # AI Chat credits actually granted per pack — kept separate from STARS_PRICES so the
 # Stars price and the credit amount can be tuned independently.
 AI_CHAT_PACK_CREDITS = {
     "ai_chat_pack_50": 50,
+    "ai_credit_pack_small": 5000,
+    "ai_credit_pack_big": 20000,
 }
 
 
@@ -243,7 +249,13 @@ async def process_stars_payment(tenant_id: str, item: str, stars_amount: int) ->
 
         tenant.stars_balance -= stars_amount
         if item in AI_CHAT_PACK_CREDITS:
-            tenant.ai_chat_credit_balance = (tenant.ai_chat_credit_balance or 0) + AI_CHAT_PACK_CREDITS[item]
+            credits = AI_CHAT_PACK_CREDITS[item]
+            # Credit packs top up the live v2 credit pool (ai_credits_remaining);
+            # the legacy ai_chat_pack_50 still feeds the older balance column.
+            if item.startswith("ai_credit_pack"):
+                tenant.ai_credits_remaining = (tenant.ai_credits_remaining or 0) + credits
+            else:
+                tenant.ai_chat_credit_balance = (tenant.ai_chat_credit_balance or 0) + credits
         await db.commit()
 
         benefit = _get_item_benefit(item)

@@ -839,7 +839,19 @@ async def chat(
             ctx_parts.append(f"활성 그룹/채팅 이름: {request.context['group_name']}")
         if request.context.get("active_tab"):
             ctx_parts.append(f"현재 사용 중인 화면: {request.context['active_tab']}")
+        recent = request.context.get("recent_messages")
+        if isinstance(recent, list) and recent:
+            joined = "\n".join(f"- {str(m)[:300]}" for m in recent[-5:])
+            ctx_parts.append(f"사용자가 최근 보고 있는 대화 메시지:\n{joined}")
         if ctx_parts:
+            # Response style steering (default/concise/detailed/code).
+            style = request.context.get("style")
+            if style == "concise":
+                ctx_parts.append("답변 스타일: 간결하게 — 핵심만 요약해 2~3문장 안에 답하세요.")
+            elif style == "detailed":
+                ctx_parts.append("답변 스타일: 자세히 — 최대한 상세하게 모든 관련 내용을 설명하세요.")
+            elif style == "code":
+                ctx_parts.append("답변 스타일: 코드 위주 — 예시 코드를 중심으로 설명하세요.")
             messages.append({
                 "role": "system",
                 "content": f"사용자의 현재 컨텍스트:\n{chr(10).join(ctx_parts)}\n"
@@ -1123,6 +1135,9 @@ async def chat(
         # 1 credit = 1 char). Reasoning counts even when think_mode was off
         # and it was never shown -- the tokens were actually generated.
         actual_chars = len(request.content) + len(full_content) + len(full_reasoning)
+        # Sensitive queries cost double (privacy redaction / higher risk tier).
+        if request.context.get("sensitive"):
+            actual_chars *= 2
         if tenant and tenant.plan != "admin":
             # Refund the estimated amount and deduct actual
             tenant.ai_credits_remaining += estimated_chars  # refund estimate
@@ -1153,6 +1168,18 @@ async def chat(
             yield f"data: {json.dumps({'type': 'error', 'content': 'AI service unavailable. Please try again.'})}\n\n"
             return
         reply, confidence = extract_confidence(reply)
+
+        # Self-review: if the answer fails review, regenerate once before
+        # sending. Keeps the quality floor without unbounded retries.
+        if reply and not request.context.get("disable_self_review"):
+            passed, _reason = await self_review_answer(request.content, reply, kb_context)
+            if not passed:
+                logger.info("ai_chat_self_review_fail_retry")
+                retried, _pt, _ct = await _call_deepseek_nonstream(
+                    messages, model=request.model, max_tokens=max_tokens,
+                )
+                if retried:
+                    reply, confidence = extract_confidence(retried)
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1186,6 +1213,8 @@ async def chat(
         # above already did this; this non-stream branch never did, so a
         # request with stream=false ran completely free of charge.
         actual_chars = len(request.content) + len(reply)
+        if request.context.get("sensitive"):
+            actual_chars *= 2
         if tenant and tenant.plan != "admin":
             await check_and_deduct_credits(tenant, db, actual_chars)
 

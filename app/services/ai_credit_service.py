@@ -11,8 +11,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.core.time import utcnow_naive
 from app.models.tenant import Tenant
+
+logger = get_logger(__name__)
 
 FREE_REFILL_INTERVAL = timedelta(hours=6)
 FREE_CREDITS_PER_REFILL = 10_000
@@ -62,6 +65,27 @@ CREDIT_COST: dict[str, int] = {
 
 SENSITIVE_MULTIPLIER = 2
 
+# Paid trial window for new signups (see auth.py register_with_password).
+PRO_TRIAL_HOURS = 24
+
+
+def _expire_trial_if_past(tenant: Tenant) -> None:
+    """Downgrade an expired paid trial back to the free plan.
+
+    Called inline on every credit check so an expired trial never keeps its
+    Pro limits. The tenant is mutated in place; the caller commits.
+    """
+    if tenant.subscription_status != "trial":
+        return
+    if tenant.trial_expires_at is None:
+        return
+    if utcnow_naive() >= tenant.trial_expires_at:
+        tenant.plan = "free"
+        tenant.subscription_status = "inactive"
+        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
+        tenant.ai_last_refill_at = utcnow_naive()
+        logger.info("pro_trial_expired_downgraded", tenant_id=tenant.id)
+
 
 async def ensure_initial_credits(tenant: Tenant, db: AsyncSession) -> None:
     """Initialize credits when a tenant is first created or plan changes."""
@@ -87,6 +111,8 @@ async def check_and_deduct_credits(
     """
     if tenant.plan == "admin":
         return True, 999999
+
+    _expire_trial_if_past(tenant)
 
     if tenant.plan == "free":
         _refill_if_needed(tenant)
@@ -134,6 +160,7 @@ async def get_remaining_credits(tenant: Tenant) -> int:
     """Return current remaining credits (with free refill check)."""
     if tenant.plan == "admin":
         return 999999
+    _expire_trial_if_past(tenant)
     if tenant.plan == "free":
         _refill_if_needed(tenant)
     return tenant.ai_credits_remaining
