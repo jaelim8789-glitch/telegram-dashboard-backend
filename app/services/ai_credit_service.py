@@ -6,7 +6,7 @@ Paid tenants get monthly credit pools sized per plan.
 Credit costs: 1 credit = 1 character (input + output combined).
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,30 @@ from app.models.tenant import Tenant
 
 FREE_REFILL_INTERVAL = timedelta(hours=6)
 FREE_CREDITS_PER_REFILL = 10_000
+
+# Promo cohort: anyone who signed up 2026-08-06..08 (inclusive) gets a
+# boosted free-plan refill -- 30,000 credits every 3 hours instead of the
+# standard 10,000/6h. Keyed off Tenant.created_at, so it's permanent for
+# that cohort (not just a one-time bonus) until this block is removed.
+_PROMO_COHORT_START = datetime(2026, 8, 6, 0, 0, 0)
+_PROMO_COHORT_END = datetime(2026, 8, 9, 0, 0, 0)  # exclusive upper bound
+_PROMO_REFILL_INTERVAL = timedelta(hours=3)
+_PROMO_CREDITS_PER_REFILL = 30_000
+
+
+def _is_promo_cohort(tenant: Tenant) -> bool:
+    created = tenant.created_at
+    if created is None:
+        return False
+    return _PROMO_COHORT_START <= created < _PROMO_COHORT_END
+
+
+def _refill_amount_for(tenant: Tenant) -> int:
+    return _PROMO_CREDITS_PER_REFILL if _is_promo_cohort(tenant) else FREE_CREDITS_PER_REFILL
+
+
+def _refill_interval_for(tenant: Tenant) -> timedelta:
+    return _PROMO_REFILL_INTERVAL if _is_promo_cohort(tenant) else FREE_REFILL_INTERVAL
 
 # Monthly credit pool + manual-reset allowance, per paid plan.
 # 1 credit = 1 character (input + output combined).
@@ -43,7 +67,7 @@ async def ensure_initial_credits(tenant: Tenant, db: AsyncSession) -> None:
     """Initialize credits when a tenant is first created or plan changes."""
     now = utcnow_naive()
     if tenant.plan == "free" and tenant.ai_credits_remaining <= 0:
-        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
+        tenant.ai_credits_remaining = _refill_amount_for(tenant)
         tenant.ai_last_refill_at = now
     elif tenant.plan in PLAN_MONTHLY_CREDITS and tenant.ai_credits_remaining <= 0:
         tenant.ai_credits_remaining = PLAN_MONTHLY_CREDITS[tenant.plan]
@@ -126,20 +150,29 @@ async def reset_credits(tenant: Tenant, db: AsyncSession) -> tuple[bool, int]:
 
 
 async def bulk_sync_credits(db: AsyncSession) -> int:
-    """Background task: refill free tenants whose daily window has passed."""
+    """Background task: refill free tenants whose window has passed.
+
+    Loads all under-cap free tenants rather than pre-filtering by amount in
+    SQL, since the promo cohort's cap (30,000) differs from the standard
+    cap (10,000) per-row -- the actual "does this one need a refill yet"
+    decision has to happen in Python where _refill_amount_for/_interval_for
+    can see each tenant's created_at.
+    """
     now = utcnow_naive()
-    cutoff = now - FREE_REFILL_INTERVAL
     result = await db.execute(
         select(Tenant).where(
             Tenant.plan == "free",
             Tenant.is_active == True,
-            Tenant.ai_credits_remaining < FREE_CREDITS_PER_REFILL,
         )
     )
     refilled = 0
     for t in result.scalars().all():
-        if t.ai_last_refill_at is None or t.ai_last_refill_at < cutoff:
-            t.ai_credits_remaining = FREE_CREDITS_PER_REFILL
+        amount = _refill_amount_for(t)
+        if t.ai_credits_remaining >= amount:
+            continue
+        interval = _refill_interval_for(t)
+        if t.ai_last_refill_at is None or now - t.ai_last_refill_at >= interval:
+            t.ai_credits_remaining = amount
             t.ai_last_refill_at = now
             refilled += 1
     await db.commit()
@@ -150,14 +183,15 @@ def _refill_if_needed(tenant: Tenant) -> None:
     """Inline refill check — called on every credit check for Free tenants."""
     if tenant.plan != "free":
         return
-    if tenant.ai_credits_remaining >= FREE_CREDITS_PER_REFILL:
+    amount = _refill_amount_for(tenant)
+    if tenant.ai_credits_remaining >= amount:
         return
     now = utcnow_naive()
     if tenant.ai_last_refill_at is None:
-        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
+        tenant.ai_credits_remaining = amount
         tenant.ai_last_refill_at = now
         return
     last = tenant.ai_last_refill_at
-    if now - last >= FREE_REFILL_INTERVAL:
-        tenant.ai_credits_remaining = FREE_CREDITS_PER_REFILL
+    if now - last >= _refill_interval_for(tenant):
+        tenant.ai_credits_remaining = amount
         tenant.ai_last_refill_at = now
