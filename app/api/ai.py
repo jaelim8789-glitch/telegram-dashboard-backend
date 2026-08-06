@@ -760,6 +760,12 @@ async def get_ai_credits(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Get current AI credit balance for the tenant."""
+    # Admin identities have no tenant_id at all (not tied to any one tenant)
+    # -- this used to 404 with "Tenant not found" whenever an admin browsed
+    # /ai or /app, which looked identical to a real free user's credits
+    # being stuck/broken from the frontend's point of view.
+    if identity.kind == "admin":
+        return {"remaining_credits": 999999, "reset_tokens": 0, "plan": "admin", "last_refill_at": None}
     tenant_row = await db.execute(select(Tenant).where(Tenant.id == identity.tenant_id))
     tenant = tenant_row.scalar_one_or_none()
     if tenant is None:
