@@ -658,3 +658,57 @@ async def confirm_tool_endpoint(
         await db.commit()
 
     return {"success": True, "result": result.result}
+
+
+#  File Upload for AI Chat
+
+
+@router.post("/upload")
+async def upload_file_for_ai_chat(
+    file: "UploadFile",
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """Upload an image or video file for AI chat analysis.
+
+    Returns the file URL and metadata. The AI can then analyze the file content.
+    """
+    import os
+    import uuid
+    from fastapi import UploadFile as UploadFileClass
+
+    # Validate file type
+    allowed_types = [
+        "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+        "video/mp4", "video/webm", "video/ogg", "video/quicktime",
+    ]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 파일 형식입니다. 지원: {', '.join(allowed_types)}"
+        )
+
+    # Validate file size (max 20MB)
+    max_size = 20 * 1024 * 1024  # 20MB
+    contents = await file.read()
+    if len(contents) > max_size:
+        raise HTTPException(status_code=400, detail="파일 크기는 20MB 이하여야 합니다.")
+
+    # Save file
+    ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "bin"
+    filename = f"{uuid.uuid4()}.{ext}"
+    upload_dir = os.path.join("data", "uploads", "ai_chat")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    # Return file info
+    file_url = f"/uploads/ai_chat/{filename}"
+    return {
+        "url": file_url,
+        "filename": file.filename or filename,
+        "mime_type": file.content_type,
+        "size": len(contents),
+    }

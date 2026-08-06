@@ -130,6 +130,8 @@ class ChatRequest(BaseModel):
     think_mode: bool = Field(default=False)
     # Context injection: active account/group/broadcast IDs from frontend
     context: dict[str, Any] = Field(default_factory=dict, description="Active context (account_id, group_id, etc.)")
+    # File attachments (images/videos) for AI analysis
+    attachments: list[dict[str, Any]] = Field(default_factory=list, description="Attached files (url, mime_type, filename)")
 
 
 class ChatResponse(BaseModel):

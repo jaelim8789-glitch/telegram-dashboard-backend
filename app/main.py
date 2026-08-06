@@ -559,6 +559,14 @@ class ProxyHeadersApp(ProxyHeadersMiddleware):
         return getattr(self.app, name)
 
 
+# Serve uploaded files (AI chat attachments)
+import os
+from fastapi.staticfiles import StaticFiles
+uploads_dir = os.path.join("data", "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+
 # nginx is the only thing that can reach uvicorn directly (not internet-exposed
 # itself). Only trust X-Forwarded-* headers when the direct TCP peer is our own
 # nginx container (or a localhost/dev caller) — arbitrary clients can no longer

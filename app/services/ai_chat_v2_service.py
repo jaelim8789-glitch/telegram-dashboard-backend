@@ -888,6 +888,46 @@ async def chat(
     if kb_confidence < 0.7 and kb_context:
         user_content += "\n\n[시스템 알림: Knowledge Base 검색 신뢰도가 낮습니다(70% 미만). 확신이 부족하다면 '확신이 없습니다'라고밝히고, 관리자에게 문의를 안내하세요.]"
 
+    # 7.6. Handle file attachments (images/videos) — analyze with vision model
+    if request.attachments:
+        from app.services.ai_vision_service import analyze_image, analyze_video
+        import os as _os
+
+        upload_base = _os.path.join("data", "uploads", "ai_chat")
+        analysis_results: list[str] = []
+
+        for att in request.attachments:
+            url = att.get("url", "")
+            mime = att.get("mime_type", "")
+            filename = att.get("filename", "unknown")
+
+            # Resolve URL to local file path
+            filepath = None
+            if url.startswith("/uploads/"):
+                rel = url[len("/uploads/"):]
+                candidate = _os.path.join(upload_base, _os.path.basename(rel))
+                if _os.path.exists(candidate):
+                    filepath = candidate
+            elif url and _os.path.exists(url):
+                filepath = url
+
+            if not filepath:
+                if mime.startswith("image/"):
+                    analysis_results.append(f"[이미지 첨부: {filename} — 파일을 찾을 수 없습니다]")
+                elif mime.startswith("video/"):
+                    analysis_results.append(f"[동영상 첨부: {filename} — 파일을 찾을 수 없습니다]")
+                continue
+
+            if mime.startswith("image/"):
+                result = await analyze_image(filepath, mime, request.content)
+                analysis_results.append(f"[이미지 분석: {filename}]\n{result}")
+            elif mime.startswith("video/"):
+                result = await analyze_video(filepath, mime, request.content)
+                analysis_results.append(f"[동영상 분석: {filename}]\n{result}")
+
+        if analysis_results:
+            user_content = "\n\n".join(analysis_results) + "\n\n" + user_content
+
     messages.append({"role": "user", "content": user_content})
 
     # 8. Stream or non-stream
