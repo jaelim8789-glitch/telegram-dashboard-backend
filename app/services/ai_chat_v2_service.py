@@ -697,11 +697,20 @@ async def _stream_deepseek(
         # Keep answers detailed & varied. The abliterated local model defaults
         # to a terse/conservative tone; a slightly higher temperature + top_p
         # pushes longer, richer replies. `stop` prevents premature end-of-turn.
+        # seed/top_k/repeat_penalty must be TOP-LEVEL for Ollama's OpenAI
+        # compatible endpoint (0.32 verified) — the nested "options" object is
+        # ignored there. The model's own default is repeat_penalty=1 (no
+        # repetition suppression), which is why answers ramble; 1.1 fixes it.
+        # Fixed seed gives deterministic output for regression testing.
         "temperature": 0.7,
         "top_p": 0.9,
         "frequency_penalty": 0.3,
         "presence_penalty": 0.3,
         "stop": ["\n\n\n", "Human:", "사용자:"],
+        "seed": 42,
+        "top_k": 40,
+        "repeat_penalty": 1.1,
+        "num_ctx": 8192,
     }
     if tools:
         payload["tools"] = tools
@@ -775,6 +784,10 @@ async def _call_deepseek_nonstream(
         "frequency_penalty": 0.3,
         "presence_penalty": 0.3,
         "stop": ["\n\n\n", "Human:", "사용자:"],
+        "seed": 42,
+        "top_k": 40,
+        "repeat_penalty": 1.1,
+        "num_ctx": 8192,
     }
 
     for attempt in range(_RETRY_MAX):
