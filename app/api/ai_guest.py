@@ -21,23 +21,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.rate_limiter import check_rate_limit, get_client_ip, get_retry_after_seconds
+from app.core.rate_limiter import get_client_ip
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
 from app.services.ai_chat_service import _MAX_TOKENS, _call_deepseek_full, extract_confidence
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
+from app.services.guest_credit_service import (
+    GUEST_CREDITS_PER_REFILL,
+    get_guest_credits,
+    guest_refill_countdown_seconds,
+    try_deduct_guest_credits,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
 
-_RATE_LIMIT_CATEGORY = "guest_ai_chat"
-# Raised for the open test period -- 10/day was blocking real testers after
-# only a handful of actual sends because failed/timed-out attempts (502s)
-# still consumed the quota, and mobile-carrier NAT means many different real
-# people can share one IP.
-# TODO: dial this back down once the test period ends.
-_MAX_PER_DAY = 30
-_WINDOW_SECONDS = 24 * 60 * 60
+# Guest billing switched from a fixed 30 msgs/day rate limit to a per-IP
+# credit bucket (30,000 credits, 1 credit = 1 char, refilled every 3h) so the
+# free trial feels like the real product and scales with actual usage.
 _MAX_INPUT_CHARS = 2000
 _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
 
@@ -54,9 +55,10 @@ _SYSTEM_PROMPT = (
     "만약 사용 중인 모델, 요금, 대화 횟수 제한에 대해 물어보면 반드시 다음 사실만 "
     "정확히 답하고, 절대로 지어내지 마세요: 당신은 TeleMon 전용으로 파인튜닝/설정된 "
     "자체 AI 모델이며, 특정 외부 회사의 제품 이름을 밝히지 마세요. "
-    "로그인하지 않은 방문자는 IP당 하루 10회까지만 무료로 대화할 수 있고, "
-    "10회를 초과하면 회원가입이 필요합니다. 이 제한을 없다거나 무제한이라고 답하지 "
-    "마세요.\n\n"
+    "로그인하지 않은 방문자는 무료로 30,000 크레딧을 받아 3시간마다 다시 채워지며, "
+    "크레딧은 문자 1자당 1크레딧으로 차감됩니다. 이 제한을 없다거나 무제한이라고 "
+    "답하지 마세요. 크레딧이 소진되면 회원가입하면 30,000 크레딧을 다시 받을 수 "
+    "있다고 안내하세요.\n\n"
     "답변하기 전에 스스로 판단하세요:\n"
     "1. 사용자가 준 정보로 정확한 답을 줄 수 있는가?\n"
     "   - 아니면: 바로 답하지 말고, 필요한 정보를 구체적으로 2~3개 질문하세요. "
@@ -96,19 +98,35 @@ class GuestChatResponse(BaseModel):
     # of `reply` server-side -- the [CONFIDENCE: ...] marker itself never
     # reaches the client.
     confidence: str | None = None
+    # Remaining guest credit balance after this exchange (1 credit = 1 char).
+    remaining_credits: int | None = None
+    # Suggested follow-up questions so the conversation continues naturally.
+    suggested_questions: list[str] = Field(default_factory=list)
+
+
+class GuestCreditsResponse(BaseModel):
+    remaining_credits: int
+    max_credits: int = GUEST_CREDITS_PER_REFILL
+    refill_countdown_seconds: int
+    # 1 credit = 1 char, same billing rule as members.
+    credit_per_char: int = 1
+
+
+@router.get("/credits", response_model=GuestCreditsResponse)
+async def guest_credits(request: Request):
+    """Return the guest's current credit balance + refill countdown."""
+    client_ip = get_client_ip(request)
+    remaining, _ = get_guest_credits(client_ip)
+    countdown = guest_refill_countdown_seconds(client_ip)
+    return GuestCreditsResponse(
+        remaining_credits=remaining,
+        refill_countdown_seconds=countdown,
+    )
 
 
 @router.post("/chat", response_model=GuestChatResponse)
 async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSession = Depends(get_db)):
     client_ip = get_client_ip(request)
-
-    if not check_rate_limit(client_ip, _RATE_LIMIT_CATEGORY, max_attempts=_MAX_PER_DAY, window_seconds=_WINDOW_SECONDS):
-        retry_after = get_retry_after_seconds(client_ip, _RATE_LIMIT_CATEGORY, window_seconds=_WINDOW_SECONDS)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="오늘 무료 사용 횟수를 모두 사용했어요. 회원가입하면 계속 이용할 수 있어요.",
-            headers={"Retry-After": str(retry_after)},
-        )
 
     if not settings.deepseek_api_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 서비스를 일시적으로 사용할 수 없습니다.")
@@ -156,7 +174,52 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
         logger.exception("guest_ai_chat_log_persist_failed")
         await db.rollback()
 
-    return GuestChatResponse(reply=reply, log_id=log_id, reasoning=reasoning, confidence=confidence)
+    # Charge credits AFTER the AI call succeeded (1 credit = 1 char of input
+    # + output). Failed calls never consume credits.
+    estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
+    ok, remaining = try_deduct_guest_credits(client_ip, max(estimated_chars, 1))
+
+    suggested = await _suggest_follow_ups(payload.message, reply)
+
+    return GuestChatResponse(
+        reply=reply,
+        log_id=log_id,
+        reasoning=reasoning,
+        confidence=confidence,
+        remaining_credits=remaining if ok else 0,
+        suggested_questions=suggested,
+    )
+
+
+async def _suggest_follow_ups(question: str, reply: str) -> list[str]:
+    """Suggest 2 short follow-up questions based on the Q&A.
+
+    Best-effort — never fail the response if this throws. Kept lightweight
+    (single call, small max_tokens) so it adds little latency.
+    """
+    if not reply or len(reply) < 20:
+        return []
+    try:
+        prompt = (
+            "아래 질문과 답변을 바탕으로, 사용자가 이어서 물어볼 만한 "
+            "짧은 질문 2개를 한국어로 제안해주세요.\n"
+            f"질문: {question[:200]}\n"
+            f"답변: {reply[:400]}\n\n"
+            '형식: 각 질문을 "- "로 시작해서 줄바꿈으로 구분. '
+            "질문만 출력하고 다른 말은 하지 마세요."
+        )
+        result = await _call_deepseek_full(
+            [{"role": "user", "content": prompt}],
+            max_tokens=150,
+        )
+        if result is None:
+            return []
+        text, _ = result
+        items = [line.strip().lstrip("-").strip() for line in text.splitlines() if line.strip()]
+        return items[:3]
+    except Exception as exc:
+        logger.debug("guest_suggest_follow_ups_failed", error=str(exc))
+        return []
 
 
 class GuestFeedbackRequest(BaseModel):

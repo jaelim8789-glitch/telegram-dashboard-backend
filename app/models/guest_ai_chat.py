@@ -24,4 +24,8 @@ class GuestAiChatLog(Base):
     reply: Mapped[str] = mapped_column(Text, nullable=False)
     request_count_today: Mapped[int] = mapped_column(Integer, default=1)
     thumbs_up: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    # Funnel analytics: set to True when this IP signs up afterwards, so we can
+    # correlate "which guest answers/experiences convert to signups". Updated
+    # best-effort on auth/signup for the originating IP.
+    signed_up_after: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)

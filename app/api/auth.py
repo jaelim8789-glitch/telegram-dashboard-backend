@@ -848,6 +848,19 @@ async def register_with_password(payload: RegisterWithPasswordRequest, request: 
     )
     await db.commit()
 
+    # Funnel analytics: mark this IP's prior guest chats as "converted" so we
+    # can measure which guest AI experiences lead to signups.
+    try:
+        from app.models.guest_ai_chat import GuestAiChatLog
+        await db.execute(
+            GuestAiChatLog.__table__.update()
+            .where(GuestAiChatLog.ip == client_ip, GuestAiChatLog.signed_up_after.is_(None))
+            .values(signed_up_after=True)
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
     logger.info("password_register_success", user_id=user.id)
     return PasswordAuthResponse(
         access_token=create_user_access_token(user.id),
