@@ -573,6 +573,12 @@ async def _stream_deepseek(
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": True,
+        # Keep answers detailed & varied. The abliterated local model defaults
+        # to a terse/conservative tone; a slightly higher temperature + top_p
+        # pushes longer, richer replies. `stop` prevents premature end-of-turn.
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "stop": ["\n\n\n", "Human:", "사용자:"],
     }
     if tools:
         payload["tools"] = tools
@@ -641,6 +647,9 @@ async def _call_deepseek_nonstream(
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "stop": ["\n\n\n", "Human:", "사용자:"],
     }
 
     for attempt in range(_RETRY_MAX):
@@ -754,7 +763,12 @@ async def chat(
         "- 코드, 표, 다이어그램, 수식 등 다양한 형식으로 설명하세요.\n"
         "- 답변은 깊이 있되, 사용자가 이해할 수 있는 수준으로 조절하세요.\n"
         "- **절대로 한 줄이나 두 줄로 요약하지 마세요.** 최소 3~5개의 포인트를 포함하세요.\n"
-        "- 사용자가 \"왜요?\", \"어떻게요?\"라고 다시 물어보지 않도록 미리 충분히 설명하세요.\n\n"
+        "- 사용자가 \"왜요?\", \"어떻게요?\"라고 다시 물어보지 않도록 미리 충분히 설명하세요.\n"
+        "- **최소 답변 길이(하드 기준):** 단순한 인사/확인을 제외한 일반 질문에는 "
+        "한국어 기준 최소 10~15문장(대략 300~500자 이상)으로 답하세요. "
+        "복잡한 질문(원리/분석/가이드 요청)이면 20문장 이상으로 충분히 채우세요. "
+        "이 길이 기준은 '성의 없는 짧은 답변'을 막기 위한 최소치이므로, "
+        "이보다 더 길어도 됩니다.\n\n"
         "## 답변 구성 (반드시 따를 것)\n"
         "1. **핵심 답변** — 질문에 대한 직접적인 답변 (1~2문장)\n"
         "2. **상세 설명** — 왜 그런지, 어떻게 작동하는지 배경과 원리 (3~5문장)\n"
