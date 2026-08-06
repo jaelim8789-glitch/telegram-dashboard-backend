@@ -125,6 +125,8 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_MODEL",
     )
     ollama_enabled: bool = True
+    # Web search (Tavily) — P6. Empty key → web search is skipped gracefully.
+    tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
     # How many past turns (user+assistant pairs) to include as context.
     ai_chat_history_turns: int = 10

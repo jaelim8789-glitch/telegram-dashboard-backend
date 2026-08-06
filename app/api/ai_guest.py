@@ -137,6 +137,24 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
     messages.append({"role": "user", "content": payload.message})
 
+    # P1: Guest Auto Memory — store high-value statements, recall relevant ones.
+    # P6: Web search fallback when no memory hit (guests have no KB).
+    try:
+        from app.services.memory_engine import maybe_store_memory, recall_memory
+        from app.services.web_search import web_search
+        await maybe_store_memory(db, "guest", client_ip, payload.message, question=payload.message)
+        guest_mem = await recall_memory(db, "guest", client_ip, payload.message, top_k=2)
+        if guest_mem:
+            mem_text = "\n".join(f"- {m}" for m in guest_mem)
+            messages.insert(1, {"role": "system", "content": f"이 사용자와의 이전 대화 메모리:\n{mem_text}"})
+        else:
+            web_results = await web_search(payload.message, max_results=2)
+            if web_results:
+                web_text = "\n".join(f"- {r['title']}: {r['content'][:250]}" for r in web_results if r.get("content"))
+                messages.insert(1, {"role": "system", "content": f"최신 웹 정보:\n{web_text}"})
+    except Exception as exc:
+        logger.debug("guest_memory_web_failed", error=str(exc))
+
     # Short greeting/ack messages never need a reasoning pass shown to the
     # user -- force think_mode off regardless of the toggle sent from the
     # frontend. Logged with before/after so the improvement can be measured.
