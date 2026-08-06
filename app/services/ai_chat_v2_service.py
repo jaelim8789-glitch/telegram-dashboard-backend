@@ -326,12 +326,43 @@ async def _build_history_messages(
         if summary:
             history.append({"role": "system", "content": f"이전 대화 요약:\n{summary}"})
 
+    # D2: surface the user's recent interests/decisions so answers stay
+    # consistent with what they've been working on this session.
+    interests = await _extract_user_interests(recent)
+    if interests:
+        history.insert(0, {"role": "system", "content": f"사용자의 이번 세션 관심사:\n{interests}"})
+
     history.extend(
         {"role": msg.role, "content": msg.content}
         for msg in recent
         if msg.role in ("user", "assistant") and msg.content
     )
     return history
+
+
+async def _extract_user_interests(recent: list[AiChatMessageV2]) -> str:
+    """Best-effort: distill user questions into 1-2 interest lines."""
+    user_msgs = [m.content for m in recent if m.role == "user" and m.content]
+    if not user_msgs:
+        return ""
+    try:
+        joined = "\n".join(f"- {u[:120]}" for u in user_msgs[-6:])
+        result = await call_deepseek(
+            [{
+                "role": "user",
+                "content": (
+                    "사용자가 이번 대화에서 계속 물어보는 주제/관심사를 "
+                    "한국어 2줄 이내로 요약하세요. 추측하지 말고, 확실히 "
+                    "드러난 것만.\n\n" + joined
+                ),
+            }],
+            max_tokens=150,
+        )
+        out, _, _ = result if result else (None, 0, 0)
+        return out.strip()[:400] if out and out.strip() else ""
+    except Exception as exc:
+        logger.debug("ai_interests_extract_failed", error=str(exc))
+        return ""
 
 
 async def _condense_history(older: list[AiChatMessageV2]) -> str:
@@ -488,6 +519,35 @@ async def _store_chat_memory(
         )
     except Exception as exc:
         logger.warning("ai_chat_v2_memory_store_failed", error=str(exc))
+
+
+_COMPLEX_HINTS = (
+    "어떻게", "방법", "분석", "비교", "차이", "코드", "코딩", "구현",
+    "전략", "계획", "최적", "예시", "가이드", "튜토리얼", "작성해", "만들어",
+    "원리", "이유", "설명", "리포트", "정리", "스크립트", "함수",
+)
+_SIMPLE_HINTS = (
+    "안녕", "반가", "네", "고마", "응", "ㅇㅇ", "그래", "ㅋ", "하이", "hello", "hi",
+    "좋아", "확인", "감사", "?",
+)
+
+
+def _classify_intent(text: str) -> str:
+    """Rough intent classification: 'simple' | 'complex' | 'standard'.
+
+    Drives dynamic token budget and auto think-mode. Pure heuristic — cheap,
+    no extra LLM call.
+    """
+    t = (text or "").strip().lower()
+    if not t or len(t) <= 4:
+        return "simple"
+    if any(h in t for h in _SIMPLE_HINTS) and len(t) <= 12:
+        return "simple"
+    if any(h in t for h in _COMPLEX_HINTS):
+        return "complex"
+    if len(t) > 120:
+        return "complex"
+    return "standard"
 
 
 def _assistant_context(memory_context: list[str] | None, kb_context: list[str] | None) -> list | None:
@@ -991,6 +1051,16 @@ async def chat(
             kb_results, _kb_result_ids = await search_knowledge_base(
                 db, request.content, top_k=3, tenant_id=tenant_id,
             )
+            # Retry with a broader query when the first pass had no/low hits —
+            # keeps RAG from silently returning nothing for an odd phrasing.
+            if not kb_results or max((r.score for r in kb_results), default=0) < 0.5:
+                retry_results, _ = await search_knowledge_base(
+                    db, request.content[:80], top_k=3, tenant_id=tenant_id,
+                )
+                if retry_results and max((r.score for r in retry_results), default=0) > (
+                    max((r.score for r in kb_results), default=0) if kb_results else 0
+                ):
+                    kb_results = retry_results
             if kb_results:
                 for r in kb_results:
                     if r.content:
@@ -1087,7 +1157,20 @@ async def chat(
     # The model always reasons internally regardless of budget -- think_mode
     # only controls whether that reasoning is surfaced to the user, not the
     # token budget the call gets.
-    max_tokens = _DEFAULT_MAX_TOKENS
+    #
+    # 8a. Dynamic budget: simple/ack requests get a smaller ceiling, complex
+    # analysis/code/guide requests get a larger one so they can be thorough.
+    intent = _classify_intent(request.content)
+    if intent == "simple":
+        max_tokens = min(_DEFAULT_MAX_TOKENS, 1200)
+    elif intent == "complex":
+        max_tokens = _DEFAULT_MAX_TOKENS * 2
+    else:
+        max_tokens = _DEFAULT_MAX_TOKENS
+
+    # 8b. Auto think-mode for complex requests: reasoning pass improves final
+    # answer quality even though the model always reasons internally anyway.
+    effective_think_mode = request.think_mode or (intent == "complex" and request.context.get("auto_think", True))
 
     if request.stream:
         # Streaming response
@@ -1218,6 +1301,21 @@ async def chat(
         if not full_content and not tool_calls_buffer:
             yield f"data: {json.dumps({'type': 'error', 'content': 'Empty response from AI.'})}\n\n"
             return
+
+        # Streaming quality gate: if the streamed answer is suspiciously
+        # short (and there were no tool calls), regenerate once non-streaming
+        # and use that instead — mirrors the non-stream branch's gate.
+        if tool_calls_buffer:
+            pass
+        elif len(full_content) < 80 and not request.context.get("disable_self_review"):
+            logger.info("ai_stream_quality_gate_retry", length=len(full_content))
+            regen, _pt2, _ct2 = await _call_deepseek_nonstream(
+                messages, model=request.model, max_tokens=max_tokens,
+            )
+            if regen and len(regen) > len(full_content):
+                full_content, full_confidence = extract_confidence(regen)
+                # Stream the replacement so the client ends up with it.
+                yield f"data: {json.dumps({'type': 'chunk', 'content': full_content})}\n\n"
 
         # Estimate tokens (rough: 4 chars per token)
         prompt_tokens = sum(len(m["content"]) // 4 for m in messages)
@@ -1743,8 +1841,37 @@ async def get_ai_quality_report(db: AsyncSession, tenant_id: str, days: int = 7)
     total = f.total or 0
     positive_rate = round((f.positive or 0) / total * 100, 1) if total else 0
 
+    # Domain benchmark: classify each assistant message by intent and bucket
+    # its feedback so we can see which domains are weakest (simple vs
+    # standard vs complex). Heuristic via _classify_intent on the message.
+    domain_rows = await db.execute(
+        select(AiChatMessageV2.content, AiChatMessageV2.feedback_score).where(
+            AiChatMessageV2.tenant_id == tenant_id,
+            AiChatMessageV2.role == "assistant",
+            AiChatMessageV2.feedback_score.isnot(None),
+            AiChatMessageV2.created_at >= since,
+        )
+    )
+    domains: dict[str, dict] = {}
+    for content, score in domain_rows.all():
+        d = _classify_intent(content or "")
+        bucket = domains.setdefault(d, {"total": 0, "positive": 0, "sum": 0})
+        bucket["total"] += 1
+        bucket["sum"] += float(score or 0)
+        if (score or 0) >= 4:
+            bucket["positive"] += 1
+    domain_summary = {
+        k: {
+            "total": v["total"],
+            "positive": v["positive"],
+            "avg_score": round(v["sum"] / v["total"], 2) if v["total"] else 0,
+        }
+        for k, v in domains.items()
+    }
+
     return {
         "period_days": days,
+        "domains": domain_summary,
         "feedback": {
             "total": total,
             "positive": f.positive or 0,
