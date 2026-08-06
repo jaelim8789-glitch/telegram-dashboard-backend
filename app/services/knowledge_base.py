@@ -55,11 +55,12 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
 async def ingest_document(db: AsyncSession, title: str, content: str, collection: str = "general",
                           source_url: str | None = None, permission_groups: list[str] | None = None,
                           metadata: dict | None = None, user_id: str | None = None,
-                          source_type: str = "manual") -> Document:
+                          source_type: str = "manual", tenant_id: str | None = None) -> Document:
     doc = Document(
         title=title, content=content, source_url=source_url,
         collection=collection, permission_groups=permission_groups or [],
         extra=metadata or {}, created_by=user_id, source_type=source_type,
+        tenant_id=tenant_id,
     )
     db.add(doc)
     await db.flush()
@@ -88,9 +89,17 @@ async def ingest_document(db: AsyncSession, title: str, content: str, collection
 
 
 async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
-                                collection: str | None = None) -> tuple[list[SearchResult], list[str]]:
-    """Hybrid search: vector cosine + keyword (FTS) + RRF fusion."""
+                                collection: str | None = None,
+                                tenant_id: str | None = None) -> tuple[list[SearchResult], list[str]]:
+    """Hybrid search: vector cosine + keyword (FTS) + RRF fusion.
+
+    When *tenant_id* is given, only documents owned by that tenant (or shared
+    global docs with tenant_id IS NULL) are returned — keeps each member's
+    learned knowledge private to them.
+    """
     query_embedding = (await embed_texts([query]))[0]
+
+    tenant_cond = "AND (d.tenant_id IS NULL OR d.tenant_id = :tenant_id)"
 
     vector_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
@@ -99,10 +108,12 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
           AND (:collection IS NULL OR d.collection = :collection)
+          {tenant_cond}
         ORDER BY score DESC
         LIMIT :limit
-    """)
-    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding, collection=collection, limit=50)
+    """.format(tenant_cond=tenant_cond))
+    rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding, collection=collection,
+                               tenant_id=tenant_id, limit=50)
 
     fts_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
@@ -112,10 +123,12 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
         WHERE d.is_published = true
           AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :query)
           AND (:collection IS NULL OR d.collection = :collection)
+          {tenant_cond}
         ORDER BY score DESC
         LIMIT :limit
-    """)
-    rows_f = await _fetch_rows(db, fts_sql, query=query, collection=collection, limit=50)
+    """.format(tenant_cond=tenant_cond))
+    rows_f = await _fetch_rows(db, fts_sql, query=query, collection=collection,
+                               tenant_id=tenant_id, limit=50)
 
     # RRF fusion
     fused = _rrf_fusion(rows_v, rows_f, top_k)

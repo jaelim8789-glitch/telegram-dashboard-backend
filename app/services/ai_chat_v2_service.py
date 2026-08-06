@@ -872,7 +872,7 @@ async def chat(
         try:
             from app.services.knowledge_base import search_knowledge_base
             kb_results, _kb_result_ids = await search_knowledge_base(
-                db, request.content, top_k=3,
+                db, request.content, top_k=3, tenant_id=tenant_id,
             )
             if kb_results:
                 for r in kb_results:
@@ -880,10 +880,17 @@ async def chat(
                         kb_context.append(r.content)
                         kb_confidence = max(kb_confidence, r.score)
                 if kb_context:
-                    kb_text = "\n\n".join(f"[신뢰도: {r.score:.0%}]\n{r.content}" for r in kb_results if r.content)
+                    kb_text = "\n\n".join(
+                        f"[출처: {r.document_title} | 신뢰도: {r.score:.0%}]\n{r.content}"
+                        for r in kb_results if r.content
+                    )
                     messages.append({
                         "role": "system",
-                        "content": f"관련 지식 (Knowledge Base):\n{kb_text}",
+                        "content": (
+                            f"관련 지식 (Knowledge Base):\n{kb_text}\n\n"
+                            "Knowledge Base 내용을 참조해 답변했다면 반드시 "
+                            "[출처: 문서명] 형식으로 출처를 함께 표시하세요."
+                        ),
                     })
         except Exception as exc:
             logger.warning("ai_chat_v2_kb_search_failed", error=str(exc))
@@ -1497,17 +1504,18 @@ async def ingest_positive_responses(
         if not user_msg:
             continue
 
-        # Check if this Q&A pair is already in KB
+        # Check if this Q&A pair is already in KB (tenant-scoped)
         existing = await db.execute(
             select(Document).where(
                 Document.source_type == "ai_chat_positive",
                 Document.source_url == f"chat://{assistant_msg.id}",
+                Document.tenant_id == assistant_msg.tenant_id,
             ).limit(1)
         )
         if existing.scalar_one_or_none():
             continue
 
-        # Create KB document from the Q&A pair
+        # Create KB document from the Q&A pair (owned by the answering tenant)
         title = user_msg.content[:80] + ("..." if len(user_msg.content) > 80 else "")
         content = f"질문: {user_msg.content}\n\n답변: {assistant_msg.content}"
 
@@ -1519,6 +1527,7 @@ async def ingest_positive_responses(
                 source_type="ai_chat_positive",
                 source_url=f"chat://{assistant_msg.id}",
                 collection="ai_learned",
+                tenant_id=assistant_msg.tenant_id,
             )
             ingested_count += 1
         except Exception as exc:

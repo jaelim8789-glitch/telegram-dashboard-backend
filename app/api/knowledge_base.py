@@ -21,7 +21,9 @@ router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
 async def search(req: SearchRequest, db: AsyncSession = Depends(get_db),
                  identity: Identity = Depends(get_current_identity)):
     start = time.monotonic()
-    results, result_ids = await kb.search_knowledge_base(db, req.query, req.top_k, req.collection)
+    results, result_ids = await kb.search_knowledge_base(
+        db, req.query, req.top_k, req.collection, tenant_id=identity.tenant_id,
+    )
     answer = await kb.generate_answer(req.query, results)
     latency = int((time.monotonic() - start) * 1000)
     log_id = await kb.log_search(db, req.query, identity, result_ids, latency)
@@ -35,7 +37,8 @@ async def ingest(doc: DocumentCreate, db: AsyncSession = Depends(get_db),
         raise HTTPException(403, "관리자 또는 사용자만 문서를 등록할 수 있습니다.")
     result = await kb.ingest_document(db, title=doc.title, content=doc.content, collection=doc.collection,
                                       source_url=doc.source_url, permission_groups=doc.permission_groups,
-                                      metadata=doc.metadata, user_id=identity.user.id if identity.user else None)
+                                      metadata=doc.metadata, user_id=identity.user.id if identity.user else None,
+                                      tenant_id=identity.tenant_id)
     return DocumentOut(
         id=result.id, title=result.title, source_url=result.source_url,
         source_type=result.source_type, collection=result.collection,

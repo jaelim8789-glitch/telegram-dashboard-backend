@@ -486,8 +486,6 @@ async def approve_candidate_endpoint(
     title = candidate.question[:80] + ("..." if len(candidate.question) > 80 else "")
     content = f"질문: {candidate.question}\n\n답변: {candidate.answer}"
 
-    # ingest_document() has no tenant_id param -- Document has no tenant_id
-    # column at all (single shared KB, same as every other ingestion path).
     await ingest_document(
         db=db,
         title=title,
@@ -495,6 +493,7 @@ async def approve_candidate_endpoint(
         source_type="ai_learned",
         source_url=f"candidate://{candidate.id}",
         collection="ai_learned",
+        tenant_id=candidate.tenant_id,
     )
 
     await db.commit()
