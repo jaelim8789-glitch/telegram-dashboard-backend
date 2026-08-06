@@ -1187,7 +1187,7 @@ async def chat(
             async for kind, text in _stream_deepseek(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None):
                 if kind == "reasoning":
                     full_reasoning += text
-                    if not request.think_mode:
+                    if not effective_think_mode:
                         continue
                     yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
                     continue
