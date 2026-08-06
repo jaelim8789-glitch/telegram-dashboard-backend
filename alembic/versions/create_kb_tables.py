@@ -28,6 +28,13 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # pgvector extension — required for kb_chunks.embedding vector(1536).
+    # Idempotent: IF NOT EXISTS is fine in plain DDL and skips on production
+    # where the extension is already installed.
+    from sqlalchemy import text
+    bind = op.get_bind()
+    bind.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
     # kb_documents
     create_table_if_not_exists(
         "kb_documents",
