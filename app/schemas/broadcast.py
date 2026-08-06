@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-BroadcastStatus = Literal["pending", "sending", "sent", "failed", "cancelled"]
+BroadcastStatus = Literal["pending", "sending", "sent", "failed", "cancelled", "retrying"]
 
 DeliveryMode = Literal["normal", "cycle", "bulk", "reply"]
 
