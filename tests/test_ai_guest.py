@@ -219,3 +219,146 @@ async def test_guest_chat_message_too_long_rejected(unauthenticated_client, monk
     monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
     res = await unauthenticated_client.post("/api/ai/guest/chat", json={"message": "x" * 2001})
     assert res.status_code == 422
+
+
+# ─── SSE streaming endpoint (/api/ai/guest/chat/stream) ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guest_chat_stream_yields_chunks_then_done(unauthenticated_client, monkeypatch):
+    """The streaming endpoint emits partial chunks and a final done event with
+    the sanitized reply + credits, and persists the log row."""
+    monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
+
+    async def fake_stream(messages, **kwargs):
+        yield ("안녕하세요", 0)
+        yield (" 무엇을", 0)
+        yield (" 도와드릴까요?", 0)
+        yield ("", 12)
+
+    with patch("app.services.ai_core_service._call_ollama_stream", new=fake_stream):
+        res = await unauthenticated_client.post(
+            "/api/ai/guest/chat/stream",
+            json={"message": "안녕"},
+            headers={"X-Real-IP": "203.0.113.70"},
+        )
+    assert res.status_code == 200
+    assert res.headers.get("content-type", "").startswith("text/event-stream")
+    body = res.text
+    assert "type\": \"chunk" in body or '"type": "chunk"' in body
+    assert "type\": \"done" in body or '"type": "done"' in body
+    assert "남은" not in body  # no identity leak from streamed text
+
+
+@pytest.mark.asyncio
+async def test_guest_chat_stream_persists_log(unauthenticated_client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
+
+    async def fake_stream(messages, **kwargs):
+        yield ("ok", 0)
+        yield ("", 4)
+
+    with patch("app.services.ai_core_service._call_ollama_stream", new=fake_stream):
+        res = await unauthenticated_client.post(
+            "/api/ai/guest/chat/stream",
+            json={"message": "stream log test"},
+            headers={"X-Real-IP": "203.0.113.71"},
+        )
+    assert res.status_code == 200
+    from app.models.guest_ai_chat import GuestAiChatLog
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(GuestAiChatLog).where(GuestAiChatLog.ip == "203.0.113.71").limit(1)
+    )).scalar_one_or_none()
+    assert row is not None
+    assert row.reply == "ok"
+
+
+@pytest.mark.asyncio
+async def test_guest_chat_stream_upstream_failure_yields_error_event(unauthenticated_client, monkeypatch):
+    """Upstream failure -> an SSE error event (not a crash), and no credits are
+    charged (failed calls never consume credits)."""
+    monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
+    reset_guest_credits_for_ip("ip:203.0.113.72")
+
+    async def fake_stream(messages, **kwargs):
+        yield (None, 0)
+
+    with patch("app.services.ai_core_service._call_ollama_stream", new=fake_stream):
+        res = await unauthenticated_client.post(
+            "/api/ai/guest/chat/stream",
+            json={"message": "hi"},
+            headers={"X-Real-IP": "203.0.113.72"},
+        )
+    assert res.status_code == 200
+    assert "error" in res.text
+    remaining, _ = get_guest_credits("ip:203.0.113.72")
+    assert remaining == GUEST_CREDITS_PER_REFILL
+
+
+# ─── Admin guest stats (/api/admin/ai-chat/guest-stats) ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guest_stats_aggregates_conversations(unauthenticated_client, db_session, monkeypatch):
+    """The admin stats endpoint sums conversations/feedback over the window."""
+    monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
+    from app.models.guest_ai_chat import GuestAiChatLog
+    from sqlalchemy import select
+
+    from datetime import datetime
+    # Seed two conversations (different IPs), one with positive feedback.
+    # created_at is explicit because SQLite has no server_default now().
+    db_session.add(GuestAiChatLog(ip="203.0.113.80", message="a", reply="b", thumbs_up=True, created_at=datetime.utcnow()))
+    db_session.add(GuestAiChatLog(ip="203.0.113.81", message="c", reply="d", signed_up_after=True, created_at=datetime.utcnow()))
+    await db_session.commit()
+
+    res = await unauthenticated_client.get("/api/admin/ai-chat/guest-stats?days=7")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] >= 2
+    assert body["unique_ips"] >= 2
+    assert body["thumbs_up"] >= 1
+    assert body["converted"] >= 1
+    assert "trend" in body and isinstance(body["trend"], list)
+
+
+# ─── Guest memory carryover on signup ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_carries_guest_memory_into_account(unauthenticated_client, db_session, monkeypatch):
+    """Signing up with a guest_device_id cookie migrates the guest's stored
+    memory rows into the new account (tenant)."""
+    from datetime import datetime
+    from app.models.memory import MemoryEntry
+    from app.models.tenant import Tenant
+    from sqlalchemy import select
+
+    # Seed a guest memory row owned by this device (created_at explicit for
+    # SQLite, which lacks a server_default now()).
+    db_session.add(MemoryEntry(
+        owner_type="guest",
+        owner_key="dev:carryover-test",
+        category="preferences",
+        content="저는 반말을 선호합니다",
+        memory_score=95,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    ))
+    await db_session.commit()
+
+    res = await unauthenticated_client.post(
+        "/api/auth/register-password",
+        json={"username": "carryuser1", "password": "password123"},
+        headers={"Cookie": "guest_device_id=carryover-test"},
+    )
+    assert res.status_code == 201, res.text
+
+    # The guest memory should now be owned by a tenant.
+    rows = (await db_session.execute(
+        select(MemoryEntry).where(MemoryEntry.content == "저는 반말을 선호합니다")
+    )).scalars().all()
+    tenant_rows = [r for r in rows if r.owner_type == "tenant"]
+    assert len(tenant_rows) >= 1
+    assert all(r.owner_key != "dev:carryover-test" for r in tenant_rows)

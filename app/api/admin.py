@@ -1543,6 +1543,79 @@ async def list_guest_ai_chat_logs(
     return result.scalars().all()
 
 
+@router.get("/ai-chat/guest-stats", dependencies=[Depends(require_admin)])
+async def get_guest_ai_chat_stats(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guest AI funnel dashboard: conversation volume, feedback, conversion.
+
+    Feeds the admin /admin/ai-chat page summary cards so ops can see how the
+    guest AI trial surface is performing without hand-querying the DB:
+      - total / unique-IP conversations over the window
+      - thumbs up/down split
+      - signed_up_after conversion (how many chatting visitors later signed up)
+      - per-day conversation trend
+    """
+    from app.models.guest_ai_chat import GuestAiChatLog
+
+    since = utcnow_naive() - timedelta(days=days)
+
+    total = (await db.execute(
+        select(func.count(GuestAiChatLog.id)).where(GuestAiChatLog.created_at >= since)
+    )).scalar() or 0
+
+    unique_ips = (await db.execute(
+        select(func.count(func.distinct(GuestAiChatLog.ip))).where(GuestAiChatLog.created_at >= since)
+    )).scalar() or 0
+
+    thumbs_up = (await db.execute(
+        select(func.count(GuestAiChatLog.id)).where(
+            GuestAiChatLog.created_at >= since, GuestAiChatLog.thumbs_up.is_(True)
+        )
+    )).scalar() or 0
+    thumbs_down = (await db.execute(
+        select(func.count(GuestAiChatLog.id)).where(
+            GuestAiChatLog.created_at >= since, GuestAiChatLog.thumbs_up.is_(False)
+        )
+    )).scalar() or 0
+
+    converted = (await db.execute(
+        select(func.count(GuestAiChatLog.id)).where(
+            GuestAiChatLog.created_at >= since, GuestAiChatLog.signed_up_after.is_(True)
+        )
+    )).scalar() or 0
+
+    # Per-day trend (last `days` days, oldest first)
+    trend_rows = (await db.execute(
+        select(
+            func.date(GuestAiChatLog.created_at).label("day"),
+            func.count(GuestAiChatLog.id).label("n"),
+        )
+        .where(GuestAiChatLog.created_at >= since)
+        .group_by(func.date(GuestAiChatLog.created_at))
+        .order_by(func.date(GuestAiChatLog.created_at))
+    )).all()
+    trend_map = {str(r.day): r.n for r in trend_rows}
+    trend = []
+    for i in range(days - 1, -1, -1):
+        d = (since + timedelta(days=i)).date()
+        trend.append({"date": str(d), "conversations": trend_map.get(str(d), 0)})
+
+    return {
+        "days": days,
+        "total": total,
+        "unique_ips": unique_ips,
+        "thumbs_up": thumbs_up,
+        "thumbs_down": thumbs_down,
+        "feedback_rate": round((thumbs_up + thumbs_down) / total * 100, 1) if total else 0.0,
+        "positive_rate": round(thumbs_up / (thumbs_up + thumbs_down) * 100, 1) if (thumbs_up + thumbs_down) else 0.0,
+        "converted": converted,
+        "conversion_rate": round(converted / total * 100, 1) if total else 0.0,
+        "trend": trend,
+    }
+
+
 @router.get("/ai-chat/sessions", response_model=list[AiChatSessionRead], dependencies=[Depends(require_admin)])
 async def list_ai_chat_sessions(
     skip: int = Query(default=0, ge=0),

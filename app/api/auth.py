@@ -864,6 +864,38 @@ async def register_with_password(payload: RegisterWithPasswordRequest, request: 
     except Exception:
         await db.rollback()
 
+    # Guest-to-member carryover: if this browser has a guest_device_id cookie
+    # (guest AI chat), migrate its stored memory into the new account so the
+    # "이어서 대화하기" promise holds — the guest's remembered facts become
+    # the member's memory. Best-effort; a failure here must not block signup.
+    try:
+        from app.api.ai_guest import _get_guest_device_id
+        guest_device_id = _get_guest_device_id(request)
+        if guest_device_id.startswith("dev:"):
+            from sqlalchemy import text as _sa_text
+            # Re-parent guest memory rows to this tenant (dedupe by content).
+            await db.execute(
+                _sa_text(
+                    "UPDATE ai_memories SET owner_type = 'tenant', owner_key = :tenant_id "
+                    "WHERE owner_type = 'guest' AND owner_key = :device_id "
+                    "AND content NOT IN (SELECT content FROM ai_memories WHERE owner_type = 'tenant' AND owner_key = :tenant_id)"
+                ),
+                {"device_id": guest_device_id, "tenant_id": tenant.id},
+            )
+            await db.commit()
+            logger.info(
+                "guest_memory_carried_over",
+                user_id=user.id,
+                device_id=guest_device_id,
+                tenant_id=tenant.id,
+            )
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.debug("guest_memory_carryover_skipped")
+
     logger.info("password_register_success", user_id=user.id)
     return PasswordAuthResponse(
         access_token=create_user_access_token(user.id),

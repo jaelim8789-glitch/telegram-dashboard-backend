@@ -282,6 +282,156 @@ async def guest_chat(payload: GuestChatRequest, request: Request, response: Resp
     )
 
 
+def _build_guest_messages(payload: GuestChatRequest, mem_text: str | None = None, web_text: str | None = None) -> list[dict]:
+    """Assemble the messages array shared by the JSON + streaming paths."""
+    messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    if mem_text:
+        messages.insert(1, {"role": "system", "content": f"이 사용자와의 이전 대화 메모리:\n{mem_text}"})
+    elif web_text:
+        messages.insert(1, {"role": "system", "content": f"최신 웹 정보:\n{web_text}"})
+    messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
+    messages.append({"role": "user", "content": payload.message})
+    return messages
+
+
+async def _load_guest_context(db: AsyncSession, device_id: str, question: str) -> tuple[str | None, str | None]:
+    """Best-effort memory recall + web search fallback for a guest question.
+
+    Returns (memory_text, web_text) — at most one is set. Never raises; on
+    failure the DB transaction is rolled back so callers can persist logs.
+    """
+    try:
+        from app.services.memory_engine import maybe_store_memory, recall_memory
+        from app.services.web_search import web_search
+        await maybe_store_memory(db, "guest", device_id, question, question=question)
+        guest_mem = await recall_memory(db, "guest", device_id, question, top_k=2)
+        if guest_mem:
+            return "\n".join(f"- {m}" for m in guest_mem), None
+        web_results = await web_search(question, max_results=2)
+        if web_results:
+            return None, "\n".join(f"- {r['title']}: {r['content'][:250]}" for r in web_results if r.get("content"))
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.debug("guest_memory_web_failed", error=str(exc))
+    return None, None
+
+
+@router.post("/chat/stream")
+async def guest_chat_stream(payload: GuestChatRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """SSE-streamed version of /chat — tokens arrive as they're generated so
+    the guest sees the AI "thinking out loud" instead of a long spinner.
+
+    Events:
+      data: {"type":"chunk","content":"..."}     (partial reply text)
+      data: {"type":"reasoning","content":"..."}  (think_mode only)
+      data: {"type":"done","reply":"...","log_id":"...","confidence":"...","remaining_credits":N}
+      data: {"type":"error","content":"..."}
+    """
+    from fastapi.responses import StreamingResponse
+
+    client_ip = get_client_ip(request)
+    device_id = _get_guest_device_id(request)
+
+    if not settings.ollama_api_base:
+        return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content="AI 서비스를 일시적으로 사용할 수 없습니다.")
+
+    _set_guest_device_cookie(response, device_id)
+
+    mem_text, web_text = await _load_guest_context(db, device_id, payload.message)
+    messages = _build_guest_messages(payload, mem_text=mem_text, web_text=web_text)
+
+    effective_think_mode = payload.think_mode
+    if effective_think_mode and should_skip_think_mode(payload.message):
+        effective_think_mode = False
+
+    async def event_stream():
+        import json
+        from app.services.ai_core_service import _call_ollama_stream
+
+        full_content = ""
+        full_reasoning = ""
+        error = None
+        try:
+            async for text, _usage in _call_ollama_stream(messages, max_tokens=_MAX_TOKENS):
+                if text is None:
+                    error = "AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요."
+                    break
+                if not text:
+                    continue
+                if _is_reasoning_fragment(text):
+                    full_reasoning += text
+                    if effective_think_mode:
+                        yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
+                else:
+                    full_content += text
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
+        except Exception as exc:
+            logger.error("guest_chat_stream_failed", error=str(exc))
+            error = "AI 응답 생성 중 오류가 발생했습니다."
+
+        if error:
+            yield f"data: {json.dumps({'type': 'error', 'content': error})}\n\n"
+            return
+
+        # Post-process the completed reply exactly like /chat: strip the
+        # confidence marker, enforce identity, sanitize leaked model names.
+        reply, confidence = extract_confidence(full_content)
+        reply = sanitize_identity(reply)
+
+        logger.info("guest_ai_chat_reply", ip=client_ip, device_id=device_id, confidence=confidence)
+
+        # Persist log (best-effort, never fail the stream) — roll back first
+        # in case the memory engine aborted the transaction.
+        log_id = None
+        try:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            log_entry = GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply)
+            db.add(log_entry)
+            await db.commit()
+            await db.refresh(log_entry)
+            log_id = log_entry.id
+        except Exception:
+            logger.exception("guest_ai_chat_log_persist_failed")
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+        estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
+        ok, remaining = try_deduct_guest_credits(device_id, max(estimated_chars, 1))
+
+        yield f"data: {json.dumps({
+            'type': 'done',
+            'reply': reply,
+            'log_id': log_id,
+            'confidence': confidence,
+            'remaining_credits': remaining if ok else 0,
+        })}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+def _is_reasoning_fragment(text: str) -> bool:
+    """Heuristic: the Gemma 2 27B Ollama stream yields reasoning-ish text in
+    special delimiters. Keep it cheap — anything between  thinking  tags."""
+    t = text.strip()
+    return t.startswith("<thinking") or t.startswith("</thinking") or t.startswith("<reasoning") or t.startswith("</reasoning")
+
+
 async def _suggest_follow_ups(question: str, reply: str) -> list[str]:
     """Suggest 2 short follow-up questions based on the Q&A.
 
