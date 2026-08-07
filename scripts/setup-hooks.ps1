@@ -7,9 +7,8 @@ $ErrorActionPreference = "Stop"
 function Write-Hook([string]$repo, [string]$hook, [string]$body) {
     $hookPath = Join-Path $repo ".git\hooks\$hook"
     New-Item -ItemType Directory -Path (Split-Path $hookPath) -Force | Out-Null
-    Set-Content -Path $hookPath -Value $body -Encoding UTF8
-    # best-effort executable bit (ignored on Windows, harmless)
-    git -C $repo config core.hooksPath "" | Out-Null
+    # UTF-8 WITHOUT BOM: a BOM before #!/bin/sh makes git fail to spawn the hook.
+    [System.IO.File]::WriteAllText($hookPath, $body, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "[hooks] wrote $hookPath"
 }
 
