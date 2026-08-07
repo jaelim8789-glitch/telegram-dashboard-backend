@@ -1,0 +1,30 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    # 로컬 PC에서 실행되도록 self-hosted 러너를 지정
+    runs-on: self-hosted
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # 태그를 push하기 위해 필요
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Run deploy script
+      run: |
+        chmod +x ./scripts/deploy_backend.sh
+        ./scripts/deploy_backend.sh
+      env:
+        # 필요시 환경변수 전달
+        # DOCKER_REGISTRY_USER: ${{ secrets.DOCKER_REGISTRY_USER }}
+        # DOCKER_REGISTRY_TOKEN: ${{ secrets.DOCKER_REGISTRY_TOKEN }}
