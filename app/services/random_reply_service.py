@@ -122,8 +122,7 @@ async def _execute_random_reply_impl(macro_id: str) -> dict:
 
         target_chats = _parse_target_chats(macro.target_chats)
 
-        used = await macro_crud.get_used_targets(macro)
-        used_set = {(u["chat_id"], u["user_id"]) for u in used}
+        used_set: set[tuple[str, str]] = set()  # 중복 체크 없이 매시간 무작위 발송
 
     try:
         client = await get_authorized_client(account)
