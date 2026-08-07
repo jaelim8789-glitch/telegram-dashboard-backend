@@ -234,7 +234,7 @@ async def api_suggest_reply(
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"[  ]\n{data_summary}"},
+        {"role": "user", "content": user_content},
     ]
     reply = await _call_ollama(messages)
     if reply is None:

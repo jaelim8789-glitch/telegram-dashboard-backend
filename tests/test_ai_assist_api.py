@@ -27,7 +27,7 @@ async def _admin_headers(client) -> dict[str, str]:
 @pytest.mark.asyncio
 async def test_suggest_reply_returns_drafted_text(client, monkeypatch):
     monkeypatch.setattr(
-        ai_assist_module, "_call_deepseek", AsyncMock(return_value="!  .")
+        ai_assist_module, "_call_ollama", AsyncMock(return_value="!  .")
     )
 
     res = await client.post("/api/ai/suggest-reply", json={"incoming_message": "  "})
@@ -38,9 +38,9 @@ async def test_suggest_reply_returns_drafted_text(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_suggest_reply_503_on_deepseek_failure(client, monkeypatch):
-    monkeypatch.setattr(ai_assist_module, "_call_deepseek", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_assist_module, "_call_ollama", AsyncMock(return_value=None))
 
-    res = await client.post("/api/ai/suggest-reply", json={"incoming_message": ""})
+    res = await client.post("/api/ai/suggest-reply", json={"incoming_message": "테스트"})
 
     assert res.status_code == 503
 
@@ -48,11 +48,11 @@ async def test_suggest_reply_503_on_deepseek_failure(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_generate_broadcast_parses_valid_json_and_filters_to_candidates(client, monkeypatch):
     fake_json = (
-        '{"message": "   !", '
+        '{"message": "테스트!", '
         '"recommended_chat_ids": ["c1", "unknown-id"], '
         '"reasoning": "   "}'
     )
-    monkeypatch.setattr(ai_assist_module, "_call_deepseek", AsyncMock(return_value=fake_json))
+    monkeypatch.setattr(ai_assist_module, "_call_ollama", AsyncMock(return_value=fake_json))
 
     res = await client.post(
         "/api/ai/generate-broadcast",
@@ -64,7 +64,7 @@ async def test_generate_broadcast_parses_valid_json_and_filters_to_candidates(cl
 
     assert res.status_code == 200
     body = res.json()
-    assert body["message"] == "   !"
+    assert body["message"] == "테스트!"
     # "unknown-id" isn't in candidate_recipients, so it must be filtered out 
     # the model is never trusted to invent a sendable chat_id.
     assert body["recommended_chat_ids"] == ["c1"]
@@ -73,19 +73,19 @@ async def test_generate_broadcast_parses_valid_json_and_filters_to_candidates(cl
 
 @pytest.mark.asyncio
 async def test_generate_broadcast_degrades_gracefully_on_malformed_json(client, monkeypatch):
-    monkeypatch.setattr(ai_assist_module, "_call_deepseek", AsyncMock(return_value="  "))
+    monkeypatch.setattr(ai_assist_module, "_call_ollama", AsyncMock(return_value="테스트"))
 
     res = await client.post("/api/ai/generate-broadcast", json={"prompt": "  "})
 
     assert res.status_code == 200
     body = res.json()
-    assert body["message"] == "  "
+    assert body["message"] == "테스트"
     assert body["recommended_chat_ids"] == []
 
 
 @pytest.mark.asyncio
 async def test_generate_broadcast_persists_draft_history(client, db_session, monkeypatch):
-    monkeypatch.setattr(ai_assist_module, "_call_deepseek", AsyncMock(return_value="  "))
+    monkeypatch.setattr(ai_assist_module, "_call_ollama", AsyncMock(return_value="테스트"))
 
     res = await client.post("/api/ai/generate-broadcast", json={"prompt": "  "})
     assert res.status_code == 200
@@ -93,7 +93,7 @@ async def test_generate_broadcast_persists_draft_history(client, db_session, mon
     headers = await _admin_headers(client)
     drafts_res = await client.get("/api/ai/broadcast-drafts", headers=headers)
     assert drafts_res.status_code == 200
-    assert any(d["message"] == "  " for d in drafts_res.json())
+    assert any(d["message"] == "테스트" for d in drafts_res.json())
 
 
 @pytest.mark.asyncio
@@ -119,8 +119,8 @@ async def test_analyze_customers_admin_with_tenant_id_queries_real_leads(client,
     db_session.add(Lead(tenant_id="tenant-1", account_id="acc-1", telegram_user_id="u1", source_chat_id="c1", total_messages=5))
     await db_session.commit()
 
-    fake_reply = "  .\n  ;    "
-    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", AsyncMock(return_value=fake_reply))
+    fake_reply = "  .\n이상 징후; 증가 추세"
+    monkeypatch.setattr(ai_analysis_service_module, "_call_ollama", AsyncMock(return_value=fake_reply))
 
     res = await client.post("/api/ai/analyze-customers", json={"tenant_id": "tenant-1", "days": 30})
 
@@ -141,11 +141,11 @@ async def test_analyze_customers_non_admin_is_forced_to_own_tenant(client, db_se
 
     captured_prompts: list[str] = []
 
-    async def fake_deepseek(messages):
+    async def fake_ollama(messages):
         captured_prompts.append(messages[1]["content"])
         return " "
 
-    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", fake_deepseek)
+    monkeypatch.setattr(ai_analysis_service_module, "_call_ollama", fake_ollama)
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="own-tenant")
 
     res = await client.post("/api/ai/analyze-customers", json={"tenant_id": "other-tenant", "days": 30})

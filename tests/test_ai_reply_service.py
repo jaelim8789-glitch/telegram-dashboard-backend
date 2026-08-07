@@ -16,7 +16,7 @@ from app.services.ai_reply_service import generate_reply_suggestion, record_auto
 @pytest.mark.asyncio
 async def test_generate_reply_suggestion_returns_stripped_text(monkeypatch):
     fake = AsyncMock(return_value="  ! .  ")
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake)
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake)
 
     result = await generate_reply_suggestion("  ")
 
@@ -25,9 +25,9 @@ async def test_generate_reply_suggestion_returns_stripped_text(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_reply_suggestion_returns_none_on_deepseek_failure(monkeypatch):
+async def test_generate_reply_suggestion_returns_none_on_ollama_failure(monkeypatch):
     fake = AsyncMock(return_value=None)
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake)
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake)
 
     result = await generate_reply_suggestion("  ")
 
@@ -37,7 +37,7 @@ async def test_generate_reply_suggestion_returns_none_on_deepseek_failure(monkey
 @pytest.mark.asyncio
 async def test_record_auto_reply_suggestion_persists_row(db_session, monkeypatch):
     fake = AsyncMock(return_value=",   9  6.")
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake)
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake)
 
     suggestion = await record_auto_reply_suggestion(
         db_session,
@@ -60,7 +60,7 @@ async def test_record_auto_reply_suggestion_persists_row(db_session, monkeypatch
 @pytest.mark.asyncio
 async def test_record_auto_reply_suggestion_persists_nothing_on_failure(db_session, monkeypatch):
     fake = AsyncMock(return_value=None)
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake)
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake)
 
     suggestion = await record_auto_reply_suggestion(
         db_session,

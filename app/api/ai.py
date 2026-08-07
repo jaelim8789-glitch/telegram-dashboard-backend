@@ -204,8 +204,8 @@ async def ai_chat(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테넌트를 찾을 수 없습니다.")
 
         # Credit check (server-enforced)
-        from app.services.ai_credit_service import check_and_deduct_credits
-        ok, remaining = await check_and_deduct_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
+        from app.services.ai_credit_service import check_and_deduct_legacy_credits
+        ok, remaining = await check_and_deduct_legacy_credits(tenant, db, FEATURE_CHAT, payload.is_sensitive)
         if not ok:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -49,10 +49,10 @@ async def test_generate_and_store_ops_report_persists_report(db_session, monkeyp
     _patch_gatherers(monkeypatch)
     monkeypatch.setattr(ai_ops_service_module, "async_session_maker", lambda: db_session_cm(db_session))
 
-    fake_deepseek = AsyncMock(
-        return_value=" .\nflood_wait  ; 3 ,   "
+    fake_ollama = AsyncMock(
+        return_value="요약.\nflood_wait 10건; 증가, 조치 필요"
     )
-    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", fake_deepseek)
+    monkeypatch.setattr(ai_analysis_service_module, "_call_ollama", fake_ollama)
 
     returned = await generate_and_store_ops_report()
 
@@ -83,7 +83,7 @@ async def test_generate_and_store_ops_report_returns_none_and_skips_storage_on_d
 async def test_generate_and_store_ops_report_skips_when_already_in_progress(db_session, monkeypatch):
     _patch_gatherers(monkeypatch)
     monkeypatch.setattr(ai_ops_service_module, "async_session_maker", lambda: db_session_cm(db_session))
-    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", AsyncMock(return_value=""))
+    monkeypatch.setattr(ai_analysis_service_module, "_call_ollama", AsyncMock(return_value=""))
     monkeypatch.setattr(ai_ops_service_module, "_generating", True)
 
     returned = await generate_and_store_ops_report()
@@ -97,7 +97,7 @@ async def test_generate_and_store_ops_report_skips_when_already_in_progress(db_s
 async def test_generate_and_store_ops_report_skips_storage_on_deepseek_failure(db_session, monkeypatch):
     _patch_gatherers(monkeypatch)
     monkeypatch.setattr(ai_ops_service_module, "async_session_maker", lambda: db_session_cm(db_session))
-    monkeypatch.setattr(ai_analysis_service_module, "_call_deepseek", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_analysis_service_module, "_call_ollama", AsyncMock(return_value=None))
 
     await generate_and_store_ops_report()
 
