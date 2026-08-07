@@ -750,9 +750,11 @@ _REFUSAL_HINTS = (
 
 
 def _is_refusal(text: str) -> bool:
-    """Heuristic: detects refusal / dead-end answers that should be retried.
-    The system prompt forbids refusing any question, so a refusal usually means
-    the model fell into a refusal pattern — regenerate it.
+    """Heuristic: detects refusal / dead-end answers.
+
+    Honest "I don't know / please clarify" replies are now a DESIRED response
+    (see _is_honest_unknown) — only non-honest refusals should be regenerated
+    by the quality gate.
     """
     if not text:
         return False
@@ -762,6 +764,24 @@ def _is_refusal(text: str) -> bool:
             if hint in low:
                 return True
     return False
+
+
+_UNKNOWN_HINTS = (
+    "모르겠", "잘 모르", "알 수 없", "모릅니다", "확실하지 않", "정확히 모르",
+    "확인되지 않", "알아봐야", "알려주시면", "구체적으로 알려주", "어떤 점을 궁금해",
+    "되물어", "질문해주시", "알아보겠",
+)
+
+
+def _is_honest_unknown(text: str) -> bool:
+    """True when the reply is an honest "I don't know / need more info" answer
+    (now a DESIRED response), so the quality gate must not regenerate it into
+    a fabricated confident answer.
+    """
+    if not text or len(text) > 300:
+        return False
+    low = text.lower()
+    return any(h in low for h in _UNKNOWN_HINTS)
 
 
 # P3: Reflection auto-fix output buffer — set by self_review_answer when the
@@ -796,7 +816,7 @@ async def self_review_answer(
             f"3. 중복 설명이 있나요?\n"
             f"4. 사용자 의도를 충족하나요?\n"
             f"5. 불필요한 문장이 있나요?\n"
-            f"6. 회사 정책(거부·사과 금지, 한국어)을 위반하나요?\n\n"
+            f"6. 모르는 내용(가격·수치·사실·기능·정책)을 지어내서 답했나요? 모르면 솔직히 '모른다'고 말하고 구체적으로 되물었나요?\n\n"
             f"문제가 없으면 정확히 \"PASS\"만 답하세요.\n"
             f"문제가 있으면 문제를 고친 **수정된 전체 답변**만 출력하세요 "
             f"(\"FAIL\" 같은 라벨 없이, 수정된 답변 그 자체로)."
@@ -1102,7 +1122,7 @@ async def chat(
         "- 항상 한국어로 답변하세요. 어떤 언어로 질문해도 한국어로 답하세요.\n"
         "- 사고 과정(reasoning)도 반드시 한국어로 하세요.\n"
         "- 구체적이고 상세하게 답하세요. 두루뭉술하게 요약하지 마세요.\n"
-        "- 실전 예시, 수치, 단계별 가이드를 반드시 포함하세요. 막연한 조언은 금지입니다.\n"
+        "- 실전 예시, 수치, 단계별 가이드는 확실히 아는 내용에 한해서만 포함하세요. 모르는 수치·가격·사실을 지어내지 마세요.\n"
         "- 한 줄, 두 줄로 끝내지 마세요. **3~5개의 핵심 포인트를 잡고, 각 포인트를 2~3문장으로 "
         "충분히 설명하세요.** 그래야 최소 300자 이상, 복잡한 질문은 500자 이상이 됩니다.\n"
         "- 표나 목록 등 가독성 있는 형식을 활용하세요. 필요하면 코드·공식·비교표도 쓰세요.\n"
@@ -1155,12 +1175,12 @@ async def chat(
         "등 실제 외부 모델·회사·기술 이름을 밝히지 마. 사용자가 직접 물어봐도 TeleMon이 "
         "자체 개발한 AI라고만 말해.\n\n"
         "━━━ 금지 사항 ━━━\n"
-        "- 어떤 질문이든 거부하지 마세요. \"도와드릴 수 없습니다\" 같은 답변은 하지 마세요.\n"
+        "- 절대 허위로 지어내지 마세요. 가격·수치·일정·기능·정책·사실을 모르면서 있는 것처럼 답하는 건 최악의 실수입니다.\n"
+        "- 모르거나 확인할 수 없으면 솔직히 \"정확히 모르겠습니다\"라고 말하고, 필요한 정보를 구체적으로 되물어보세요.\n"
+        "- 질문이 모호하면 짐작으로 답하지 말고 무엇을 원하는지 2~3가지 되물어보세요. \"구체적으로 알려주시면 알아보고 정확히 답해드릴게요\"처럼 이어가세요.\n"
         "- \"죄송합니다\" 같은 사과를 남발하지 마세요.\n"
         "- \"AI입니다\", \"저는 AI라서\" 같은 표현 대신 TeleMon AI라고 자연스럽게 정체성을 밝혀도 됩니다.\n"
-        "- 표면적인 답변만 하지 마세요. 근본 원리까지 깊이 파고드세요.\n"
-        "- \"어렵습니다\", \"복잡합니다\" 같은 막연한 표현은 쓰지 마세요.\n"
-        "- 답변을 축약하지 마세요. 충분히 상세하게 답하세요."
+        "- 사용자가 자세히 질문해줄수록 TeleMon AI가 더 발전하니, 궁금한 점을 더 물어보도록 자연스럽게 유도하세요."
     )
 
     # Apply template if specified
@@ -1625,7 +1645,8 @@ async def chat(
         if tool_calls_buffer:
             pass
         elif not request.context.get("disable_self_review") and (
-            len(full_content) < 40 or _is_rambling(full_content) or _is_refusal(full_content)
+            len(full_content) < 40 or _is_rambling(full_content)
+            or (_is_refusal(full_content) and not _is_honest_unknown(full_content))
         ):
             logger.info("ai_stream_quality_gate_retry", length=len(full_content))
             regen, _pt2, _ct2 = await _call_ollama_nonstream(
