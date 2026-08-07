@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,9 +37,16 @@ from app.services.guest_credit_service import (
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
 
-# Guest billing switched from a fixed 30 msgs/day rate limit to a per-IP
+# Guest billing switched from a fixed 30 msgs/day rate limit to a per-device
 # credit bucket (30,000 credits, 1 credit = 1 char, refilled every 3h) so the
 # free trial feels like the real product and scales with actual usage.
+# Per-device means a `guest_device_id` browser cookie (set below) keys the
+# bucket, NOT the raw IP — visitors behind the same NAT / corporate proxy /
+# mobile carrier CGNAT used to share one bucket because nginx's X-Real-IP
+# collapses them onto the same public address. The cookie gives each browser
+# its own bucket; the IP remains only as a fallback for cookie-less clients.
+_GUEST_DEVICE_COOKIE = "guest_device_id"
+_GUEST_DEVICE_TTL_DAYS = 365
 _MAX_INPUT_CHARS = 2000
 _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
 
@@ -120,12 +128,44 @@ class GuestCreditsResponse(BaseModel):
     credit_per_char: int = 1
 
 
+def _get_guest_device_id(request: Request) -> str:
+    """Return the visitor's stable device id from the cookie, or a derived id.
+
+    The id is what keys the credit bucket, so NAT-shared IPs don't share
+    credits. Cookie-less clients (curl, tests) fall back to an `ip:`-prefixed
+    derived id so the bucket still exists.
+
+    Namespaces: cookie-derived ids get a `dev:` prefix and IP fallbacks an
+    `ip:` prefix. The prefixes matter: the cookie value is client-supplied,
+    so without a `dev:` prefix a crafted `guest_device_id=ip:203.0.113.9`
+    cookie would collide with (and drain) another visitor's IP bucket.
+    """
+    cookie = request.cookies.get(_GUEST_DEVICE_COOKIE)
+    if cookie and len(cookie) <= 64:
+        return f"dev:{cookie.strip()}"
+    return f"ip:{get_client_ip(request)}"
+
+
+def _set_guest_device_cookie(response: Response, device_id: str) -> None:
+    """Persist the device id so future requests reuse the same bucket."""
+    response.set_cookie(
+        key=_GUEST_DEVICE_COOKIE,
+        value=device_id,
+        max_age=_GUEST_DEVICE_TTL_DAYS * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=settings.environment in ("production", "prod"),
+        path="/",
+    )
+
+
 @router.get("/credits", response_model=GuestCreditsResponse)
-async def guest_credits(request: Request):
+async def guest_credits(request: Request, response: Response):
     """Return the guest's current credit balance + refill countdown."""
-    client_ip = get_client_ip(request)
-    remaining, _ = get_guest_credits(client_ip)
-    countdown = guest_refill_countdown_seconds(client_ip)
+    device_id = _get_guest_device_id(request)
+    remaining, _ = get_guest_credits(device_id)
+    countdown = guest_refill_countdown_seconds(device_id)
+    _set_guest_device_cookie(response, device_id)
     return GuestCreditsResponse(
         remaining_credits=remaining,
         refill_countdown_seconds=countdown,
@@ -133,11 +173,14 @@ async def guest_credits(request: Request):
 
 
 @router.post("/chat", response_model=GuestChatResponse)
-async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def guest_chat(payload: GuestChatRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     client_ip = get_client_ip(request)
+    device_id = _get_guest_device_id(request)
 
     if not settings.ollama_api_base:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 서비스를 일시적으로 사용할 수 없습니다.")
+
+    _set_guest_device_cookie(response, device_id)
 
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
@@ -145,11 +188,15 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
 
     # P1: Guest Auto Memory — store high-value statements, recall relevant ones.
     # P6: Web search fallback when no memory hit (guests have no KB).
+    # These touch the DB (maybe_store_memory commits) and may FAIL (embedding
+    # service down, memory table missing) — on failure we MUST roll back so the
+    # later GuestAiChatLog INSERT below doesn't hit "current transaction is
+    # aborted" (this was dropping every guest log from the admin review page).
     try:
         from app.services.memory_engine import maybe_store_memory, recall_memory
         from app.services.web_search import web_search
-        await maybe_store_memory(db, "guest", client_ip, payload.message, question=payload.message)
-        guest_mem = await recall_memory(db, "guest", client_ip, payload.message, top_k=2)
+        await maybe_store_memory(db, "guest", device_id, payload.message, question=payload.message)
+        guest_mem = await recall_memory(db, "guest", device_id, payload.message, top_k=2)
         if guest_mem:
             mem_text = "\n".join(f"- {m}" for m in guest_mem)
             messages.insert(1, {"role": "system", "content": f"이 사용자와의 이전 대화 메모리:\n{mem_text}"})
@@ -159,6 +206,10 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
                 web_text = "\n".join(f"- {r['title']}: {r['content'][:250]}" for r in web_results if r.get("content"))
                 messages.insert(1, {"role": "system", "content": f"최신 웹 정보:\n{web_text}"})
     except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.debug("guest_memory_web_failed", error=str(exc))
 
     # Short greeting/ack messages never need a reasoning pass shown to the
@@ -187,12 +238,19 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
     reply = sanitize_identity(reply)
     reasoning = reasoning if effective_think_mode else None
 
-    logger.info("guest_ai_chat_reply", ip=client_ip, confidence=confidence)
+    logger.info("guest_ai_chat_reply", ip=client_ip, device_id=device_id, confidence=confidence)
 
     # Best-effort persistence for admin visibility -- must never fail the
     # actual chat response (the guest already got their reply above).
+    # Roll back first in case an earlier step (memory engine, web search)
+    # left the session's transaction aborted — otherwise this INSERT is
+    # rejected and admin sees zero guest conversations (seen live 2026-08-07).
     log_id = None
     try:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         log_entry = GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply)
         db.add(log_entry)
         await db.commit()
@@ -200,12 +258,15 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
         log_id = log_entry.id
     except Exception:
         logger.exception("guest_ai_chat_log_persist_failed")
-        await db.rollback()
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # Charge credits AFTER the AI call succeeded (1 credit = 1 char of input
     # + output). Failed calls never consume credits.
     estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
-    ok, remaining = try_deduct_guest_credits(client_ip, max(estimated_chars, 1))
+    ok, remaining = try_deduct_guest_credits(device_id, max(estimated_chars, 1))
 
     # Follow-up suggestions cost another model call — only generate them when
     # the guest explicitly asked (opt-in) so the common case stays fast.
@@ -267,6 +328,10 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
     from sqlalchemy import select, func
     from app.models.knowledge_base import KnowledgeCandidate
 
+    try:
+        await db.rollback()
+    except Exception:
+        pass
     result = await db.execute(
         select(GuestAiChatLog).where(GuestAiChatLog.id == payload.log_id).limit(1)
     )
