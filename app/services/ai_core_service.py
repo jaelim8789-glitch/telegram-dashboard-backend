@@ -146,6 +146,7 @@ async def call_ollama(
                     "model": model or settings.ollama_model,
                     "messages": messages,
                     "stream": False,
+                    "keep_alive": 1800,
                 },
             )
             response.raise_for_status()

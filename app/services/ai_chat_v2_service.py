@@ -533,6 +533,23 @@ async def _store_chat_memory(
         logger.warning("ai_chat_v2_memory_store_failed", error=str(exc))
 
 
+async def _store_memory_bg(tenant_id: str, content: str) -> None:
+    """Persist a message to the Auto Memory Engine in a background task.
+
+    Runs on its own DB session so it never touches (or blocks) the request's
+    session, and it is deliberately scheduled AFTER the streaming response so
+    the embedding round-trip can't delay the first token.
+    """
+    try:
+        from app.database import async_session_maker
+        from app.services.memory_engine import maybe_store_memory
+
+        async with async_session_maker() as db:
+            await maybe_store_memory(db, "tenant", tenant_id, content, question=content)
+    except Exception as exc:
+        logger.debug("ai_memory_store_bg_failed", error=str(exc))
+
+
 _COMPLEX_HINTS = (
     "어떻게", "방법", "분석", "비교", "차이", "코드", "코딩", "구현",
     "전략", "계획", "최적", "예시", "가이드", "튜토리얼", "작성해", "만들어",
@@ -897,6 +914,9 @@ async def _stream_ollama(
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": 8192,
+        # Keep the model warm for 30 min so an idle (or never-yet-loaded)
+        # model doesn't add a cold-start delay to the first token.
+        "keep_alive": 1800,
     }
     if tools:
         payload["tools"] = tools
@@ -975,6 +995,7 @@ async def _call_ollama_nonstream(
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": 8192,
+        "keep_alive": 1800,
     }
 
     for attempt in range(_RETRY_MAX):
@@ -1304,10 +1325,12 @@ async def chat(
             })
 
         # P1: Auto Memory Engine — store high-value user statements (member).
-        # Guests get their own memory in ai_guest.py.
+        # Guests get their own memory in ai_guest.py. The WRITE (which costs an
+        # embedding round-trip) is deferred to a background task so it never
+        # delays the first token; recall runs here because it can enrich the
+        # current answer when Graphiti missed.
         try:
-            from app.services.memory_engine import maybe_store_memory, recall_memory
-            await maybe_store_memory(db, "tenant", tenant_id, request.content, question=request.content)
+            from app.services.memory_engine import recall_memory
             stored_mem = await recall_memory(db, "tenant", tenant_id, request.content, top_k=3)
             if stored_mem and not memory_context:
                 memory_text = "\n".join(f"- {m}" for m in stored_mem)
@@ -1317,6 +1340,7 @@ async def chat(
                 })
         except Exception as exc:
             logger.debug("ai_memory_engine_failed", error=str(exc))
+        asyncio.create_task(_store_memory_bg(tenant_id, request.content))
 
         # P6: Web Search — only when KB had no hits (KB > Memory > Web > LLM).
         if not kb_context:
@@ -1443,12 +1467,22 @@ async def chat(
         # been received so the trailing "[CONFIDENCE: ...]" marker never gets
         # flushed to the client mid-stream -- see extract_confidence().
         pending = ""
+        # First-token latency metric: request start -> first emitted event.
+        stream_start = time.monotonic()
+        first_token_ms: int | None = None
+
+        def _mark_first_token() -> None:
+            nonlocal first_token_ms
+            if first_token_ms is None:
+                first_token_ms = int((time.monotonic() - start_time) * 1000)
+
         try:
             async for kind, text in _stream_ollama(messages, model=request.model, max_tokens=max_tokens, tools=TOOLS if not request.context.get("disable_tools") else None, temperature=effective_temperature):
                 if kind == "reasoning":
                     full_reasoning += text
                     if not effective_think_mode:
                         continue
+                    _mark_first_token()
                     yield f"data: {json.dumps({'type': 'reasoning', 'content': text})}\n\n"
                     continue
                 if kind == "tool_call":
@@ -1470,6 +1504,7 @@ async def chat(
                 safe_len = max(0, len(pending) - CONFIDENCE_STREAM_HOLDBACK)
                 to_emit, pending = pending[:safe_len], pending[safe_len:]
                 if to_emit:
+                    _mark_first_token()
                     full_content += to_emit
                     yield f"data: {json.dumps({'type': 'chunk', 'content': to_emit})}\n\n"
         except Exception as exc:
@@ -1485,6 +1520,7 @@ async def chat(
         if tail_confidence:
             full_confidence = tail_confidence
         if pending:
+            _mark_first_token()
             full_content += pending
             yield f"data: {json.dumps({'type': 'chunk', 'content': pending})}\n\n"
 
@@ -1512,6 +1548,7 @@ async def chat(
                 meta = TOOL_META.get(tool_name, {})
 
                 # Notify frontend that tool is being executed
+                _mark_first_token()
                 yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name, 'label': meta.get('label', tool_name)})}\n\n"
 
                 if meta.get("requires_confirmation"):
@@ -1632,12 +1669,20 @@ async def chat(
         # Get remaining credits after deduction
         remaining_credits = await get_remaining_credits(tenant) if tenant else 0
 
+        logger.info(
+            "ai_chat_v2_first_token",
+            tenant_id=tenant_id,
+            first_token_ms=first_token_ms,
+            latency_ms=latency_ms,
+        )
+
         yield f"data: {json.dumps({
             'type': 'done',
             'message_id': assistant_msg.id,
             'tokens_prompt': prompt_tokens,
             'tokens_completion': completion_tokens,
             'latency_ms': latency_ms,
+            'first_token_ms': first_token_ms,
             'remaining_credits': remaining_credits,
             'chars_used': actual_chars,
             'confidence': full_confidence,
