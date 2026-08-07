@@ -1617,7 +1617,7 @@ async def chat(
                 yield f"data: {json.dumps({'type': 'chunk', 'content': full_content})}\n\n"
 
         # Estimate tokens (rough: 4 chars per token)
-        prompt_tokens = sum(len(m["content"]) // 4 for m in messages)
+        prompt_tokens = sum(len(m.get("content") or "") // 4 for m in messages)
         completion_tokens = len(full_content) // 4
 
         # Save assistant message
