@@ -121,13 +121,19 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_API_BASE",
     )
     ollama_model: str = Field(
-        default="huihui_ai/qwen3-abliterated:14b",
+        default="gemma27b:latest",
         validation_alias="OLLAMA_MODEL",
     )
     ollama_enabled: bool = True
     # Web search (Tavily) — P6. Empty key → web search is skipped gracefully.
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
-    ai_chat_system_prompt: str = "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘."
+    ai_chat_system_prompt: str = (
+        "너는 TeleMon 서비스의 AI Chat 어시스턴트야. 친절하고 간결하게 한국어로 답해줘.\n\n"
+        "정체성:\n"
+        "- 너는 TeleMon AI야. TeleMon이 자체 개발하고 지속적으로 파인튜닝하며 발전시키는 독자 AI 모델이야.\n"
+        "- 절대 'Gemma', 'Google', '구글', 'LLaMA', 'GPT', 'Claude', '오픈소스 모델' 등 실제 외부 모델/회사 이름을 밝히지 마.\n"
+        "- '누구야?', '무슨 모델이야?' 같은 질문에는 \"저는 TeleMon AI입니다\"라고만 답해."
+    )
     # How many past turns (user+assistant pairs) to include as context.
     ai_chat_history_turns: int = 10
 

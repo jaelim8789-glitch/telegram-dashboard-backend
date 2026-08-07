@@ -79,11 +79,14 @@ async def call_ollama(
     max_tokens: int = _MAX_TOKENS,
     model: str | None = None,
     tools: list[dict] | None = None,
+    json_mode: bool = False,
 ) -> tuple[str | None, int, list[dict] | None]:
     """Call Ollama API and return (reply_text, tokens_used, tool_calls).
 
     Returns (None, 0, None) on any failure.
     If tools are provided, the response may include tool_calls instead of content.
+    If json_mode is True, requests a strict JSON object response via
+    response_format (OpenAI-compatible endpoint).
     """
     payload: dict = {
         "model": model or settings.ollama_model or _DEFAULT_MODEL,
@@ -93,6 +96,8 @@ async def call_ollama(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -116,6 +121,30 @@ async def call_ollama(
         logger.error("ai_ollama_timeout")
         return None, 0, None
     except httpx.HTTPStatusError as exc:
+        # Some self-hosted servers reject response_format (json_mode) with a
+        # 4xx. Degrade gracefully: retry once without it so callers that only
+        # needed a JSON-shaped reply still get one (parse layer handles it).
+        if json_mode and exc.response.status_code in (400, 404, 422):
+            logger.warning(
+                "ai_ollama_json_mode_unsupported_retry_plain",
+                status=exc.response.status_code,
+            )
+            try:
+                payload.pop("response_format", None)
+                async with httpx.AsyncClient(timeout=60) as retry_client:
+                    retry = await retry_client.post(
+                        f"{settings.ollama_api_base}/chat/completions",
+                        headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                        json=payload,
+                    )
+                    retry.raise_for_status()
+                    data = retry.json()
+                    msg = data["choices"][0]["message"]
+                    usage = data.get("usage", {})
+                    return msg.get("content", "") or "", usage.get("total_tokens", 0), msg.get("tool_calls")
+            except (httpx.HTTPError, KeyError, IndexError, ValueError, json.JSONDecodeError) as rerr:
+                logger.error("ai_ollama_retry_plain_failed", error=str(rerr))
+                return None, 0, None
         logger.error("ai_ollama_http_error", status=exc.response.status_code, body=exc.response.text[:500])
         return None, 0, None
     except (httpx.HTTPError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
@@ -432,6 +461,10 @@ AI_CHAT_SYSTEM_PROMPT = (
     "- 사용자의 TeleMon 운영 상태를 이해하고 도움을 제공\n"
     "- 텔레그램 마케팅, 발송 전략, 계정 관리에 대한 전문 지식 제공\n"
     "- 한국어로 친절하고 전문적으로 응답\n\n"
+    "정체성:\n"
+    "- 너는 TeleMon AI야. TeleMon이 자체 개발하고 지속적으로 파인튜닝하며 발전시키는 독자 AI 모델이야.\n"
+    "- 절대 'Gemma', 'Google', '구글', 'LLaMA', 'GPT', 'Claude', '오픈소스 모델' 등 실제 외부 모델/회사 이름을 밝히지 마.\n"
+    "- '누구야?', '무슨 모델이야?' 같은 질문에는 \"저는 TeleMon AI입니다\"라고만 답해.\n\n"
     "규칙:\n"
     "- 구체적인 수치와 비교를 포함할 것\n"
     "- 액션 가능한 조언을 우선적으로 제공\n"

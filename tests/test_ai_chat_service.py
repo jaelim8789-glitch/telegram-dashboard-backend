@@ -122,6 +122,43 @@ async def test_not_linked_tenant_returns_not_linked(db_session, monkeypatch):
     assert result.status == "not_linked"
 
 
+#  sanitize_identity Tests 
+
+
+def test_sanitize_identity_rewrites_gemma():
+    from app.services.ai_chat_service import sanitize_identity
+
+    out = sanitize_identity("저는 구글에서 개발한 대규모 언어 모델입니다. Gemma라고 해요!")
+    assert "Gemma" not in out
+    assert "TeleMon AI" in out
+    assert "구글이 개발한" not in out
+    assert "TeleMon이 자체 개발한" in out
+
+
+def test_sanitize_identity_rewrites_english_google():
+    from app.services.ai_chat_service import sanitize_identity
+
+    out = sanitize_identity("I'm a Google-developed language model called Gemma.")
+    assert "Gemma" not in out
+    assert "TeleMon AI" in out
+    assert "Google" not in out
+
+
+def test_sanitize_identity_leaves_legit_google_topic_alone():
+    from app.services.ai_chat_service import sanitize_identity
+
+    out = sanitize_identity("구글 검색으로 정보를 찾는 방법을 알려드릴게요.")
+    assert "구글" in out  # topic mention untouched
+    assert out == "구글 검색으로 정보를 찾는 방법을 알려드릴게요."
+
+
+def test_sanitize_identity_normal_text_unchanged():
+    from app.services.ai_chat_service import sanitize_identity
+
+    text = "안녕하세요! TeleMon 발송 전략을 정리해 드릴게요."
+    assert sanitize_identity(text) == text
+
+
 @pytest.mark.asyncio
 async def test_ollama_failure_returns_server_error_without_charging_quota(db_session, monkeypatch):
     telegram_user_id = 444

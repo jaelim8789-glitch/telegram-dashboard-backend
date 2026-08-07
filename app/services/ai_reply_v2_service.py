@@ -48,7 +48,10 @@ _AUTO_REPLY_CONFIDENCE_THRESHOLD = 0.85
 
 _SYSTEM_PROMPT_BASE = (
     "You are TeleMon AI Reply Assistant v2.0. Your role is to generate "
-    "natural, context-aware reply suggestions for incoming Telegram messages.\n\n"
+    "natural, context-aware reply suggestions for incoming Telegram messages.\n"
+    "Identity: you are TeleMon AI, TeleMon's own fine-tuned model. Never "
+    "mention external model/company names (Gemma, Google, LLaMA, GPT, etc.) "
+    "in any suggestion text.\n\n"
     "Rules:\n"
     "- Respond ONLY with valid JSON, no other text\n"
     "- Always provide 3 suggestions: primary (best) + 2 alternatives\n"
@@ -57,7 +60,15 @@ _SYSTEM_PROMPT_BASE = (
     "- Match the specified tone and style precisely\n"
     "- Keep replies concise (under {max_length} chars)\n"
     "- Use {language} language\n\n"
-    "Output format:\n"
+    "Example (incoming: \"가격 얼마인가요?\", tone: friendly):\n"
+    '{{\n'
+    '  "primary": {{"text": "안녕하세요! 문의 감사합니다. 가격은 10,000원입니다. 더 궁금하신 점 있으면 편하게 물어보세요 :)", "confidence": 0.92, "reason": "가격 질문에 직접 답하고 친근한 마무리 추가"}},\n'
+    '  "alternatives": [\n'
+    '    {{"text": "10,000원입니다! 지금 주문하시면 오늘 바로 발송해 드려요.", "confidence": 0.85, "reason": "가격 + 구매 유도"}},\n'
+    '    {{"text": "상품 가격은 10,000원입니다. 수량에 따라 할인도 가능합니다.", "confidence": 0.78, "reason": "가격 + 추가 혜택 언급"}}\n'
+    '  ]\n'
+    '}}\n\n'
+    "Output format (always valid JSON):\n"
     '{{\n'
     '  "primary": {{\n'
     '    "text": "best reply",\n'
@@ -477,14 +488,18 @@ async def generate_suggestions(
         "content": f"Incoming message from {request.user_name or 'user'}: {request.incoming_message[:2000]}",
     })
 
-    # 6. Call Ollama
-    reply_text, tokens_used, _ = await call_ollama(messages, max_tokens=_DEFAULT_MAX_TOKENS)
+    # 6. Call Ollama (json_mode asks the endpoint for a strict JSON object,
+    # which keeps Gemma from wrapping the payload in prose or code fences).
+    reply_text, tokens_used, _ = await call_ollama(messages, max_tokens=_DEFAULT_MAX_TOKENS, json_mode=True)
     if reply_text is None:
         logger.error("ai_reply_v2_generation_failed", account_id=request.account_id)
         return None
 
-    # 7. Parse JSON response
+    # 7. Parse JSON response — with one repair retry on a malformed payload.
     suggestions = _parse_suggestions(reply_text)
+    if suggestions is None:
+        repair = await _repair_suggestions_json(reply_text)
+        suggestions = _parse_suggestions(repair) if repair else None
     if suggestions is None:
         logger.error("ai_reply_v2_parse_failed", account_id=request.account_id)
         return None
@@ -560,6 +575,29 @@ async def generate_suggestions(
         elapsed_ms=elapsed_ms,
     )
     return suggestion
+
+
+async def _repair_suggestions_json(raw_text: str) -> str | None:
+    """Ask the model to fix a malformed JSON payload into strict JSON.
+
+    One extra model call, only on parse failure — keeps the endpoint
+    resilient to models that wrap JSON in markdown/prose.
+    """
+    try:
+        repair_messages = [
+            {"role": "system", "content": (
+                "You fix JSON payloads. The text below is a reply-suggestion draft "
+                "that is NOT valid JSON. Extract/repair it into exactly one valid "
+                "JSON object with keys primary and alternatives. Respond with ONLY "
+                "the JSON, no commentary."
+            )},
+            {"role": "user", "content": raw_text[:3000]},
+        ]
+        repaired, _tokens, _ = await call_ollama(repair_messages, max_tokens=_DEFAULT_MAX_TOKENS, json_mode=True)
+        return repaired
+    except Exception as exc:
+        logger.warning("ai_reply_v2_repair_failed", error=str(exc))
+        return None
 
 
 def _parse_suggestions(raw_text: str) -> dict[str, Any] | None:
@@ -662,6 +700,75 @@ async def review_suggestion(
         status=payload.status,
     )
     return suggestion
+
+
+async def send_suggestion_reply(
+    db: AsyncSession,
+    suggestion: AiReplySuggestionV2,
+) -> tuple[bool, str]:
+    """One-click send: deliver the selected (or primary) reply to the chat.
+
+    Reuses the canonical delivery pipeline (deliver_message) so the message
+    goes through the same retry/rate-limit path as every other send. Marks
+    the suggestion as sent on success.
+
+    Returns (ok, detail).
+    """
+    if suggestion.status not in ("pending", "approved"):
+        return False, "이미 처리된 추천입니다."
+    if suggestion.auto_reply_sent:
+        return False, "이미 전송된 추천입니다."
+
+    # Resolve the reply text: custom > selected suggestion > primary
+    reply_text = None
+    if suggestion.custom_reply:
+        reply_text = suggestion.custom_reply
+    elif suggestion.selected_suggestion and suggestion.selected_suggestion.startswith("alternative_"):
+        try:
+            idx = int(suggestion.selected_suggestion.split("_")[1])
+            alt = suggestion.suggestions.get("alternatives", [])[idx]
+            reply_text = alt.get("text")
+        except (IndexError, TypeError, ValueError):
+            reply_text = None
+    if reply_text is None:
+        primary = suggestion.suggestions.get("primary", {}) if suggestion.suggestions else {}
+        reply_text = primary.get("text") if isinstance(primary, dict) else None
+
+    if not reply_text:
+        return False, "전송할 답변 텍스트가 없습니다."
+
+    from app.services.delivery import DeliveryRequest, deliver_message
+
+    try:
+        request = DeliveryRequest(
+            account_id=suggestion.account_id,
+            recipients=[suggestion.chat_id],
+            message=reply_text,
+            source="ai_reply_v2",
+            source_id=suggestion.id,
+        )
+        results = await deliver_message(request)
+        result = results[0] if results else None
+        is_success = result is not None and getattr(result, "status", None) is not None \
+            and result.status.value == "success"
+        if is_success:
+            suggestion.status = "approved"
+            suggestion.auto_reply_sent = True
+            suggestion.auto_reply_sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            suggestion.selected_suggestion = suggestion.selected_suggestion or "primary"
+            await db.commit()
+            logger.info(
+                "ai_reply_v2_manual_sent",
+                account_id=suggestion.account_id,
+                suggestion_id=suggestion.id,
+                chat_id=suggestion.chat_id,
+            )
+            return True, "전송 완료"
+        err = result.error_message if result else "no_result"
+        return False, f"전송 실패: {err}"
+    except Exception as exc:
+        logger.error("ai_reply_v2_send_failed", account_id=suggestion.account_id, error=str(exc))
+        return False, "전송 중 오류가 발생했습니다."
 
 
 async def submit_feedback(

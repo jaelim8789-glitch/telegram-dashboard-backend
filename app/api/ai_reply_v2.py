@@ -38,6 +38,7 @@ from app.services.ai_reply_v2_service import (
     list_personas,
     list_suggestions,
     review_suggestion,
+    send_suggestion_reply,
     submit_feedback,
     update_persona,
 )
@@ -211,6 +212,30 @@ async def review_suggestion_endpoint(
     if reviewed is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found.")
     return reviewed
+
+
+@router.post("/suggestions/{suggestion_id}/send", response_model=SuggestionRead)
+async def send_suggestion_endpoint(
+    suggestion_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    """One-click send: deliver the selected reply of a suggestion to the chat."""
+    from app.models.ai_reply_v2 import AiReplySuggestionV2
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(AiReplySuggestionV2).where(AiReplySuggestionV2.id == suggestion_id).limit(1)
+    )
+    suggestion = result.scalar_one_or_none()
+    if suggestion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found.")
+    await require_account_tenant_access(suggestion.account_id, db, identity)
+
+    ok, detail = await send_suggestion_reply(db, suggestion)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    return suggestion
 
 
 @router.post("/suggestions/{suggestion_id}/feedback", response_model=SuggestionRead)

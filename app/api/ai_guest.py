@@ -24,7 +24,7 @@ from app.core.logging import get_logger
 from app.core.rate_limiter import get_client_ip
 from app.database import get_db
 from app.models.guest_ai_chat import GuestAiChatLog
-from app.services.ai_chat_service import _MAX_TOKENS, _call_ollama_full, extract_confidence
+from app.services.ai_chat_service import _MAX_TOKENS, _call_ollama_full, extract_confidence, sanitize_identity
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 from app.services.guest_credit_service import (
     GUEST_CREDITS_PER_REFILL,
@@ -44,6 +44,12 @@ _MAX_HISTORY_MESSAGES = 12  # 6 turns of context, client-supplied
 
 _SYSTEM_PROMPT = (
     "당신은 TeleMon의 AI 어시스턴트입니다. "
+    "당신의 정체성은 TeleMon AI입니다 — TeleMon이 자체 개발하고 지속적으로 "
+    "파인튜닝하며 발전시키는 독자 AI 모델입니다. 당신이 누구인지, 어떤 모델인지 "
+    "물어보면 반드시 \"저는 TeleMon AI입니다\"라고 답하세요. 절대로 'Gemma', 'Google', "
+    "'구글', 'LLaMA', 'GPT', 'Claude', '오픈소스 모델', '대규모 언어 모델(LLM)' 등 "
+    "실제 외부 모델·회사·기술 이름을 밝히지 마세요. 사용자가 직접 물어봐도 아닌 것처럼 "
+    "답하거나, TeleMon이 자체 개발한 AI라고만 말하세요. "
     "무조건 한국어로만 답변하세요. 사용자가 다른 언어로 질문해도, 영어 단어가 섞여 "
     "있어도 답변은 항상 한국어로만 하세요. 영어나 다른 언어로 답하지 마세요. "
     "질문을 대충 넘겨짚지 말고 정확히 무엇을 묻는지 먼저 파악한 뒤에 답하세요. "
@@ -177,6 +183,8 @@ async def guest_chat(payload: GuestChatRequest, request: Request, db: AsyncSessi
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 받아오지 못했습니다. 잠시 후 다시 시도해주세요.")
     reply, reasoning = result
     reply, confidence = extract_confidence(reply)
+    # Defense in depth: strip any residual "I'm Gemma/Google" leak.
+    reply = sanitize_identity(reply)
     reasoning = reasoning if effective_think_mode else None
 
     logger.info("guest_ai_chat_reply", ip=client_ip, confidence=confidence)

@@ -33,11 +33,9 @@ logger = get_logger(__name__)
 
 # Reject oversized input before spending any quota or making an API call.
 _MAX_INPUT_CHARS = 2000
-# 600 was fine for a plain chat model, but the self-hosted reasoning model
-# behind OLLAMA_API_BASE spends a few hundred tokens "thinking" before any
-# real content -- with a tight budget the reply comes back empty every time
-# (finish_reason: length, hit mid-reasoning). Self-hosted GPU means no
-# per-token cost, so budget generously rather than trim close to the edge.
+# Self-hosted GPU means no per-token cost, so budget generously rather than
+# trim close to the edge (the model behind OLLAMA_API_BASE is a large 27B
+# model that answers verbosely; a tight budget would truncate real content).
 _MAX_TOKENS = 4000
 
 
@@ -163,6 +161,33 @@ def extract_confidence(text: str) -> tuple[str, str | None]:
     return text[: match.start()].rstrip(), match.group(1).lower()
 
 
+def sanitize_identity(text: str) -> str:
+    """Rewrite first-person base-model identity statements into TeleMon AI.
+
+    Defense in depth: the system prompts already mandate TeleMon AI identity;
+    this strips any residual leak before the text reaches the user/DB.
+    Bare "Google"/"구글" as a topic ("Google 검색 방법") is left untouched to
+    avoid mangling legit answers.
+    """
+    if not text:
+        return text
+    out = text.replace("Gemma", "TeleMon AI")
+    out = out.replace("gemma", "TeleMon AI")
+    out = re.sub(
+        r"(저는|나는|제가)\s*(구글에서|구글이)\s*개발한",
+        r"\1 TeleMon이 자체 개발한",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(I am|I'm)\s*(?:a\s+)?Google[- ]?developed",
+        "I am TeleMon AI, developed by TeleMon",
+        out,
+        flags=re.IGNORECASE,
+    )
+    return out
+
+
 async def _call_ollama(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str | None:
     """Returns the assistant's reply text, or None on any failure."""
     result = await _call_ollama_full(messages, max_tokens=max_tokens)
@@ -172,9 +197,9 @@ async def _call_ollama(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> s
 async def _call_ollama_full(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> tuple[str, str | None] | None:
     """Returns (content, reasoning) or None on any failure.
 
-    The self-hosted reasoning model (Qwen3.6) returns its "thinking" pass in
-    a separate `message.reasoning` field alongside the final `content` --
-    reasoning is None for non-reasoning models/plain replies.
+    The self-hosted model may return a separate "thinking" pass in
+    `message.reasoning` (Qwen-style models) -- reasoning is None for plain
+    models like Gemma 2 27B and for normal replies, which is fine.
     """
     try:
         # 30s was too tight once replies routinely run into the thousands of
@@ -257,6 +282,7 @@ async def _do_send(db: AsyncSession, telegram_user_id: int, text: str) -> AiChat
     reply = await _call_ollama(messages)
     if reply is None:
         return AiChatResult(status="server_error", detail="일시적인 오류로 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요.")
+    reply = sanitize_identity(reply)
 
     db.add(AiChatMessage(tenant_id=tenant.id, telegram_user_id=telegram_user_id_str, role="user", content=text))
     db.add(AiChatMessage(tenant_id=tenant.id, telegram_user_id=telegram_user_id_str, role="assistant", content=reply))

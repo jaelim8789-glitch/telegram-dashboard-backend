@@ -28,6 +28,7 @@ from app.services.ai_reply_v2_service import (
     add_message_to_conversation,
     generate_suggestions,
     review_suggestion,
+    send_suggestion_reply,
     submit_feedback,
     _parse_suggestions,
 )
@@ -486,3 +487,142 @@ class TestFeedback:
         feedback = SuggestionFeedbackRequest(rating=3)
         result = await submit_feedback(db_session, "nonexistent", "test-account", feedback)
         assert result is None
+
+
+#  One-click Send Tests 
+
+
+class TestOneClickSend:
+    async def _make_suggestion(self, db_session, account_id="test-account-send", text="Test reply"):
+        suggestion = AiReplySuggestionV2(
+            id=str(uuid.uuid4()),
+            tenant_id="test-tenant",
+            account_id=account_id,
+            chat_id="-100send",
+            chat_title="Test",
+            user_id="user1",
+            user_name="tester",
+            incoming_message="Test message",
+            suggestions={
+                "primary": {"text": text, "confidence": 0.8, "reason": "Test"},
+                "alternatives": [],
+            },
+            context={},
+            status="pending",
+        )
+        db_session.add(suggestion)
+        await db_session.commit()
+        await db_session.refresh(suggestion)
+        return suggestion
+
+    @pytest.mark.asyncio
+    @patch("app.services.delivery.deliver_message")
+    async def test_send_success(self, mock_deliver, db_session):
+        mock_deliver.return_value = [
+            AsyncMock(status=AsyncMock(value="success"), error_message=None)
+        ]
+        suggestion = await self._make_suggestion(db_session)
+
+        ok, detail = await send_suggestion_reply(db_session, suggestion)
+        assert ok is True
+        assert suggestion.status == "approved"
+        assert suggestion.auto_reply_sent is True
+
+        # delivere_message called with the primary text
+        request = mock_deliver.call_args.args[0]
+        assert request.message == "Test reply"
+        assert request.recipients == ["-100send"]
+
+    @pytest.mark.asyncio
+    @patch("app.services.delivery.deliver_message")
+    async def test_send_failure(self, mock_deliver, db_session):
+        mock_deliver.return_value = [
+            AsyncMock(status=AsyncMock(value="failed"), error_message="flood wait")
+        ]
+        suggestion = await self._make_suggestion(db_session)
+
+        ok, detail = await send_suggestion_reply(db_session, suggestion)
+        assert ok is False
+        assert "flood wait" in detail
+        assert suggestion.auto_reply_sent is False
+
+    @pytest.mark.asyncio
+    async def test_send_no_text(self, db_session):
+        suggestion = await self._make_suggestion(db_session)
+        suggestion.suggestions = {}
+        await db_session.commit()
+
+        ok, detail = await send_suggestion_reply(db_session, suggestion)
+        assert ok is False
+        assert detail == "전송할 답변 텍스트가 없습니다."
+
+    @pytest.mark.asyncio
+    @patch("app.services.delivery.deliver_message")
+    async def test_send_uses_custom_reply(self, mock_deliver, db_session):
+        mock_deliver.return_value = [
+            AsyncMock(status=AsyncMock(value="success"), error_message=None)
+        ]
+        suggestion = await self._make_suggestion(db_session)
+        suggestion.custom_reply = "직접 작성한 답변"
+        suggestion.selected_suggestion = "custom"
+        await db_session.commit()
+
+        ok, _ = await send_suggestion_reply(db_session, suggestion)
+        assert ok is True
+        assert mock_deliver.call_args.args[0].message == "직접 작성한 답변"
+
+    @pytest.mark.asyncio
+    @patch("app.services.delivery.deliver_message")
+    async def test_send_uses_selected_alternative(self, mock_deliver, db_session):
+        mock_deliver.return_value = [
+            AsyncMock(status=AsyncMock(value="success"), error_message=None)
+        ]
+        suggestion = await self._make_suggestion(db_session)
+        suggestion.suggestions = {
+            "primary": {"text": "Primary", "confidence": 0.8, "reason": ""},
+            "alternatives": [{"text": "Alt A", "confidence": 0.5}, {"text": "Alt B", "confidence": 0.5}],
+        }
+        suggestion.selected_suggestion = "alternative_1"
+        await db_session.commit()
+
+        ok, _ = await send_suggestion_reply(db_session, suggestion)
+        assert ok is True
+        assert mock_deliver.call_args.args[0].message == "Alt B"
+
+
+#  JSON Repair Retry Tests 
+
+
+class TestJsonRepairRetry:
+    @pytest.mark.asyncio
+    @patch("app.services.ai_reply_v2_service.call_ollama")
+    async def test_generate_suggestions_repairs_malformed_json(
+        self, mock_call_ollama, db_session, sample_suggestion_request,
+    ):
+        # First call returns malformed JSON; repair call returns valid JSON.
+        good = json.dumps({
+            "primary": {"text": "수리된 답변", "confidence": 0.9, "reason": "Repaired"},
+            "alternatives": [],
+        })
+        mock_call_ollama.side_effect = [
+            ("여기 답변 있어요: ```json\n{malformed trailing", 150, None),
+            (good, 40, None),
+        ]
+
+        suggestion = await generate_suggestions(db_session, "test-tenant", sample_suggestion_request)
+        assert suggestion is not None
+        assert suggestion.suggestions["primary"]["text"] == "수리된 답변"
+        # Two model calls: generation + repair
+        assert mock_call_ollama.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("app.services.ai_reply_v2_service.call_ollama")
+    async def test_generate_suggestions_parse_failure_returns_none(
+        self, mock_call_ollama, db_session, sample_suggestion_request,
+    ):
+        # Both generation and repair produce unparseable output.
+        mock_call_ollama.return_value = ("still not json", 50, None)
+
+        suggestion = await generate_suggestions(db_session, "test-tenant", sample_suggestion_request)
+        assert suggestion is None
+        assert mock_call_ollama.call_count == 2

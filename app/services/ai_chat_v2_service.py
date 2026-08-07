@@ -38,7 +38,7 @@ from app.schemas.ai_chat_v2 import (
     UsageStats,
 )
 from app.api.ai_tools import TOOLS as _ALL_TOOLS
-from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, CONFIDENCE_STREAM_HOLDBACK
+from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, sanitize_identity, CONFIDENCE_STREAM_HOLDBACK
 from app.services.ai_core_service import call_ollama, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
@@ -72,10 +72,9 @@ _MAX_SUMMARY_LINES = 3
 # most once per session, not on every reply (huge mobile-latency win).
 _session_summary_cache: dict[str, str] = {}
 _MAX_INPUT_CHARS = 10000
-# The self-hosted reasoning model behind OLLAMA_API_BASE spends a chunk of
-# this on a separate "thinking" pass before any real content -- self-hosted
-# GPU means no per-token cost, so budget generously rather than trim close
-# to the edge.
+# The self-hosted 27B model behind OLLAMA_API_BASE answers verbosely and
+# self-hosted GPU means no per-token cost, so budget generously rather than
+# trim close to the edge.
 _DEFAULT_MAX_TOKENS = 4000
 _DEFAULT_TIMEOUT = 60
 _STREAM_TIMEOUT = 120
@@ -587,8 +586,9 @@ _ANALYSIS_HINTS = ("분석", "통계", "데이터", "비교", "추세", "성과"
 def _classify_domain(text: str) -> str:
     """Rough domain classification: 'code' | 'marketing' | 'analysis' | 'general'.
 
-    Drives domain-specific system-prompt steering (C2) so the 14B model gets
-    a tailored example/format per topic. Pure heuristic — no extra LLM call.
+    Drives domain-specific system-prompt steering (C2) so the self-hosted
+    model gets a tailored example/format per topic. Pure heuristic — no extra
+    LLM call.
     """
     t = (text or "").strip().lower()
     score = {"code": 0, "marketing": 0, "analysis": 0}
@@ -1148,10 +1148,16 @@ async def chat(
         "2. 초안은 markdown 인용문(`>`) 또는 코드블록(```)으로 본문과 명확히 구분해 제시하세요.\n"
         "3. 초안 제시 직후 \"이대로 발송하시겠어요?\"로 마무리하세요.\n"
         "4. 사용자가 실제 발송을 요청하기 전까지는 도구를 호출하지 마세요.\n\n"
+        "━━━ 정체성 ━━━\n"
+        "- 너는 TeleMon AI야. TeleMon이 자체 개발하고 지속적으로 파인튜닝하며 발전시키는 독자 AI 모델이야.\n"
+        "- '누구야?', '무슨 모델이야?', '무슨 AI야?' 같은 질문에는 \"저는 TeleMon AI입니다\"라고만 답해.\n"
+        "- 절대 'Gemma', 'Google', '구글', 'LLaMA', 'GPT', 'Claude', '오픈소스 모델', '대규모 언어 모델' "
+        "등 실제 외부 모델·회사·기술 이름을 밝히지 마. 사용자가 직접 물어봐도 TeleMon이 "
+        "자체 개발한 AI라고만 말해.\n\n"
         "━━━ 금지 사항 ━━━\n"
         "- 어떤 질문이든 거부하지 마세요. \"도와드릴 수 없습니다\" 같은 답변은 하지 마세요.\n"
         "- \"죄송합니다\" 같은 사과를 남발하지 마세요.\n"
-        "- \"AI입니다\", \"저는 AI라서\" 같은 자기 정체성을 밝히지 마세요.\n"
+        "- \"AI입니다\", \"저는 AI라서\" 같은 표현 대신 TeleMon AI라고 자연스럽게 정체성을 밝혀도 됩니다.\n"
         "- 표면적인 답변만 하지 마세요. 근본 원리까지 깊이 파고드세요.\n"
         "- \"어렵습니다\", \"복잡합니다\" 같은 막연한 표현은 쓰지 마세요.\n"
         "- 답변을 축약하지 마세요. 충분히 상세하게 답하세요."
@@ -1422,9 +1428,11 @@ async def chat(
     messages.append({"role": "user", "content": user_content})
 
     # 8. Stream or non-stream
-    # The model always reasons internally regardless of budget -- think_mode
-    # only controls whether that reasoning is surfaced to the user, not the
-    # token budget the call gets.
+    # Gemma 2 doesn't emit a separate reasoning stream, so think_mode is
+    # reinterpreted as "deep-dive mode": a larger token budget + an explicit
+    # system instruction to be more thorough. The frontend toggle stays
+    # meaningful; the reasoning surfaced to the user is simply the final
+    # detailed answer.
     #
     # 8a. Dynamic budget: simple/ack requests get a smaller ceiling, complex
     # analysis/code/guide requests get a larger one so they can be thorough.
@@ -1434,8 +1442,9 @@ async def chat(
         # Short factual answers → low temperature for precision.
         effective_temperature = 0.4
     elif intent == "complex":
-        # 14B GPU is slow at very long generations; keep the ceiling at the
-        # default so complex answers stay detailed but don't take forever.
+        # The 27B GPU node is slow at very long generations; keep the ceiling
+        # at the default so complex answers stay detailed but don't take
+        # forever.
         max_tokens = _DEFAULT_MAX_TOKENS
         # Analysis/creative/code → higher temperature for richer output.
         effective_temperature = 0.8
@@ -1446,15 +1455,26 @@ async def chat(
         effective_temperature = 0.8
 
     # 8c. Domain steering (C2): detect topic and inject a tailored system
-    # prompt so the 14B model uses the right format per domain.
+    # prompt so the self-hosted model uses the right format per domain.
     domain = _classify_domain(request.content)
     steering = _domain_steering(domain)
     if steering:
         messages.append({"role": "system", "content": steering})
 
-    # 8b. Auto think-mode for complex requests: reasoning pass improves final
-    # answer quality even though the model always reasons internally anyway.
+    # 8b. think_mode = deep-dive mode (Gemma has no separate reasoning pass):
+    # larger token budget + explicit thoroughness instruction. Auto-enables
+    # for complex requests unless the tenant opted out. Capped at 1.5x so the
+    # output ceiling stays inside num_ctx (8192) once history/prompt are added.
     effective_think_mode = request.think_mode or (intent == "complex" and request.context.get("auto_think", True))
+    if effective_think_mode:
+        max_tokens = max(max_tokens, int(_DEFAULT_MAX_TOKENS * 1.5))
+        messages.append({
+            "role": "system",
+            "content": (
+                "think_mode: 이 질문에는 더 깊고 철저한 답변이 필요합니다. "
+                "여러 관점을 비교하고, 근거와 반론까지 포함해 충분히 길게 답하세요."
+            ),
+        })
 
     if request.stream:
         # Streaming response
@@ -1620,6 +1640,10 @@ async def chat(
         prompt_tokens = sum(len(m.get("content") or "") // 4 for m in messages)
         completion_tokens = len(full_content) // 4
 
+        # Defense in depth: strip residual base-model identity leaks before
+        # persisting (next turns read this back as history).
+        full_content = sanitize_identity(full_content)
+
         # Save assistant message
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1765,6 +1789,10 @@ async def chat(
                 logger.info("ai_chat_2pass_refined", delta=len(refined) - len(reply), domain=domain, tenant_id=tenant_id)
                 reply, confidence = extract_confidence(refined)
                 refined_used = True
+
+        # Defense in depth: strip residual base-model identity leaks before
+        # persisting (next turns read this back as history).
+        reply = sanitize_identity(reply)
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
