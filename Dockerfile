@@ -18,7 +18,7 @@ FROM python:3.12-slim
 # uploaded videos for AI vision analysis (qwen2.5vl).
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-nanum ffmpeg && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --uid 1000 appuser
+RUN useradd --create-home --uid 1000 appuser && mkdir -p /app/media/broadcasts /app/logs /app/data/uploads
 WORKDIR /app
 
 COPY --from=builder /root/.local /home/appuser/.local
@@ -31,7 +31,7 @@ COPY alembic ./alembic
 COPY alembic.ini .
 COPY migration_helpers.py .
 
-RUN mkdir -p /app/media/broadcasts /app/logs /app/data/uploads && chown -R appuser:appuser /app /home/appuser/.local
+RUN chown -R appuser:appuser /app /home/appuser/.local
 USER appuser
 
 EXPOSE 8000
