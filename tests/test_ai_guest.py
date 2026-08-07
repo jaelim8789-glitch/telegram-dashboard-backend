@@ -301,10 +301,11 @@ async def test_guest_chat_stream_upstream_failure_yields_error_event(unauthentic
 
 @pytest.mark.asyncio
 async def test_guest_stats_aggregates_conversations(unauthenticated_client, db_session, monkeypatch):
-    """The admin stats endpoint sums conversations/feedback over the window."""
+    """The admin stats endpoint sums conversations/feedback over the window.
+    Sends a real admin JWT (require_admin only accepts a valid admin token)."""
     monkeypatch.setattr("app.api.ai_guest.settings.ollama_api_base", "http://ollama-test")
     from app.models.guest_ai_chat import GuestAiChatLog
-    from sqlalchemy import select
+    from app.core.security import create_access_token
 
     from datetime import datetime
     # Seed two conversations (different IPs), one with positive feedback.
@@ -313,7 +314,11 @@ async def test_guest_stats_aggregates_conversations(unauthenticated_client, db_s
     db_session.add(GuestAiChatLog(ip="203.0.113.81", message="c", reply="d", signed_up_after=True, created_at=datetime.utcnow()))
     await db_session.commit()
 
-    res = await unauthenticated_client.get("/api/admin/ai-chat/guest-stats?days=7")
+    token = create_access_token()
+    res = await unauthenticated_client.get(
+        "/api/admin/ai-chat/guest-stats?days=7",
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert res.status_code == 200
     body = res.json()
     assert body["total"] >= 2
