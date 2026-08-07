@@ -15,6 +15,7 @@ on:
 env:
   DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
   ENCRYPTION_KEY: "ci-test-encryption-key-not-for-prod-but-32bytes!!"
+  ADMIN_JWT_SECRET: "ci-test-jwt-secret-not-for-production-use-32bytes"
 
 jobs:
   backend-ci:
@@ -55,12 +56,14 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           ENCRYPTION_KEY: ${{ env.ENCRYPTION_KEY }}
+          ADMIN_JWT_SECRET: ${{ env.ADMIN_JWT_SECRET }}
 
       - run: python -c "import sys; sys.path.insert(0, '.'); from app.main import app; print('import OK')"
         name: Import check
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           ENCRYPTION_KEY: ${{ env.ENCRYPTION_KEY }}
+          ADMIN_JWT_SECRET: ${{ env.ADMIN_JWT_SECRET }}
 
       - run: python -m pytest tests/ -q --tb=short --timeout=30 2>&1 | tail -60
         name: Run tests
@@ -68,6 +71,7 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           ENCRYPTION_KEY: ${{ env.ENCRYPTION_KEY }}
+          ADMIN_JWT_SECRET: ${{ env.ADMIN_JWT_SECRET }}
 
   security-scan:
     runs-on: ubuntu-latest
