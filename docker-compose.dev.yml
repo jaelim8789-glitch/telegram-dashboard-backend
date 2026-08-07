@@ -1,0 +1,55 @@
+# TeleMon DEV stack — hot-reload, separated from production ports.
+#
+# WARNING: reuses the SAME postgres/redis as production (this machine is the
+# server). Only the app processes are dev (uvicorn --reload / next dev).
+# Do NOT run this while you need the production stack undisturbed on :8000/:3000.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d backend-dev frontend-dev
+#   Backend API:  http://localhost:8001   (auto-reload on ./app changes)
+#   Frontend:     http://localhost:3001   (next dev, auto-reload on src changes)
+name: telemon-dev
+
+services:
+  backend-dev:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - PORT=8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - devnet
+
+  frontend-dev:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "corepack enable && (pnpm install --frozen-lockfile 2>/dev/null || pnpm install) && pnpm dev"
+    volumes:
+      - ../TeleMon-kiro:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
+    networks:
+      - devnet
+
+networks:
+  devnet:
+    name: telegram-dashboard-backend_default
+    external: true
+
+volumes:
+  frontend_node_modules:
