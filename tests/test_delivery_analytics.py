@@ -1233,7 +1233,7 @@ async def test_attempt_level_summary_unchanged(mock_session_maker, mock_resolve,
 async def test_timeline_date_trunc_does_not_crash(client, db_session):
     """Verify get_timeline uses PostgreSQL-compatible date_trunc.
     A GET /api/delivery-analytics/timeline must not 500 with strftime."""
-    resp = await client.get("/api/delivery-analytics/timelinedays=1")
+    resp = await client.get("/api/delivery-analytics/timeline?days=1")
     # 200 or 403 is acceptable  the important thing is no 500
     assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
 
@@ -1242,7 +1242,7 @@ async def test_timeline_date_trunc_does_not_crash(client, db_session):
 async def test_overview_does_not_crash(client, db_session):
     """Verify get_overview does not 500 with strftime.
     A GET /api/delivery-analytics/overview must not crash."""
-    resp = await client.get("/api/delivery-analytics/overviewdays=1")
+    resp = await client.get("/api/delivery-analytics/overview?days=1")
     assert resp.status_code in (200, 403, 401), f"Expected 200/403, got {resp.status_code}: {resp.text}"
 
 

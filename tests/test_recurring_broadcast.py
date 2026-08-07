@@ -607,7 +607,7 @@ async def test_recover_cleans_orphan_child(db_session):
     # Orphan should be marked failed
     await db_session.refresh(orphan)
     assert orphan.status == "failed"
-    assert "" in orphan.error_message
+    assert "복구" in orphan.error_message
 
 
 @pytest.mark.asyncio
@@ -803,11 +803,11 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
     with pytest.raises(asyncio.TimeoutError):
         await process_broadcast(child.id, skip_rate_limit=True)
 
-    # After timeout, child should be marked 'sent' (partial  1/2 succeeded)
+    # After timeout, child should be marked 'sent' (partial — 1/2 succeeded)
     await db_session.refresh(child)
     assert child.status == "sent"
     assert "1/2" in child.error_message
-    assert " " in child.error_message
+    assert "시간 초과" in child.error_message
 
     # Now deliver_message is mocked to succeed for remaining recipient
     captured = {}
@@ -827,7 +827,7 @@ async def test_recurring_child_timeout_partial_then_retry_no_duplicate(db_sessio
 
     updated = await broadcast_crud.retry_broadcast(db_session, child.id)
     assert updated is not None
-    assert updated.status == "pending"
+    assert updated.status == "retrying"
 
     await process_broadcast(child.id, skip_rate_limit=True)
 
@@ -983,7 +983,7 @@ async def test_recover_stale_race_does_not_duplicate_recipients(db_session, monk
     # Child A should be marked as 'failed' by recovery (orphan cleanup)
     await db_session.refresh(child_a)
     assert child_a.status == "failed"
-    assert "" in child_a.error_message
+    assert "복구" in child_a.error_message
 
     # Parent should be 'pending' again
     await db_session.refresh(parent)
@@ -1044,11 +1044,11 @@ async def test_create_recurring_schedule_rejects_suspended_account(db_session):
 
     data = RecurringScheduleCreate(
         account_id=account.id,
-        message="",
+        message="test message",
         interval_minutes=60,
         group_ids=["-100123"],
     )
-    with pytest.raises(ValueError, match=" "):
+    with pytest.raises(ValueError, match="일시 중단"):
         await create_recurring_schedule(db_session, data, media_path=None)
 
 

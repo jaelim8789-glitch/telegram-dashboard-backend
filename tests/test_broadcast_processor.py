@@ -17,7 +17,7 @@ async def _make_account(db_session, phone="+821011119999"):
     return await account_crud.create_account(db_session, AccountCreate(phone=phone))
 
 
-async def _make_broadcast(db_session, account_id, message=" ", recipients=None):
+async def _make_broadcast(db_session, account_id, message="test message", recipients=None):
     payload = BroadcastCreate(account_id=account_id, message=message, recipients=recipients or ["-100999"])
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
 
@@ -55,7 +55,7 @@ async def test_process_broadcast_applies_delay_seconds_for_normal_mode(db_sessio
 
     account = await _make_account(db_session)
     payload = BroadcastCreate(
-        account_id=account.id, message="", recipients=["-100999"], delay_seconds=10
+        account_id=account.id, message="test message", recipients=["-100999"], delay_seconds=10
     )
     broadcast = await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=None)
     assert broadcast.delay_seconds == 10
@@ -132,7 +132,7 @@ async def test_deliver_message_banned_account_fast_fails(db_session, monkeypatch
     results = await deliver_message(request)
     assert len(results) == 1
     assert results[0].status.value == "banned"
-    assert "" in results[0].error_message
+    assert "차단" in results[0].error_message
 
     # No Telegram call should have been made
     get_client_mock.assert_not_called()
@@ -379,14 +379,14 @@ async def test_process_broadcast_failure_records_error(db_session, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
-        AsyncMock(return_value=[_failure_result(error="   .")]),
+        AsyncMock(return_value=[_failure_result(error="계정이 아직 인증되지 않았습니다.")]),
     )
 
     await process_broadcast(broadcast.id)
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert broadcast.error_message == "   ."
+    assert broadcast.error_message == "계정이 아직 인증되지 않았습니다."
 
 
 @pytest.mark.asyncio
@@ -407,7 +407,7 @@ async def test_process_broadcast_missing_account_marks_failed(db_session, monkey
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert "   " in broadcast.error_message
+    assert "계정을 찾을 수 없습니다" in broadcast.error_message
     deliver_mock.assert_not_called()
 
 
@@ -422,14 +422,14 @@ async def test_process_broadcast_rate_limited_marks_failed_without_sending(db_se
     await process_broadcast(first.id)
     deliver_mock.reset_mock()
 
-    second = await _make_broadcast(db_session, account.id, message="")
+    second = await _make_broadcast(db_session, account.id, message="test message")
     await process_broadcast(second.id)
 
     deliver_mock.assert_not_called()
 
     await db_session.refresh(second)
     assert second.status == "failed"
-    assert "1 1" in second.error_message
+    assert "1분에 1회" in second.error_message
 
 
 # 
@@ -456,7 +456,7 @@ async def test_process_broadcast_timeout_marks_failed_and_raises(db_session, mon
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert " " in broadcast.error_message
+    assert "시간이 초과" in broadcast.error_message
 
 
 @pytest.mark.asyncio
@@ -499,7 +499,7 @@ async def test_process_broadcast_timeout_with_partial_success_marks_sent(db_sess
     await db_session.refresh(broadcast)
     assert broadcast.status == "sent"
     assert "1/2" in broadcast.error_message
-    assert " " in broadcast.error_message
+    assert "시간 초과" in broadcast.error_message
 
 
 @pytest.mark.asyncio
@@ -550,7 +550,7 @@ async def test_retry_broadcast_resets_failed_to_pending(db_session):
 
     updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
     assert updated is not None
-    assert updated.status == "pending"
+    assert updated.status == "retrying"
     assert updated.error_message is None
     assert updated.sent_at is None
 
@@ -747,7 +747,7 @@ async def test_retried_broadcast_can_be_processed_again(db_session, monkeypatch)
 
     updated = await broadcast_crud.retry_broadcast(db_session, broadcast.id)
     assert updated is not None
-    assert updated.status == "pending"
+    assert updated.status == "retrying"
 
     monkeypatch.setattr(
         "app.services.broadcast_processor.deliver_message",
@@ -876,7 +876,7 @@ async def test_process_broadcast_reply_mode_populates_reply_to_map_from_explicit
     per-recipient instead of relying on the fallback reply_to_msg_id."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message=" ",
+        db_session, account.id, message="test message",
         recipients=["-100001", "-100002"],
     )
     broadcast.delivery_mode = "reply"
@@ -942,7 +942,7 @@ async def test_process_broadcast_reply_mode_maintains_reply_map_after_group_reso
     resolution the reply_to_map must be built for the resolved recipients."""
     account = await _make_account(db_session)
     broadcast = await _make_broadcast(
-        db_session, account.id, message="  ",
+        db_session, account.id, message="test message",
         recipients=[],
     )
     broadcast.delivery_mode = "reply"
@@ -988,7 +988,7 @@ async def test_delivery_pipeline_uses_per_recipient_reply_to_map(db_session, mon
 
     captured_reply_to = {}
 
-    async def _fake_send_single(client, target, message, media_path=None, reply_to_msg_id=None, inline_buttons=None):
+    async def _fake_send_single(client, target, message, media_path=None, uploaded_file=None, reply_to_msg_id=None, inline_buttons=None):
         captured_reply_to[str(target)] = reply_to_msg_id
         return (DeliveryStatus.SUCCESS, 200, None, None)
 
@@ -1027,7 +1027,7 @@ async def test_delivery_pipeline_falls_back_to_reply_to_msg_id_when_map_absent(d
 
     captured_reply_to = {}
 
-    async def _fake_send_single(client, target, message, media_path=None, reply_to_msg_id=None, inline_buttons=None):
+    async def _fake_send_single(client, target, message, media_path=None, uploaded_file=None, reply_to_msg_id=None, inline_buttons=None):
         captured_reply_to[str(target)] = reply_to_msg_id
         return (DeliveryStatus.SUCCESS, 200, None, None)
 
@@ -1069,7 +1069,7 @@ async def test_process_broadcast_suspended_account_marks_failed_without_sending(
 
     await db_session.refresh(broadcast)
     assert broadcast.status == "failed"
-    assert " " in broadcast.error_message
+    assert "일시 중단" in broadcast.error_message
 
 
 @pytest.mark.asyncio
@@ -1078,7 +1078,7 @@ async def test_process_recurring_parent_skips_suspended(db_session, monkeypatch)
     account.status = "suspended"
     await db_session.commit()
 
-    parent = await _make_broadcast(db_session, account.id, message="")
+    parent = await _make_broadcast(db_session, account.id, message="test message")
     parent.recurring_interval_minutes = 60
     parent.next_scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db_session.commit()

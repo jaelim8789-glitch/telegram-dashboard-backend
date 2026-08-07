@@ -430,6 +430,7 @@ async def test_deliver_message_one_failure_does_not_corrupt_other(mock_get_accou
     mock_get_account.return_value = mock_account
 
     mock_client = AsyncMock()
+    mock_client.get_input_entity = AsyncMock(side_effect=lambda t: t)
 
     async def send_side_effect(target, message, *args, **kwargs):
         if target == -100123:
@@ -586,18 +587,22 @@ async def test_free_plan_appends_watermark(mock_get_account, mock_get_client, mo
     request = DeliveryRequest(
         account_id="acc-free",
         recipients=["-100123"],
-        message=" ",
+        message="테스트 메시지",
         source="test",
     )
 
-    results = await deliver_message(request)
+    with (
+        patch("app.services.delivery._get_watermark_ad", AsyncMock(return_value="\n\n---\nPowered by TeleMon · telemon.online/?ref={ref_code}")),
+        patch("app.services.delivery._get_tenant_ref_code", AsyncMock(return_value=None)),
+    ):
+        results = await deliver_message(request)
 
     assert len(results) == 1
     assert results[0].status == DeliveryStatus.SUCCESS
     sent_message = mock_client.send_message.call_args[0][1]
-    assert sent_message.startswith(" ")
-    assert " TeleMon AI" in sent_message
-    assert "https://telemon.online" in sent_message
+    assert sent_message.startswith("테스트 메시지")
+    assert "Powered by TeleMon" in sent_message
+    assert "telemon.online" in sent_message
 
 
 @pytest.mark.asyncio

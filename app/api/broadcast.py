@@ -129,7 +129,7 @@ async def create_broadcast(
     try:
         recipients_list = json.loads(recipients) if recipients else []
     except json.JSONDecodeError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="수신자 목록 형식이 올바르지 않습니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="수신자 목록 형식이 올바르지 않습니다.")
 
     # Parse group_ids
     parsed_group_ids: list[str] | None = None
