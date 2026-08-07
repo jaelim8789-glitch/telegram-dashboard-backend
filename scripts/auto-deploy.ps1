@@ -8,27 +8,41 @@
 
 param([switch]$CheckOnce)
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $backRepo  = "C:\Dev\telegram-dashboard-backend"
 $frontRepo = "C:\Dev\TeleMon-kiro"
 $stateFile = Join-Path $env:TEMP "telemon-last-deploy.json"
 
+function Load-State {
+    $s = @{ backend = ""; frontend = "" }
+    if (Test-Path $stateFile) {
+        try {
+            $o = Get-Content $stateFile -Raw | ConvertFrom-Json
+            if ($o.backend)  { $s.backend  = [string]$o.backend }
+            if ($o.frontend) { $s.frontend = [string]$o.frontend }
+        } catch { }
+    }
+    return $s
+}
+
+function Save-State([hashtable]$s) {
+    $s | ConvertTo-Json | Set-Content $stateFile
+}
+
 function Get-Sha([string]$repo) {
-    git -C $repo fetch origin master -q 2>&1 | Out-Null
+    git -C $repo fetch origin master -q 2>$null | Out-Null
     return (git -C $repo rev-parse --short=7 origin/master)
 }
 
-function Deploy-IfChanged([string]$service, [string]$repo) {
+function Deploy-IfChanged([string]$service, [string]$repo, [hashtable]$state) {
     $sha = Get-Sha $repo
-    $state = @{}
-    if (Test-Path $stateFile) { try { $state = Get-Content $stateFile -Raw | ConvertFrom-Json } catch { $state = @{} } }
     $last = $state.$service
     if ($last -ne $sha) {
         Write-Host "[auto] $service changed: $last -> $sha ; deploying"
         & "$backRepo\scripts\deploy.ps1" -Service $service -Push -SkipVerify
         if ($?) {
             $state.$service = $sha
-            $state | ConvertTo-Json | Set-Content $stateFile
+            Save-State $state
             Write-Host "[auto] $service deployed at $sha"
         } else {
             Write-Host "[auto] $service deploy FAILED — state kept, will retry"
@@ -38,13 +52,16 @@ function Deploy-IfChanged([string]$service, [string]$repo) {
     }
 }
 
+$state = Load-State
+
 if ($CheckOnce) {
-    Deploy-IfChanged "backend"  $backRepo
-    Deploy-IfChanged "frontend" $frontRepo
+    Deploy-IfChanged "backend"  $backRepo  $state
+    Deploy-IfChanged "frontend" $frontRepo $state
 } else {
     while ($true) {
-        Deploy-IfChanged "backend"  $backRepo
-        Deploy-IfChanged "frontend" $frontRepo
+        $state = Load-State
+        Deploy-IfChanged "backend"  $backRepo  $state
+        Deploy-IfChanged "frontend" $frontRepo $state
         Start-Sleep -Seconds 180
     }
 }
