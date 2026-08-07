@@ -12,10 +12,10 @@ async def _make_account(db_session, phone="+821033334444"):
 
 def _rule_payload(**overrides):
     payload = {
-        "name": " ",
+        "name": "가격 문의",
         "match_type": "keyword",
-        "match_value": "",
-        "reply_content": " 10,000",
+        "match_value": "가격",
+        "reply_content": "가격은 10,000원입니다",
         "cooldown_hours": 1,
         "max_replies_per_day": 100,
     }
@@ -32,7 +32,7 @@ async def test_create_rule_returns_201(client, db_session):
     assert response.status_code == 201
     body = response.json()
     assert body["account_id"] == account.id
-    assert body["match_value"] == ""
+    assert body["match_value"] == "가격"
     assert body["is_active"] is True
 
 
@@ -130,12 +130,12 @@ async def test_update_rule(client, db_session):
     created = (await client.post(f"/api/accounts/{account.id}/auto-reply", json=_rule_payload())).json()
 
     response = await client.put(
-        f"/api/accounts/{account.id}/auto-reply/{created['id']}", json={"reply_content": "  9 6"}
+        f"/api/accounts/{account.id}/auto-reply/{created['id']}", json={"reply_content": "영업 시간은 9시부터 6시까지입니다"}
     )
 
     assert response.status_code == 200
-    assert response.json()["reply_content"] == "  9 6"
-    assert response.json()["match_value"] == ""  # untouched fields survive a partial update
+    assert response.json()["reply_content"] == "영업 시간은 9시부터 6시까지입니다"
+    assert response.json()["match_value"] == "가격"  # untouched fields survive a partial update
 
 
 @pytest.mark.asyncio
@@ -176,13 +176,13 @@ async def test_toggle_on_unauthenticated_account_returns_400(client, db_session,
 
     account = await _make_account(db_session)
     monkeypatch.setattr(
-        "app.api.auto_reply.enable_auto_reply", AsyncMock(side_effect=AccountNotAuthenticatedError(" "))
+        "app.api.auto_reply.enable_auto_reply", AsyncMock(side_effect=AccountNotAuthenticatedError("인증 필요"))
     )
 
     response = await client.post(f"/api/accounts/{account.id}/auto-reply/toggle", json={"enabled": True})
 
     assert response.status_code == 400
-    assert response.json()["detail"] == " "
+    assert response.json()["detail"] == "계정 인증에 실패했습니다."
 
 
 @pytest.mark.asyncio

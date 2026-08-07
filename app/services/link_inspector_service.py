@@ -74,7 +74,7 @@ def parse_telegram_link(raw: str) -> tuple[str, str]:
         # Not a URL — maybe a bare username was pasted.
         return ("username", s2) if USERNAME_RE.match(s2) else ("invalid", raw)
 
-    s2 = s2.split("")[0].strip("/")
+    s2 = s2.split("?")[0].strip("/")
     if not s2:
         return "invalid", raw
 

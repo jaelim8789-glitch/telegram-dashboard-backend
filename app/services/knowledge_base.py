@@ -99,7 +99,8 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
     """
     query_embedding = (await embed_texts([query]))[0]
 
-    # Define static SQL queries with named parameters for tenant condition
+    tenant_cond = "AND (d.tenant_id IS NULL OR d.tenant_id = :tenant_id)"
+
     vector_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
                1 - (c.embedding <=> :query_emb::vector) AS score
@@ -107,10 +108,10 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true
           AND (:collection IS NULL OR d.collection = :collection)
-          AND (:tenant_id IS NULL OR d.tenant_id IS NULL OR d.tenant_id = :tenant_id)
+          {tenant_cond}
         ORDER BY score DESC
         LIMIT :limit
-    """)
+    """.format(tenant_cond=tenant_cond))
     rows_v = await _fetch_rows(db, vector_sql, query_emb=query_embedding, collection=collection,
                                tenant_id=tenant_id, limit=50)
 
@@ -122,10 +123,10 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
         WHERE d.is_published = true
           AND to_tsvector('simple', c.content) @@ plainto_tsquery('simple', :query)
           AND (:collection IS NULL OR d.collection = :collection)
-          AND (:tenant_id IS NULL OR d.tenant_id IS NULL OR d.tenant_id = :tenant_id)
+          {tenant_cond}
         ORDER BY score DESC
         LIMIT :limit
-    """)
+    """.format(tenant_cond=tenant_cond))
     rows_f = await _fetch_rows(db, fts_sql, query=query, collection=collection,
                                tenant_id=tenant_id, limit=50)
 

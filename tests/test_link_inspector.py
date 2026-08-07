@@ -186,7 +186,7 @@ async def test_inspect_dedupes_before_calling_telethon(monkeypatch):
         AsyncMock(return_value=fake_client),
     )
 
-    links = ["https://t.me/testchan", "@testchan", "t.me/testchanx=1", "TESTCHAN"]
+    links = ["https://t.me/testchan", "@testchan", "t.me/testchan?x=1", "TESTCHAN"]
     items, dupes = await inspect_links(account=object(), links=links)
     assert dupes == 3
     assert len(items) == 1
