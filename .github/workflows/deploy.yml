@@ -65,12 +65,14 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
+          ADMIN_JWT_SECRET: ci-test-jwt-secret-not-for-production-use-32bytes
 
       - run: python -c "import sys; sys.path.insert(0, '.'); from app.main import app; print('import OK')"
         name: Import check
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
+          ADMIN_JWT_SECRET: ci-test-jwt-secret-not-for-production-use-32bytes
 
       - run: python -m py_compile scripts/ai_quality_regression.py && echo "regression script compiles OK"
         name: AI quality regression (compile check)
@@ -81,6 +83,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://telegram_dashboard:telegram_dashboard@localhost:5432/telegram_dashboard
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'ci-test-encryption-key-not-for-prod-32b' }}
+          ADMIN_JWT_SECRET: ci-test-jwt-secret-not-for-production-use-32bytes
 
   # ═══════════════════════════════════════════
   # 2. Backend Docker build & push (GHCR)
