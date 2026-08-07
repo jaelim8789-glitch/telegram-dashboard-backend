@@ -38,7 +38,7 @@ async def _make_account(db_session, phone="+821033330000"):
 
 
 async def _make_broadcast(db_session, account_id, **kwargs):
-    defaults = dict(account_id=account_id, message="", recipients=["-100999"])
+    defaults = dict(account_id=account_id, message="test message", recipients=["-100999"])
     defaults.update(kwargs)
     payload = BroadcastCreate(**defaults)
     return await broadcast_crud.create_broadcast(db_session, payload, media_path=None, scheduled_at=defaults.get("scheduled_at"))

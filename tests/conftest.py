@@ -13,6 +13,34 @@ os.environ["SMS_PROVIDER"] = "console"
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 
+# ── SQLite compatibility for PostgreSQL-only column types ──────────────
+# Several models use PostgreSQL-only types (ARRAY, pgvector Vector, native
+# UUID). SQLite can't render these, so when running the test suite against
+# SQLite we register compiler overrides that map them to JSON/Text/String.
+# This keeps the test suite green without changing production model types.
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.types import ARRAY as SA_ARRAY, JSON as SA_JSON, String as SA_String, Text as SA_Text
+
+if os.environ.get("DATABASE_URL", "").startswith("sqlite"):
+    @compiles(SA_ARRAY, "sqlite")
+    def _compile_array_sqlite(type_, compiler, **kw):
+        return "JSON"
+
+    @compiles(postgresql.UUID, "sqlite")
+    def _compile_uuid_sqlite(type_, compiler, **kw):
+        return "VARCHAR(36)"
+
+    # pgvector Vector → JSON in SQLite (embedding stored as JSON array)
+    try:
+        from pgvector.sqlalchemy import Vector
+
+        @compiles(Vector, "sqlite")
+        def _compile_vector_sqlite(type_, compiler, **kw):
+            return "JSON"
+    except ImportError:
+        pass
+
 # Set required env vars with test-friendly defaults
 if "ENCRYPTION_KEY" not in os.environ:
     os.environ["ENCRYPTION_KEY"] = "I62a0BiduGAdZjg9UH_vg3VuIEQMpe2AyDm2DfM2HlA="

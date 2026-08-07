@@ -274,13 +274,13 @@ class TestConversationContext:
 
 class TestSuggestionGeneration:
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
+    @patch("app.services.ai_reply_v2_service.call_ollama")
     @patch("app.services.ai_reply_v2_service.search_memory")
     async def test_generate_suggestions_success(
-        self, mock_search_memory, mock_call_deepseek, db_session, sample_suggestion_request,
+        self, mock_search_memory, mock_call_ollama, db_session, sample_suggestion_request,
     ):
-        # Mock DeepSeek response
-        mock_call_deepseek.return_value = (
+        # Mock Ollama response
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": ",  !    ", "confidence": 0.92, "reason": "Professional greeting"},
                 "alternatives": [
@@ -310,21 +310,21 @@ class TestSuggestionGeneration:
         assert suggestion.response_time_ms > 0
 
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
+    @patch("app.services.ai_reply_v2_service.call_ollama")
     async def test_generate_suggestions_deepseek_failure(
-        self, mock_call_deepseek, db_session, sample_suggestion_request,
+        self, mock_call_ollama, db_session, sample_suggestion_request,
     ):
-        mock_call_deepseek.return_value = (None, 0, None)
+        mock_call_ollama.return_value = (None, 0, None)
 
         suggestion = await generate_suggestions(db_session, "test-tenant", sample_suggestion_request)
         assert suggestion is None
 
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
+    @patch("app.services.ai_reply_v2_service.call_ollama")
     async def test_auto_reply_high_confidence(
-        self, mock_call_deepseek, db_session,
+        self, mock_call_ollama, db_session,
     ):
-        mock_call_deepseek.return_value = (
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": "Auto reply text", "confidence": 0.95, "reason": "High confidence"},
                 "alternatives": [],
@@ -349,11 +349,11 @@ class TestSuggestionGeneration:
         assert suggestion.selected_suggestion == "primary"
 
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
+    @patch("app.services.ai_reply_v2_service.call_ollama")
     async def test_auto_reply_low_confidence(
-        self, mock_call_deepseek, db_session,
+        self, mock_call_ollama, db_session,
     ):
-        mock_call_deepseek.return_value = (
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": "Low confidence reply", "confidence": 0.5, "reason": "Uncertain"},
                 "alternatives": [],
@@ -382,9 +382,9 @@ class TestSuggestionGeneration:
 
 class TestReviewWorkflow:
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
-    async def test_review_approve(self, mock_call_deepseek, db_session):
-        mock_call_deepseek.return_value = (
+    @patch("app.services.ai_reply_v2_service.call_ollama")
+    async def test_review_approve(self, mock_call_ollama, db_session):
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": "Test reply", "confidence": 0.8, "reason": "Test"},
                 "alternatives": [],
@@ -415,9 +415,9 @@ class TestReviewWorkflow:
         assert reviewed.reviewed_at is not None
 
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
-    async def test_review_dismiss(self, mock_call_deepseek, db_session):
-        mock_call_deepseek.return_value = (
+    @patch("app.services.ai_reply_v2_service.call_ollama")
+    async def test_review_dismiss(self, mock_call_ollama, db_session):
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": "Test reply", "confidence": 0.8, "reason": "Test"},
                 "alternatives": [],
@@ -453,9 +453,9 @@ class TestReviewWorkflow:
 
 class TestFeedback:
     @pytest.mark.asyncio
-    @patch("app.services.ai_reply_v2_service.call_deepseek")
-    async def test_submit_feedback(self, mock_call_deepseek, db_session):
-        mock_call_deepseek.return_value = (
+    @patch("app.services.ai_reply_v2_service.call_ollama")
+    async def test_submit_feedback(self, mock_call_ollama, db_session):
+        mock_call_ollama.return_value = (
             json.dumps({
                 "primary": {"text": "Test reply", "confidence": 0.8, "reason": "Test"},
                 "alternatives": [],

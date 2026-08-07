@@ -190,7 +190,7 @@ async def test_logs_without_account_id_scopes_to_caller_tenant(client):
     from app.main import app
 
     account_id = await _create_account(client)
-    await client.post("/api/broadcast", data=_broadcast_form(account_id))
+    await client.post("/api/broadcast", data=_broadcast_form(account_id, message="test message"))
 
     # Same tenant that owns the account should see its own log.
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="tenant-a")

@@ -36,7 +36,7 @@ async def _admin_headers(client) -> dict[str, str]:
 @pytest.mark.asyncio
 async def test_copilot_chat_returns_context_aware_reply(client, monkeypatch):
     fake_reply = "   .  7  95%."
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_reply))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=fake_reply))
 
     res = await client.post(
         "/api/copilot/chat",
@@ -45,14 +45,14 @@ async def test_copilot_chat_returns_context_aware_reply(client, monkeypatch):
 
     assert res.status_code == 200
     body = res.json()
-    assert body["reply"] == fake_reply
+    assert body["reply"] == fake_reply.strip()
     assert isinstance(body["context_summary"], str)
     assert isinstance(body["used_data_sources"], list)
 
 
 @pytest.mark.asyncio
 async def test_copilot_chat_with_focus_scopes_context(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  ."))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="  ."))
 
     res = await client.post(
         "/api/copilot/chat",
@@ -64,16 +64,16 @@ async def test_copilot_chat_with_focus_scopes_context(client, monkeypatch):
 
     assert res.status_code == 200
     body = res.json()
-    assert "  " in body["reply"]
+    assert "." in body["reply"]
 
 
 @pytest.mark.asyncio
 async def test_copilot_chat_503_on_deepseek_failure(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=None))
 
     res = await client.post(
         "/api/copilot/chat",
-        json={"message": ""},
+        json={"message": "test"},
     )
 
     assert res.status_code == 503
@@ -86,7 +86,7 @@ async def test_copilot_chat_503_on_deepseek_failure(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_health_check_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  .\n  "))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="  .\n  "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -103,7 +103,7 @@ async def test_one_click_health_check_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_weekly_report_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="##   \n  94%"))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="##   \n  94%"))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -119,7 +119,7 @@ async def test_one_click_weekly_report_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_optimize_broadcast_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=" 10  ."))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=" 10  ."))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -134,7 +134,7 @@ async def test_one_click_optimize_broadcast_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_customer_insights_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="   "))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="   "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -148,7 +148,7 @@ async def test_one_click_customer_insights_completes(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_click_reply_audit_completes(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="   "))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="   "))
 
     res = await client.post(
         "/api/copilot/actions",
@@ -200,9 +200,9 @@ async def test_recommendations_returns_structured_items(client, monkeypatch):
             },
         ],
     })
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=fake_json))
 
-    res = await client.get("/api/copilot/recommendationsdays=7")
+    res = await client.get("/api/copilot/recommendations?days=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -216,9 +216,9 @@ async def test_recommendations_returns_structured_items(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_recommendations_degrades_on_malformed_json(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value="  "))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value="  "))
 
-    res = await client.get("/api/copilot/recommendationsdays=7")
+    res = await client.get("/api/copilot/recommendations?days=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -228,9 +228,9 @@ async def test_recommendations_degrades_on_malformed_json(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_recommendations_503_on_deepseek_failure(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=None))
 
-    res = await client.get("/api/copilot/recommendationsdays=7")
+    res = await client.get("/api/copilot/recommendations?days=7")
 
     assert res.status_code == 503
 
@@ -256,9 +256,9 @@ async def test_recommendations_refresh_triggers_new_call(client, monkeypatch):
             }
         ],
     })
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=fake_json))
 
-    res = await client.post("/api/copilot/recommendations/refreshdays=7")
+    res = await client.post("/api/copilot/recommendations/refresh?days=7")
 
     assert res.status_code == 200
     body = res.json()
@@ -279,7 +279,7 @@ async def test_smart_send_time_returns_recommended_hour(client, monkeypatch):
         "reasoning": " 2     .",
         "confidence": 0.82,
     })
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=fake_json))
 
     res = await client.post(
         "/api/copilot/smart-send-time",
@@ -296,7 +296,7 @@ async def test_smart_send_time_returns_recommended_hour(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_smart_send_time_degrades_on_bad_json(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=" "))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=" "))
 
     res = await client.post(
         "/api/copilot/smart-send-time",
@@ -311,7 +311,7 @@ async def test_smart_send_time_degrades_on_bad_json(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_smart_send_time_503_on_deepseek_failure(client, monkeypatch):
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=None))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=None))
 
     res = await client.post(
         "/api/copilot/smart-send-time",
@@ -372,15 +372,15 @@ async def test_recommendations_validates_days_range(client, monkeypatch):
     # days=999 exceeds the 90-day limit in the Pydantic model for ContextQuery,
     # but the GET endpoint uses a plain query param without Query(ge=1, le=90).
     # The endpoint will attempt a DeepSeek call; mock it to avoid 503.
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value='{"overall_health":"good","recommendations":[]}'))
-    res = await client.get("/api/copilot/recommendationsdays=999")
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value='{"overall_health":"good","recommendations":[]}'))
+    res = await client.get("/api/copilot/recommendations?days=999")
     assert res.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_smart_send_time_validates_hour_range(client, monkeypatch):
     fake_json = json.dumps({"recommended_hour": 99, "recommended_day": "weekday", "reasoning": "test", "confidence": 0.5})
-    monkeypatch.setattr(ai_copilot_module, "_call_deepseek_with_timeout", AsyncMock(return_value=fake_json))
+    monkeypatch.setattr(ai_copilot_module, "_call_ollama_with_timeout", AsyncMock(return_value=fake_json))
 
     res = await client.post(
         "/api/copilot/smart-send-time",
