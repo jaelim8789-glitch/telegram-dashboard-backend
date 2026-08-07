@@ -51,6 +51,13 @@ async def create_invoice(
         raise HTTPException(
             status_code=400, detail="Invalid plan. Use valid plan ID"
         )
+
+    # 결제 인보이스 생성: tenant_id 필요 (미로그인 시 500 크래시 방지)
+    if not identity.tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="결제하려면 먼저 로그인이 필요합니다.",
+        )
     
     # 플랜 가격 조회
     plan_info = get_plan(plan_id)

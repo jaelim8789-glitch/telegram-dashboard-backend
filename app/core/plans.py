@@ -80,10 +80,10 @@ PLAN_CATALOG: dict[PlanId, PlanDef] = {
     },
     "max": {
         "name": "Max",
-        "description": "$99/month, 10 accounts, unlimited macros, AI credits 200K/mo",
+        "description": "$70/month, 10 accounts, unlimited macros, AI credits 200K/mo",
         "trial_days": 0,
         "prices_usdt": {
-            "monthly": 99,
+            "monthly": 70,
         },
         "limits": {
             "max_accounts": 10,

@@ -221,7 +221,16 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
 
     Returns (status, safe_error_message).
     Never exposes raw exception details, session data, or secrets to clients.
+
+    Logs the original exception at DEBUG level so production troubleshooting
+    can see the actual Telethon RPCError / class name (e.g. FloodWaitError,
+    UserIsBlockedError, etc.) while the safe Korean message is what users see.
     """
+    logger.debug(
+        "delivery_error_classified",
+        exc_type=type(exc).__name__,
+        exc_str=str(exc),
+    )
     if isinstance(exc, FloodWaitError):
         return DeliveryStatus.FLOOD_WAIT, f"텔레그램 쓰로틀링: {exc.seconds}초 대기 후 재시도"
 
