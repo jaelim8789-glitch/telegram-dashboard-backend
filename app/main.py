@@ -14,10 +14,13 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.account_health import router as account_health_router
 from app.api.account_health_summary import router as account_health_summary_router
@@ -367,6 +370,28 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 from app.monitoring import MetricsMiddleware, get_metrics_text
 
 app.add_middleware(MetricsMiddleware)
+
+#  Global exception handlers — never leak bare 500s / HTML stack traces.
+# SSE stream-internal errors stay handled by the stream generators' own
+# try/except; this only covers pre-response exceptions.
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request, exc):
+    logger.warning("validation_error", path=str(request.url.path))
+    return JSONResponse(status_code=422, content={"detail": "요청 형식이 올바르지 않습니다."})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc):
+    logger.error("unhandled_exception", path=str(request.url.path), error=str(exc))
+    return JSONResponse(status_code=500, content={"detail": "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."})
+
 
 #  Routers 
 
