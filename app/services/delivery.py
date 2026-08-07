@@ -862,7 +862,10 @@ async def deliver_message(
         message_to_send = request.message
         if request.tenant_plan in FREE_PLANS:
             watermark = await _get_watermark_ad()
-            ref_code = await _get_tenant_ref_code(db, account.tenant_id) if account.tenant_id else None
+            ref_code = None
+            if account.tenant_id:
+                async with async_session_maker() as ref_db:
+                    ref_code = await _get_tenant_ref_code(ref_db, account.tenant_id)
             personalized = await _personalize_watermark(watermark, ref_code)
             message_to_send = request.message + personalized
         result = await _deliver_with_retry(
@@ -905,10 +908,10 @@ async def deliver_message(
         # deliveries fast-fail without a network call.
         if result.status == DeliveryStatus.BANNED:
             try:
-                async with async_session_maker() as db:
-                    account_to_ban = await account_crud.get_account(db, request.account_id)
+                async with async_session_maker() as ban_db:
+                    account_to_ban = await account_crud.get_account(ban_db, request.account_id)
                     if account_to_ban is not None:
-                        await account_crud.mark_account_banned(db, account_to_ban)
+                        await account_crud.mark_account_banned(ban_db, account_to_ban)
             except Exception as persist_err:
                 logger.warning("banned_persistence_failed", account_id=request.account_id, error=str(persist_err))
 

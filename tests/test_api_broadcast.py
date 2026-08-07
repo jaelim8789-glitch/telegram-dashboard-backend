@@ -5,12 +5,12 @@ import pytest
 
 
 async def _create_account(client, phone="+821012340000"):
-    res = await client.post("/api/accounts", json={"phone": phone, "name": "  "})
+    res = await client.post("/api/accounts", json={"phone": phone, "name": "발송 테스트 계정"})
     assert res.status_code == 201
     return res.json()["id"]
 
 
-def _broadcast_form(account_id, message="", recipients=None, scheduled_at=None):
+def _broadcast_form(account_id, message="안녕하세요", recipients=None, scheduled_at=None):
     data = {
         "account_id": account_id,
         "message": message,
@@ -93,9 +93,9 @@ async def test_create_broadcast_rate_limited(client):
     first = await client.post("/api/broadcast", data=_broadcast_form(account_id))
     assert first.status_code == 202
 
-    second = await client.post("/api/broadcast", data=_broadcast_form(account_id, message=""))
+    second = await client.post("/api/broadcast", data=_broadcast_form(account_id, message="다시"))
     assert second.status_code == 429
-    assert "1 1" in second.json()["detail"]
+    assert "1분에 1회" in second.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -123,7 +123,7 @@ async def test_scheduled_broadcast_does_not_count_against_rate_limit(client):
     scheduled = await client.post("/api/broadcast", data=_broadcast_form(account_id, scheduled_at=future))
     assert scheduled.status_code == 202
 
-    immediate = await client.post("/api/broadcast", data=_broadcast_form(account_id, message=""))
+    immediate = await client.post("/api/broadcast", data=_broadcast_form(account_id, message="즉시"))
     assert immediate.status_code == 202
 
 
@@ -149,15 +149,15 @@ async def test_logs_filter_by_account_and_status(client):
     account_id = await _create_account(client)
     await client.post("/api/broadcast", data=_broadcast_form(account_id))
 
-    by_account = await client.get(f"/api/logsaccount_id={account_id}")
+    by_account = await client.get(f"/api/logs?account_id={account_id}")
     assert by_account.status_code == 200
     assert len(by_account.json()) == 1
 
-    by_status = await client.get("/api/logsstatus=pending")
+    by_status = await client.get("/api/logs?status=pending")
     assert by_status.status_code == 200
     assert all(item["status"] == "pending" for item in by_status.json())
 
-    by_missing_account = await client.get("/api/logsaccount_id=does-not-exist")
+    by_missing_account = await client.get("/api/logs?account_id=does-not-exist")
     assert by_missing_account.status_code == 404
 
 
@@ -173,9 +173,9 @@ async def test_logs_tenant_isolation(client):
     # Override identity to a different tenant
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="other-tenant")
     try:
-        resp = await client.get(f"/api/logsaccount_id={account_id}")
+        resp = await client.get(f"/api/logs?account_id={account_id}")
         assert resp.status_code == 403
-        assert "" in resp.json()["detail"] or "" in resp.json()["detail"]
+        assert "접근" in resp.json()["detail"] or "권한" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_current_identity, None)
 
@@ -190,7 +190,7 @@ async def test_logs_without_account_id_scopes_to_caller_tenant(client):
     from app.main import app
 
     account_id = await _create_account(client)
-    await client.post("/api/broadcast", data=_broadcast_form(account_id))
+    await client.post("/api/broadcast", data=_broadcast_form(account_id, message="test message"))
 
     # Same tenant that owns the account should see its own log.
     app.dependency_overrides[get_current_identity] = lambda: Identity(kind="user", tenant_id="tenant-a")
@@ -225,7 +225,7 @@ async def test_create_broadcast_suspended_account_returns_403(client, db_session
 
     res = await client.post("/api/broadcast", data=_broadcast_form(account_id))
     assert res.status_code == 403
-    assert " " in res.json()["detail"]
+    assert "일시 중단" in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -246,4 +246,4 @@ async def test_send_to_group_suspended_account_returns_403(client, db_session):
         json={"account_id": account_id, "message": "hi", "group_ids": ["-100123"]},
     )
     assert res.status_code == 403
-    assert " " in res.json()["detail"]
+    assert "일시 중단" in res.json()["detail"]

@@ -46,17 +46,17 @@ async def _make_tenant(db, telegram_user_id: int, *, plan="free", **overrides):
     return tenant
 
 
-def _patch_common(monkeypatch, db_session, *, deepseek_reply=" .", deepseek_key="test-key"):
+def _patch_common(monkeypatch, db_session, *, ollama_reply=" .", ollama_key="test-key"):
     monkeypatch.setattr(usage_tracker_module, "async_session_maker", lambda: db_session_cm(db_session))
-    monkeypatch.setattr(ai_chat_module.settings, "deepseek_api_key", deepseek_key)
+    monkeypatch.setattr(ai_chat_module.settings, "ollama_api_key", ollama_key)
 
     calls: list[list[dict]] = []
 
-    async def _fake_deepseek(messages):
+    async def _fake_ollama(messages):
         calls.append(messages)
-        return deepseek_reply
+        return ollama_reply
 
-    monkeypatch.setattr(ai_chat_module, "_call_deepseek", _fake_deepseek)
+    monkeypatch.setattr(ai_chat_module, "_call_ollama", _fake_ollama)
     return calls
 
 
@@ -73,7 +73,7 @@ async def _seed_usage(db, tenant_id: str, count: int) -> None:
 @pytest.mark.asyncio
 async def test_send_message_success_within_quota(db_session, monkeypatch):
     telegram_user_id = 111
-    tenant = await _make_tenant(db_session, telegram_user_id, plan="free")
+    tenant = await _make_tenant(db_session, telegram_user_id, plan="free", monthly_ai_chat_limit=20)
     calls = _patch_common(monkeypatch, db_session)
 
     result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
@@ -123,16 +123,16 @@ async def test_not_linked_tenant_returns_not_linked(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_deepseek_failure_returns_server_error_without_charging_quota(db_session, monkeypatch):
+async def test_ollama_failure_returns_server_error_without_charging_quota(db_session, monkeypatch):
     telegram_user_id = 444
-    tenant = await _make_tenant(db_session, telegram_user_id, plan="free")
+    tenant = await _make_tenant(db_session, telegram_user_id, plan="free", monthly_ai_chat_limit=20)
     monkeypatch.setattr(usage_tracker_module, "async_session_maker", lambda: db_session_cm(db_session))
-    monkeypatch.setattr(ai_chat_module.settings, "deepseek_api_key", "test-key")
+    monkeypatch.setattr(ai_chat_module.settings, "ollama_api_key", "test-key")
 
-    async def _failing_deepseek(messages):
+    async def _failing_ollama(messages):
         return None
 
-    monkeypatch.setattr(ai_chat_module, "_call_deepseek", _failing_deepseek)
+    monkeypatch.setattr(ai_chat_module, "_call_ollama", _failing_ollama)
 
     result = await ai_chat_module.send_message(db_session, telegram_user_id, "")
 
@@ -147,7 +147,7 @@ async def test_deepseek_failure_returns_server_error_without_charging_quota(db_s
 async def test_input_too_long_rejected_before_any_call(db_session, monkeypatch):
     calls = _patch_common(monkeypatch, db_session)
 
-    result = await ai_chat_module.send_message(db_session, 555, "" * 2001)
+    result = await ai_chat_module.send_message(db_session, 555, "안녕" * 2001)
 
     assert result.status == "too_long"
     assert calls == []

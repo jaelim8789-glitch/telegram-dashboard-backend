@@ -37,7 +37,7 @@ async def _make_rule(db_session, account_id, **overrides):
     payload = AutoReplyRuleCreate(
         name=overrides.pop("name", " "),
         match_type=overrides.pop("match_type", "keyword"),
-        match_value=overrides.pop("match_value", ""),
+        match_value=overrides.pop("match_value", "키워드"),
         reply_content=overrides.pop("reply_content", " 10,000"),
         cooldown_hours=overrides.pop("cooldown_hours", 1),
         max_replies_per_day=overrides.pop("max_replies_per_day", 100),
@@ -74,16 +74,16 @@ def test_matches_keyword_is_case_insensitive_substring():
 
 
 def test_matches_exact_requires_full_match_after_strip():
-    rule = SimpleNamespace(match_type="exact", match_value="")
-    assert _matches(rule, "    ")
-    assert not _matches(rule, " ")
+    rule = SimpleNamespace(match_type="exact", match_value="테스트")
+    assert _matches(rule, " 테스트 ")
+    assert not _matches(rule, "테스트 이어짐")
 
 
 @pytest.mark.asyncio
 async def test_handle_incoming_message_sends_reply_and_logs_success(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id)
-    event = _fake_event(" ")
+    event = _fake_event("키워드")
 
     fake_client = AsyncMock()
     monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=fake_client))
@@ -143,7 +143,7 @@ async def test_handle_incoming_message_cooldown_blocks_repeat_from_same_user(db_
     rule = await _make_rule(db_session, account.id, cooldown_hours=1)
     await _seed_log(db_session, rule.id, account.id, user_id="111", status="success")
 
-    event = _fake_event("  ", sender_id=111)
+    event = _fake_event("키워드", sender_id=111)
 
     monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
@@ -164,7 +164,7 @@ async def test_handle_incoming_message_daily_limit_blocks_new_user_once_reached(
     rule = await _make_rule(db_session, account.id, max_replies_per_day=1)
     await _seed_log(db_session, rule.id, account.id, user_id="999", status="success")
 
-    event = _fake_event(" ", sender_id=111)
+    event = _fake_event("키워드", sender_id=111)
 
     monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
@@ -183,14 +183,14 @@ async def test_handle_incoming_message_ai_fallback_off_by_default_no_deepseek_ca
     still does nothing at all  no suggestion, no DeepSeek call."""
     account = await _make_account(db_session)
     await _make_rule(db_session, account.id)
-    fake_deepseek = AsyncMock(return_value="  ")
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+    fake_ollama = AsyncMock(return_value="  ")
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake_ollama)
 
-    event = _fake_event("")
+    event = _fake_event("질문")
     await _handle_incoming_message(event, account.id)
 
     event.reply.assert_not_called()
-    fake_deepseek.assert_not_called()
+    fake_ollama.assert_not_called()
     from app.crud import auto_reply as _auto_reply_crud
 
     assert await _auto_reply_crud.list_suggestions(db_session, account.id) == []
@@ -202,18 +202,18 @@ async def test_handle_incoming_message_ai_fallback_records_suggestion_when_enabl
     account.ai_fallback_reply_enabled = True
     await db_session.commit()
     await _make_rule(db_session, account.id)
-    fake_deepseek = AsyncMock(return_value="  !  .")
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+    fake_ollama = AsyncMock(return_value="안녕하세요! 좋은 하루 되세요.")
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake_ollama)
     monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=AsyncMock()))
 
-    event = _fake_event("", sender_id=321, chat_id=654)
+    event = _fake_event("질문", sender_id=321, chat_id=654)
     await _handle_incoming_message(event, account.id)
 
     event.reply.assert_not_called()  # suggestion-only  never auto-sent
-    fake_deepseek.assert_awaited_once()
+    fake_ollama.assert_awaited_once()
     suggestions = await auto_reply_crud.list_suggestions(db_session, account.id)
     assert len(suggestions) == 1
-    assert suggestions[0].suggested_reply == "  !  ."
+    assert suggestions[0].suggested_reply == "안녕하세요! 좋은 하루 되세요."
     assert suggestions[0].reviewed is False
     assert suggestions[0].chat_id == "654"
     assert suggestions[0].user_id == "321"
@@ -225,8 +225,8 @@ async def test_handle_incoming_message_ai_fallback_deepseek_failure_records_noth
     account.ai_fallback_reply_enabled = True
     await db_session.commit()
     await _make_rule(db_session, account.id)
-    fake_deepseek = AsyncMock(return_value=None)
-    monkeypatch.setattr(ai_reply_service_module, "_call_deepseek", fake_deepseek)
+    fake_ollama = AsyncMock(return_value=None)
+    monkeypatch.setattr(ai_reply_service_module, "_call_ollama", fake_ollama)
 
     event = _fake_event("")
     await _handle_incoming_message(event, account.id)
@@ -239,7 +239,7 @@ async def test_handle_incoming_message_ai_fallback_deepseek_failure_records_noth
 async def test_handle_incoming_message_send_failure_logs_failed_status(db_session, monkeypatch):
     account = await _make_account(db_session)
     rule = await _make_rule(db_session, account.id)
-    event = _fake_event(" ")
+    event = _fake_event("키워드")
 
     fake_client = AsyncMock()
     monkeypatch.setattr("app.services.auto_reply_service.get_authorized_client", AsyncMock(return_value=fake_client))

@@ -126,7 +126,7 @@ async def call_ollama(
 # ─── Local LLM (Ollama) call — free-plan tenants ──────────────────────────
 
 
-async def call_ollama(
+async def call_ollama_local(
     messages: list[dict],
     model: str | None = None,
 ) -> tuple[str | None, int, list[dict] | None]:
@@ -175,7 +175,7 @@ async def call_llm_for_tenant(
     free user still gets a real answer instead of a dead end (at the cost of
     the Ollama call that routing was meant to avoid, but only on failure)."""
     if settings.ollama_enabled and tenant_plan == "free":
-        reply, tokens, _ = await call_ollama(messages, model=None)
+        reply, tokens, _ = await call_ollama_local(messages, model=None)
         if reply is not None:
             return reply, tokens, None
         logger.warning("ollama_failed_falling_back_to_ollama")

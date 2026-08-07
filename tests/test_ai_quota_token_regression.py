@@ -47,6 +47,7 @@ async def _make_tenant(db_session, tenant_id: str, plan: str) -> Tenant:
         phone=f"+8210{tenant_id[-8:]}",
         plan=plan,
         is_active=True,
+        ai_credits_remaining=100000,
     )
     db_session.add(tenant)
     await db_session.commit()
@@ -166,20 +167,24 @@ async def test_ai_endpoints_accept_pro_tenant_high_volume(client, db_session, mo
     app.dependency_overrides[get_current_identity] = lambda: Identity(
         kind="user", tenant_id="t-pro3"
     )
-    monkeypatch.setattr(ai_module, "call_deepseek", AsyncMock(return_value=("{}", 10, None)))
+
+    async def _fake_call_ollama(*args, **kwargs):
+        return ("{ }", 10, None)
+
+    monkeypatch.setattr(ai_module, "call_ollama", _fake_call_ollama)
 
     # chat
-    r = await client.post("/api/ai/chat", json={"message": ""})
+    r = await client.post("/api/ai/chat", json={"message": "테스트"})
     assert r.status_code == 200, r.text
 
     # reply-assistant
     r = await client.post("/api/ai/reply-assistant", json={
-        "account_id": "a1", "chat_id": "c1", "incoming_message": "",
+        "account_id": "a1", "chat_id": "c1", "incoming_message": "테스트",
     })
     assert r.status_code == 200, r.text
 
     # broadcast-assistant
-    r = await client.post("/api/ai/broadcast-assistant", json={"purpose": " "})
+    r = await client.post("/api/ai/broadcast-assistant", json={"purpose": "테스트"})
     assert r.status_code == 200, r.text
 
     # operations-report
@@ -193,7 +198,7 @@ async def test_ai_endpoints_accept_pro_tenant_high_volume(client, db_session, mo
 class TestStreamTokenCount:
     @pytest.mark.asyncio
     async def test_stream_yields_usage_chunk_with_real_tokens(self, monkeypatch):
-        """_call_deepseek_stream must emit (content, 0) for normal chunks and
+        """_call_ollama_stream must emit (content, 0) for normal chunks and
         a final ('', real_tokens) usage chunk when include_usage is requested."""
         import app.services.ai_core_service as core
 
@@ -202,11 +207,11 @@ class TestStreamTokenCount:
             yield ("", 0)
             yield ("", 123)  # usage chunk
 
-        monkeypatch.setattr(core, "_call_deepseek_stream", fake_stream)
+        monkeypatch.setattr(core, "_call_ollama_stream", fake_stream)
 
         content_parts = []
         total_tokens = 0
-        async for content, usage in core._call_deepseek_stream([]):
+        async for content, usage in core._call_ollama_stream([]):
             if content:
                 content_parts.append(content)
             if usage:
@@ -238,7 +243,7 @@ class TestStreamTokenCount:
             # 40 real tokens  far more than len(cleaned)//4 (~3 for 9 chars).
             yield ("", 40)
 
-        monkeypatch.setattr(ai_agent_module, "_call_deepseek_stream", fake_stream)
+        monkeypatch.setattr(ai_agent_module, "_call_ollama_stream", fake_stream)
         # The stream handler opens its own sessions via app.database.async_session_maker
         # and via app.services.usage_tracker.async_session_maker (each a module-level
         # singleton bound to a different engine than the test's db_session). Patch both
@@ -257,7 +262,7 @@ class TestStreamTokenCount:
 
         async with client.stream(
             "POST", "/api/ai/chats/chat-real-tok/message/stream",
-            json={"content": ""},
+            json={"content": "테스트"},
         ) as response:
             assert response.status_code == 200
             # Drain the SSE stream so _stream() runs to completion.
