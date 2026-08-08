@@ -103,7 +103,7 @@ async def search_knowledge_base(db: AsyncSession, query: str, top_k: int = 5,
 
     vector_sql = text("""
         SELECT c.id, c.document_id, c.content, d.title, d.collection,
-               1 - (c.embedding <=> :query_emb::vector) AS score
+               1 - (c.embedding <=> CAST(:query_emb AS vector)) AS score
         FROM kb_chunks c
         JOIN kb_documents d ON d.id = c.document_id
         WHERE d.is_published = true

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func # Import func for counting
+from sqlalchemy import select, func # Import func for counting
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -291,7 +291,7 @@ async def guest_chat(payload: GuestChatRequest, request: Request, response: Resp
     db.add(log_entry)
     await db.commit()
     await db.refresh(log_entry)
-    log_id = log_entry.id
+    log_id = str(log_entry.id)
 
     # Charge credits AFTER the AI call succeeded (1 credit = 1 char of input
     # + output). Failed calls never consume credits.
@@ -421,6 +421,14 @@ async def guest_chat_stream(payload: GuestChatRequest, request: Request, respons
 
         logger.info("guest_ai_chat_reply", ip=client_ip, device_id=device_id, confidence=confidence)
 
+        # Safety: any earlier helper (memory/web load) could have left the DB
+        # transaction in an aborted state on failure. Roll back first so the
+        # following writes run on a clean transaction.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
         # --- NEW: Enhanced Logging for Stream Endpoint ---
         # Calculate turn number
         turn_count_stmt = select(func.count(GuestAiChatLogExtended.id)).where(GuestAiChatLogExtended.session_id == session_id)
@@ -446,7 +454,7 @@ async def guest_chat_stream(payload: GuestChatRequest, request: Request, respons
         db.add(log_entry)
         await db.commit()
         await db.refresh(log_entry)
-        log_id = log_entry.id
+        log_id = str(log_entry.id)
 
         estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
         ok, remaining = try_deduct_guest_credits(device_id, max(estimated_chars, 1))

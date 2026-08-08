@@ -125,9 +125,9 @@ async def _find_similar(db: AsyncSession, owner_type: str, owner_key: str, query
         emb = ",".join(str(round(x, 6)) for x in query_emb)
         rows = (await db.execute(
             text(
-                "SELECT id, content, 1 - (embedding <=> :q::vector) AS sim "
+                "SELECT id, content, 1 - (embedding <=> CAST(:q AS vector)) AS sim "
                 "FROM ai_memories WHERE owner_type = :ot AND owner_key = :ok "
-                "AND embedding IS NOT NULL ORDER BY embedding <=> :q::vector LIMIT 1"
+                "AND embedding IS NOT NULL ORDER BY embedding <=> CAST(:q AS vector) LIMIT 1"
             ),
             {"q": emb, "ot": owner_type, "ok": owner_key},
         )).all()
@@ -136,6 +136,10 @@ async def _find_similar(db: AsyncSession, owner_type: str, owner_key: str, query
                 select(MemoryEntry).where(MemoryEntry.id == rows[0].id).limit(1)
             )).scalar_one_or_none()
     except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.debug("memory_dedupe_failed", error=str(exc))
     return None
 
@@ -205,17 +209,18 @@ async def recall_memory(db: AsyncSession, owner_type: str, owner_key: str, query
         rows = (await db.execute(
             text(
                 "SELECT content FROM ai_memories WHERE owner_type = :ot AND owner_key = :ok "
-                "AND embedding IS NOT NULL ORDER BY embedding <=> :q::vector LIMIT :k"
+                "AND embedding IS NOT NULL ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k"
             ),
             {"q": emb, "ot": owner_type, "ok": owner_key, "k": top_k},
         )).all()
         return [r.content for r in rows]
     except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.debug("memory_recall_failed", error=str(exc))
         return []
-
-
-async def memory_stats(db: AsyncSession, owner_type: str | None = None, owner_key: str | None = None) -> dict:
     """Analytics: memory count by category, avg score, etc."""
     from sqlalchemy import func
 
