@@ -1,7 +1,7 @@
 """Database models for Guest AI Chat Analytics."""
 
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base
 from app.database import Base
@@ -30,6 +30,6 @@ class GuestAiChatLogExtended(Base):
     confidence = Column(String, default=None) # From extract_confidence
     primary_category = Column(String, default=None) # e.g., 'Technical Inquiry', 'Sales'
     secondary_category = Column(String, default=None) # e.g., 'Account Setup' under 'Technical Inquiry'
-    classification_confidence = Column(String, default=None) # Confidence of the AI classifier
+    classification_confidence = Column(Float, default=None) # Confidence of the AI classifier
     converted_user_id = Column(UUID(as_uuid=True), default=None) # FK to User table if converted later
     conversion_tracked = Column(Boolean, default=False) # Flag if conversion attempt was made
