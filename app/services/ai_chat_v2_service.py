@@ -43,6 +43,9 @@ from app.services.ai_core_service import call_ollama, search_memory, store_memor
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 from app.services.emotion_analyzer import analyze_emotion, build_emotion_system_message
+from app.services.hallucination_gate import check_hallucination_risk, mask_unsupported_claims
+from app.services.satisfaction_predictor import predict_satisfaction
+from app.services.search_quality_monitor import evaluate_search_quality
 
 # Trimmed down from ai_tools.TOOLS to only the tools that actually work:
 # - get_account_list called app.crud.account.get_accounts, which doesn't
@@ -1382,6 +1385,16 @@ async def chat(
                 ),
             })
 
+        # P6: Search quality monitoring — detect low-quality retrieval.
+        web_results_for_quality = []
+        if not kb_context:
+            try:
+                from app.services.web_search import web_search
+                web_results_for_quality = await web_search(request.content, max_results=3) or []
+            except Exception:
+                web_results_for_quality = []
+        await evaluate_search_quality(db, kb_results, web_results_for_quality, request.content, tenant_id)
+
         if memory_context:
             memory_text = "\n".join(f"- {m}" for m in memory_context)
             messages.append({
@@ -1708,6 +1721,21 @@ async def chat(
         # persisting (next turns read this back as history).
         full_content = sanitize_identity(full_content)
 
+        # P7: Real-time hallucination blocking gate — validate claims against KB.
+        if not request.context.get("disable_quality_checks") and kb_context:
+            h_result = await check_hallucination_risk(full_content, kb_context)
+            if h_result.get("recommendation") == "block":
+                full_content = "죄송합니다. 해당 답변은 검증된 지식과 일치하지 않아 제공할 수 없습니다. 구체적인 상황을 알려주시면 더 정확히 답변해 드릴게요."
+            elif h_result.get("unsupported_claims"):
+                full_content = mask_unsupported_claims(full_content, h_result["unsupported_claims"])
+
+        # P8: User satisfaction prediction (log-only, no frontend change yet).
+        if not request.context.get("disable_quality_checks"):
+            _quality_for_pred = _quality_score(request.content, full_content)
+            pred = predict_satisfaction(emotion_data, _quality_for_pred, kb_confidence, full_content, bool(tool_calls_buffer))
+            if pred.get("risk_level") == "high":
+                logger.info("ai_satisfaction_high_risk", tenant_id=tenant_id, score=pred.get("score"), factors=pred.get("factors"))
+
         # Save assistant message
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
@@ -1857,6 +1885,21 @@ async def chat(
         # Defense in depth: strip residual base-model identity leaks before
         # persisting (next turns read this back as history).
         reply = sanitize_identity(reply)
+
+        # P7: Real-time hallucination blocking gate — validate claims against KB.
+        if not request.context.get("disable_quality_checks") and kb_context:
+            h_result = await check_hallucination_risk(reply, kb_context)
+            if h_result.get("recommendation") == "block":
+                reply = "죄송합니다. 해당 답변은 검증된 지식과 일치하지 않아 제공할 수 없습니다. 구체적인 상황을 알려주시면 더 정확히 답변해 드릴게요."
+            elif h_result.get("unsupported_claims"):
+                reply = mask_unsupported_claims(reply, h_result["unsupported_claims"])
+
+        # P8: User satisfaction prediction (log-only).
+        if not request.context.get("disable_quality_checks"):
+            _quality_for_pred = _quality_score(request.content, reply)
+            pred = predict_satisfaction(emotion_data, _quality_for_pred, kb_confidence, reply, bool(tool_calls_buffer) if 'tool_calls_buffer' in dir() else False)
+            if pred.get("risk_level") == "high":
+                logger.info("ai_satisfaction_high_risk", tenant_id=tenant_id, score=pred.get("score"), factors=pred.get("factors"))
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         assistant_msg = AiChatMessageV2(
