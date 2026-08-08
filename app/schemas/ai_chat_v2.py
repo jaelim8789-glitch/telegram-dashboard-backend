@@ -101,6 +101,9 @@ class MessageRead(BaseModel):
     model: str
     memory_context: list[Any] | None = None
     memory_stored: bool
+    emotion_label: str | None = None
+    emotion_confidence: float | None = None
+    emotion_tone: str | None = None
     feedback_score: int | None = None
     feedback_comment: str | None = None
     created_at: datetime

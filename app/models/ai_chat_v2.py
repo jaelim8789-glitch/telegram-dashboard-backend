@@ -77,6 +77,11 @@ class AiChatMessageV2(Base):
     memory_context: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     memory_stored: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Emotion analysis
+    emotion_label: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    emotion_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    emotion_tone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     # Feedback
     feedback_score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5
     feedback_comment: Mapped[str | None] = mapped_column(Text, nullable=True)

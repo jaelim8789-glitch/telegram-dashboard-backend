@@ -42,6 +42,7 @@ from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confi
 from app.services.ai_core_service import call_ollama, search_memory, store_memory
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
+from app.services.emotion_analyzer import analyze_emotion, build_emotion_system_message
 
 # Trimmed down from ai_tools.TOOLS to only the tools that actually work:
 # - get_account_list called app.crud.account.get_accounts, which doesn't
@@ -1105,6 +1106,35 @@ async def chat(
     )
     db.add(user_msg)
 
+    # 2.3. Analyze user emotion
+    emotion_data = await analyze_emotion(request.content)
+    if emotion_data:
+        user_msg.emotion_label = emotion_data.get("emotion")
+        user_msg.emotion_confidence = emotion_data.get("confidence")
+        user_msg.emotion_tone = emotion_data.get("tone")
+
+    # 2.1. Create placeholder assistant message so that a client disconnect
+    # mid-stream still leaves a visible conversation in the DB. The content
+    # and token counts are filled in after streaming completes.
+    placeholder_assistant = AiChatMessageV2(
+        id=str(uuid.uuid4()),
+        session_id=session.id,
+        tenant_id=tenant_id,
+        role="assistant",
+        content="",
+        tokens_prompt=0,
+        tokens_completion=0,
+        latency_ms=0,
+        model=request.model,
+        memory_context=[],
+        memory_stored=False,
+    )
+    db.add(placeholder_assistant)
+
+    # Persist both messages before streaming starts so a disconnect does
+    # not roll them back.
+    await db.commit()
+
     # 3. Build message history
     history = await _build_history_messages(db, session.id, tenant_id)
 
@@ -1204,6 +1234,12 @@ async def chat(
             system_content = _apply_template(default_template.content, request.template_variables)
 
     messages = [{"role": "system", "content": system_content}]
+
+    # 4.3. Inject emotion context
+    if emotion_data:
+        emotion_msg = build_emotion_system_message(emotion_data)
+        if emotion_msg:
+            messages.append({"role": "system", "content": emotion_msg})
 
     # 4.4. Inject learned quality rules — recently negatively-rated answers
     # for this tenant are shown as "avoid this" examples so the model does
@@ -1498,6 +1534,10 @@ async def chat(
                 "여러 관점을 비교하고, 근거와 반론까지 포함해 충분히 길게 답하세요."
             ),
         })
+
+    # 8c. Yield emotion event before streaming starts
+    if emotion_data:
+        yield f"data: {json.dumps({'type': 'emotion', 'emotion': emotion_data.get('emotion'), 'confidence': emotion_data.get('confidence'), 'tone': emotion_data.get('tone')})}\n\n"
 
     if request.stream:
         # Streaming response
@@ -1831,6 +1871,9 @@ async def chat(
             model=request.model,
             memory_context=_assistant_context(memory_context, kb_context, answer=reply, question=request.content),
             memory_stored=False,
+            emotion_label=emotion_data.get("emotion") if emotion_data else None,
+            emotion_confidence=emotion_data.get("confidence") if emotion_data else None,
+            emotion_tone=emotion_data.get("tone") if emotion_data else None,
         )
         if locals().get("refined_used"):
             _meta = assistant_msg.memory_context or []
@@ -1862,6 +1905,9 @@ async def chat(
         await db.commit()
 
         remaining_credits = await get_remaining_credits(tenant) if tenant else 0
+
+        if emotion_data:
+            yield f"data: {json.dumps({'type': 'emotion', 'emotion': emotion_data.get('emotion'), 'confidence': emotion_data.get('confidence'), 'tone': emotion_data.get('tone')})}\n\n"
 
         yield f"data: {json.dumps({
             'type': 'done',
