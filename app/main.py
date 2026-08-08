@@ -11,6 +11,7 @@ Improvements in this hardening batch:
 """
 
 import asyncio
+import httpx
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -129,6 +130,24 @@ from app.cache import acquire_singleton_lock
 
 configure_logging()
 logger = get_logger(__name__)
+
+
+async def _ollama_warmup_task():
+    """Asynchronous warm-up task to preload Ollama model into memory."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            url = f"{settings.ollama_api_base}/chat/completions"
+            payload = {
+                "model": settings.ollama_model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "options": {"keep_alive": settings.ollama_keep_alive}
+            }
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+        logger.info("ollama_warmup_success", model=settings.ollama_model)
+    except Exception as exc:
+        logger.warning("ollama_warmup_failed", model=settings.ollama_model, error=str(exc))
 
 
 @asynccontextmanager
@@ -269,6 +288,13 @@ async def lifespan(app: FastAPI):
         logger.info("session_manager_started", accounts=len(accounts))
     except Exception as exc:
         logger.error("session_manager_startup_failed", error=str(exc))
+
+    #  Ollama Warm-up Task
+    try:
+        asyncio.create_task(_ollama_warmup_task())
+        logger.info("ollama_warmup_task_started", model=settings.ollama_model)
+    except Exception as exc:
+        logger.warning("ollama_warmup_task_failed_to_start", model=settings.ollama_model, error=str(exc))
 
     logger.info("app_started")
     yield
@@ -613,4 +639,4 @@ app.mount("/uploads", AttachmentStaticFiles(directory=uploads_dir), name="upload
 # itself). Only trust X-Forwarded-* headers when the direct TCP peer is our own
 # nginx container (or a localhost/dev caller) — arbitrary clients can no longer
 # spoof proxy headers to forge their client IP.
-app = ProxyHeadersApp(app, trusted_hosts=["nginx", "127.0.0.1", "localhost"])
+app = ProxyHeadersApp(app, trusted_hosts=["nginx", "172.18.0.1", "127.0.0.1", "localhost"])

@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     bot_announcement_text: str = ""
 
     # Frontend URL for cross-domain redirects and payment success links.
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "http://localhost:8000"
 
     # This backend's own public URL — used to build callback/webhook URLs we hand
     # to third parties (e.g. NOWPayments' ipn_callback_url) who need to reach us,
@@ -125,6 +125,11 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_MODEL",
     )
     ollama_enabled: bool = True
+    # Ollama Keep Alive setting for performance optimization
+    ollama_keep_alive: str = Field(
+        default="24h",
+        validation_alias="OLLAMA_KEEP_ALIVE",
+    )
     # Web search (Tavily) — P6. Empty key → web search is skipped gracefully.
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     ai_chat_system_prompt: str = (
