@@ -158,6 +158,7 @@ async def _call_ai(
                     "messages": messages,
                     "temperature": 0.7,
                     "max_tokens": 1024,
+                    "keep_alive": settings.ollama_keep_alive,
                 },
             )
         resp.raise_for_status()

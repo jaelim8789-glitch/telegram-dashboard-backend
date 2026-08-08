@@ -27,6 +27,7 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.telegram_identity import tg_identifier
 from app.models.tenant import AiChatMessage, Tenant
+from app.services.ai_core_service import _OLLAMA_KEEP_ALIVE
 from app.services.usage_tracker import get_monthly_usage, record_usage
 
 logger = get_logger(__name__)
@@ -217,6 +218,7 @@ async def _call_ollama_full(messages: list[dict], max_tokens: int = _MAX_TOKENS)
                     "model": settings.ollama_model,
                     "messages": messages,
                     "max_tokens": max_tokens,
+                    "keep_alive": _OLLAMA_KEEP_ALIVE,
                 },
             )
             response.raise_for_status()

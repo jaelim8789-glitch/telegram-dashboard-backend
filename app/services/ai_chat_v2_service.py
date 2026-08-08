@@ -39,7 +39,7 @@ from app.schemas.ai_chat_v2 import (
 )
 from app.api.ai_tools import TOOLS as _ALL_TOOLS
 from app.services.ai_chat_service import _strip_leaked_think_tags, extract_confidence, sanitize_identity, CONFIDENCE_STREAM_HOLDBACK
-from app.services.ai_core_service import call_ollama, search_memory, store_memory
+from app.services.ai_core_service import call_ollama, search_memory, store_memory, _OLLAMA_KEEP_ALIVE
 from app.services.ai_credit_service import check_and_deduct_credits, get_remaining_credits
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 from app.services.emotion_analyzer import analyze_emotion, build_emotion_system_message
@@ -939,9 +939,9 @@ async def _stream_ollama(
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": 8192,
-        # Keep the model warm for 30 min so an idle (or never-yet-loaded)
+        # Keep the model warm (config-driven) so an idle (or never-yet-loaded)
         # model doesn't add a cold-start delay to the first token.
-        "keep_alive": 1800,
+        "keep_alive": _OLLAMA_KEEP_ALIVE,
     }
     if tools:
         payload["tools"] = tools
@@ -1020,7 +1020,7 @@ async def _call_ollama_nonstream(
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": 8192,
-        "keep_alive": 1800,
+        "keep_alive": _OLLAMA_KEEP_ALIVE,
     }
 
     for attempt in range(_RETRY_MAX):

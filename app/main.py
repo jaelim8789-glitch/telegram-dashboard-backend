@@ -136,16 +136,22 @@ async def _ollama_warmup_task():
     """Asynchronous warm-up task to preload Ollama model into memory."""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            url = f"{settings.ollama_api_base}/chat/completions"
+            # Use the native Ollama /api/generate endpoint for keep_alive to work
+            url = f"{settings.ollama_api_base.replace('/v1', '')}/api/generate" # Convert base URL to native API
             payload = {
                 "model": settings.ollama_model,
-                "messages": [{"role": "user", "content": "hi"}],
+                "prompt": "Hello, this is a warm-up request.",
                 "stream": False,
                 "options": {"keep_alive": settings.ollama_keep_alive}
             }
             response = await client.post(url, json=payload)
             response.raise_for_status()
-        logger.info("ollama_warmup_success", model=settings.ollama_model)
+            result = response.json()
+            # Log the duration from the Ollama response if available
+            load_duration_ms = result.get('load_duration', 0) / 1_000_000 # Convert ns to ms
+            eval_duration_ms = result.get('eval_duration', 0) / 1_000_000 # Convert ns to ms
+            total_duration_ms = result.get('total_duration', 0) / 1_000_000 # Convert ns to ms
+            logger.info("ollama_warmup_success", model=settings.ollama_model, load_duration_ms=load_duration_ms, eval_duration_ms=eval_duration_ms, total_duration_ms=total_duration_ms)
     except Exception as exc:
         logger.warning("ollama_warmup_failed", model=settings.ollama_model, error=str(exc))
 

@@ -169,6 +169,22 @@ async def dispatch_due_broadcasts() -> None:
             _running_recurring.discard(parent_id)
 
 
+async def _ollama_warmup_job() -> None:
+    """Keep the Ollama model warm so it doesn't unload between requests.
+
+    Complements the one-shot warm-up at app startup (app.main._ollama_warmup_task)
+    by re-firing it every 15 minutes; keep_alive ('24h' by default) alone doesn't
+    guarantee the model stays resident on a busy/shared GPU box, and a reload
+    costs 7-9s on the first request. Lazy import avoids a circular dependency
+    (app.main imports this module).
+    """
+    try:
+        from app.main import _ollama_warmup_task
+        await _ollama_warmup_task()
+    except Exception as exc:
+        logger.warning("ollama_periodic_warmup_failed", error=str(exc))
+
+
 async def dispatch_due_random_replies() -> None:
     """Simplified random-reply toggle: every macro with is_active=True and a
     non-empty message gets one random-reply pass across all of that account's
@@ -274,6 +290,13 @@ def start_scheduler() -> None:
         _run_ai_learning_ingest,
         IntervalTrigger(hours=24, start_date="2026-08-06 03:00:00"),
         id="ai_learning_ingest",
+        replace_existing=True,
+    )
+    # Ollama warm-up — 15분마다 모델 상주 유지 (첫 요청 콜드스타트 7~9초 방지)
+    scheduler.add_job(
+        _ollama_warmup_job,
+        IntervalTrigger(minutes=15),
+        id="ollama_periodic_warmup",
         replace_existing=True,
     )
     scheduler.start()

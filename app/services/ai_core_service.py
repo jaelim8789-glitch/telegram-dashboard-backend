@@ -179,7 +179,7 @@ async def call_ollama_local(
                     "model": model or settings.ollama_model,
                     "messages": messages,
                     "stream": False,
-                    "keep_alive": 1800,
+                    "keep_alive": _OLLAMA_KEEP_ALIVE,
                 },
             )
             response.raise_for_status()
