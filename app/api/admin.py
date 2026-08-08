@@ -1533,11 +1533,11 @@ async def list_guest_ai_chat_logs(
 ):
     """Anonymous /ai visitor exchanges -- persisted since guest chat has no
     tenant/session of its own (see ai_guest.py), purely for admin review."""
-    from app.models.guest_ai_chat import GuestAiChatLog
+    from app.models.guest_analytics import GuestAiChatLogExtended
 
-    stmt = select(GuestAiChatLog).order_by(GuestAiChatLog.created_at.desc())
+    stmt = select(GuestAiChatLogExtended).order_by(GuestAiChatLogExtended.created_at.desc())
     if ip:
-        stmt = stmt.where(GuestAiChatLog.ip == ip)
+        stmt = stmt.where(GuestAiChatLogExtended.ip == ip)
     stmt = stmt.offset(skip).limit(limit)
     result = await db.execute(stmt)
     return result.scalars().all()
