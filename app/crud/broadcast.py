@@ -9,6 +9,8 @@ from app.core.limits import BROADCAST_MIN_INTERVAL_SECONDS, effective_broadcast_
 from app.core.logging import get_logger
 from app.models.broadcast import Broadcast
 from app.models.account import Account
+from app.models.message_log import MessageLog
+from app.models.reply_macro import ReplyMacroLog
 from app.schemas.broadcast import BroadcastCreate, RECURRING_INTERVAL_VALUES
 
 
@@ -702,3 +704,84 @@ async def search_broadcasts(
     )
     result = await db.execute(q)
     return list(result.scalars().all()), total
+
+
+async def list_message_logs_for_broadcast(
+    db: AsyncSession,
+    *,
+    identity: Identity | None = None,
+    account_id: str | None = None,
+    status: str | None = None,
+    date: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> list[object]:
+    """
+    Fetches MessageLog entries with source='random_reply' and joins with ReplyMacroLog
+    to provide a log history compatible with the broadcast history view.
+    """
+    from app.models.reply_macro import ReplyMacro
+    offset = (page - 1) * limit
+    
+    # Create a subquery to join MessageLog with ReplyMacroLog and ReplyMacro
+    # to get the macro's message content and account_id
+    # MessageLog.source_id is the reply_macro_log.id
+    subq = (
+        select(
+            MessageLog,
+            ReplyMacro.message_content.label('macro_message_content'),
+            ReplyMacro.account_id.label('macro_account_id')
+        )
+        .join(ReplyMacroLog, MessageLog.source_id == ReplyMacroLog.id, isouter=True)
+        .join(ReplyMacro, ReplyMacroLog.macro_id == ReplyMacro.id, isouter=True)
+        .where(MessageLog.source == "random_reply")
+        .order_by(MessageLog.created_at.desc())
+    )
+
+    if identity is not None and identity.kind != "admin" and account_id is None:
+        if identity.tenant_id:
+            account_ids_subq = select(Account.id).where(Account.tenant_id == identity.tenant_id)
+            subq = subq.where(MessageLog.account_id.in_(account_ids_subq))
+        else:
+            return []
+
+    if account_id:
+        subq = subq.where(MessageLog.account_id == account_id)
+    if status:
+        # Map MessageLog.status to a compatible status, or filter accordingly
+        subq = subq.where(MessageLog.status == status)
+    if date:
+        day_start = datetime.strptime(date, "%Y-%m-%d")
+        day_end = day_start + timedelta(days=1)
+        subq = subq.where(MessageLog.created_at >= day_start, MessageLog.created_at < day_end)
+
+    subq = subq.offset(offset).limit(limit)
+    
+    result = await db.execute(subq)
+    rows = result.all()
+    
+    # Transform rows into a list of objects that mimic the Broadcast schema for UI compatibility
+    transformed_logs = []
+    for row in rows:
+        ml = row.MessageLog
+        # Create a pseudo-broadcast-like object
+        pseudo_broadcast = type('PseudoBroadcast', (), {})()
+        pseudo_broadcast.id = ml.id  # Use MessageLog's ID
+        pseudo_broadcast.account_id = ml.account_id
+        pseudo_broadcast.message = row.macro_message_content or ml.message_content or ""
+        # Recipients are stored in MessageLog.recipient
+        pseudo_broadcast.recipients = [ml.recipient]
+        # Status from MessageLog
+        pseudo_broadcast.status = ml.status
+        # Error message from MessageLog
+        pseudo_broadcast.error_message = ml.error_message
+        # Creation time
+        pseudo_broadcast.created_at = ml.created_at
+        # Sent time (same as creation for logs)
+        pseudo_broadcast.sent_at = ml.created_at
+        # Mark as a random reply log for UI distinction if needed
+        pseudo_broadcast.type = "random_reply"
+        
+        transformed_logs.append(pseudo_broadcast)
+        
+    return transformed_logs

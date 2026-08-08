@@ -22,7 +22,27 @@ async def read_logs(
 ):
     if account_id:
         await require_account_tenant_access(account_id=account_id, db=db, identity=identity)
-    return await broadcast_crud.list_logs(
+    
+    # Get both broadcast logs and random reply logs (converted to broadcast-like format)
+    broadcast_logs = await broadcast_crud.list_logs(
         db, identity=identity, account_id=account_id, status=status, date=date,
         page=page, limit=limit,
     )
+    
+    random_reply_logs = await broadcast_crud.list_message_logs_for_broadcast(
+        db, identity=identity, account_id=account_id, status=status, date=date,
+        page=page, limit=limit,
+    )
+
+    # Combine the two lists
+    combined_logs = broadcast_logs + random_reply_logs
+
+    # Sort combined list by created_at descending to match expected order
+    combined_logs.sort(key=lambda x: x.created_at, reverse=True)
+
+    # Apply limit again to get final paginated result
+    start_index = (page - 1) * limit
+    end_index = start_index + limit
+    final_logs = combined_logs[start_index:end_index]
+
+    return final_logs

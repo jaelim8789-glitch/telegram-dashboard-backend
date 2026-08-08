@@ -77,7 +77,7 @@ async def process_broadcast(broadcast_id: str, *, skip_rate_limit: bool = False)
         if account.status == "suspended":
             await broadcast_crud.update_broadcast_status(
                 db, broadcast, status="failed",
-                error_message="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다.",
+                error_message="이 계정은 현재 발송이 일시 중지된 상태입니다.",
             )
             logger.warning("broadcast_failed_suspended", broadcast_id=broadcast_id, account_id=account.id)
             return

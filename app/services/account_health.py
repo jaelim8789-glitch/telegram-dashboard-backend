@@ -9,8 +9,8 @@ All data is already persisted by the canonical delivery pipeline.
 
 Health states (mutually exclusive, highest-priority-first):
 - banned: Account.status == "banned" or most recent delivery was banned
-- restricted: Account.status == "suspended" (auto-paused after a likely
-  Telegram restriction  see app/services/delivery.py restriction early-warning)
+ - restricted: Account.status == "suspended" (auto-paused after a mass-forbidden
+   pattern — see app/services/delivery.py protection early-warning)
 - unauthorized: No valid session or most recent delivery was session_expired
 - rate_limited: Most recent delivery was flood_wait
 - error: Most recent delivery was a non-recoverable error

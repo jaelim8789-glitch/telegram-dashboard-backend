@@ -20,7 +20,7 @@ async def create_recurring_schedule(
         raise ValueError(f"Account {data.account_id} not found")
     if account.status == "suspended":
         raise ValueError(
-            "이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요."
+            "이 계정은 현재 발송이 일시 중지된 상태입니다. 계정 상태를 확인 후 재개해주세요."
         )
     schedule = RecurringSchedule(
         account_id=data.account_id,

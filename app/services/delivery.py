@@ -257,13 +257,13 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
     return DeliveryStatus.INTERNAL_ERROR, "내부 오류가 발생했습니다."
 
 
-# ─── Restriction early-warning ───────────────────────────────────────────
+# ─── Protection early-warning ───────────────────────────────────────────
 #
 # When an account starts getting `forbidden`-class errors (no write permission /
 # not a member / kicked / blocked) across MANY DISTINCT recipients in a short
 # window, it usually means Telegram has flagged the account for spam-like mass
 # sending — not a single bad group. Continuing to hammer it risks escalating a
-# temporary restriction into a permanent ban. We detect this pattern and pause
+# temporary limitation into a permanent ban. We detect this pattern and pause
 # the account's sending as a protective cool-down.
 #
 # Detection is in-memory (per process) to avoid a DB round-trip on every
@@ -272,35 +272,36 @@ def classify_error(exc: Exception) -> tuple[DeliveryStatus, str | None]:
 # account's DB row (status='suspended'), which the delivery pipeline honors via
 # fast-fail just like 'banned'.
 
-RESTRICTION_WINDOW_MINUTES = 10
-RESTRICTION_DISTINCT_RECIPIENTS = 5
+PROTECTION_WINDOW_MINUTES = 10
+PROTECTION_DISTINCT_RECIPIENTS = 5
 
 # account_id -> list[(timestamp, recipient)] of recent forbidden failures
 _forbidden_bursts: dict[str, list[tuple[datetime, str]]] = {}
 
-RESTRICTION_WARNING = (
-    "이 계정이 텔레그램 제재를 받았을 수 있습니다. 발송을 일시 중단했습니다."
+PROTECTION_PAUSED_WARNING = (
+    "다수의 채팅방에서 메시지 전송 권한이 없어 발송이 일시 중지되었습니다. "
+    "계정 상태를 확인한 후 재개할 수 있습니다."
 )
 
 
 def _record_forbidden_failure(account_id: str, recipient: str) -> bool:
     """Record a forbidden failure and return True if the account should be
-    suspended (distinct-recipient threshold exceeded within the window)."""
+    paused (distinct-recipient threshold exceeded within the window)."""
     now = utcnow_naive()
-    cutoff = now - timedelta(minutes=RESTRICTION_WINDOW_MINUTES)
+    cutoff = now - timedelta(minutes=PROTECTION_WINDOW_MINUTES)
     burst = _forbidden_bursts.setdefault(account_id, [])
     burst.append((now, recipient))
     # Drop entries outside the window.
     burst[:] = [(ts, r) for ts, r in burst if ts >= cutoff]
     distinct = {r for _, r in burst}
-    return len(distinct) >= RESTRICTION_DISTINCT_RECIPIENTS
+    return len(distinct) >= PROTECTION_DISTINCT_RECIPIENTS
 
 
-async def _maybe_suspend_for_restriction(account_id: str) -> None:
-    """Pause sending for an account that shows a restriction pattern.
+async def _maybe_pause_for_protection(account_id: str) -> None:
+    """Pause sending for an account that shows a mass-forbidden pattern.
 
-    No-op if the account is already suspended/banned (don't clobber state) or
-    if suspension persistence fails (the in-memory detector will retry on the
+    No-op if the account is already paused/banned (don't clobber state) or
+    if pause persistence fails (the in-memory detector will retry on the
     next failure).
     """
     try:
@@ -310,18 +311,18 @@ async def _maybe_suspend_for_restriction(account_id: str) -> None:
                 return
             if account.status in ("suspended", "banned"):
                 return
-            await account_crud.suspend_account_for_restriction(
-                db, account, RESTRICTION_WARNING
+            await account_crud.pause_account_for_protection(
+                db, account, PROTECTION_PAUSED_WARNING
             )
             logger.warning(
-                "account_suspended_for_restriction",
+                "account_paused_for_protection",
                 account_id=account_id,
-                window_minutes=RESTRICTION_WINDOW_MINUTES,
-                distinct_recipients_threshold=RESTRICTION_DISTINCT_RECIPIENTS,
+                window_minutes=PROTECTION_WINDOW_MINUTES,
+                distinct_recipients_threshold=PROTECTION_DISTINCT_RECIPIENTS,
             )
     except Exception as exc:
         logger.warning(
-            "restriction_suspension_failed", account_id=account_id, error=str(exc)
+            "protection_pause_failed", account_id=account_id, error=str(exc)
         )
 
 
@@ -693,14 +694,14 @@ async def deliver_message(
                 results.append(result)
             return results
 
-        # Fast-fail for suspended accounts (protective cool-down after a likely
-        # Telegram restriction) — don't push the (possibly restricted) account further.
+        # Fast-fail for paused accounts (protective cool-down after a mass-forbidden
+        # pattern) — don't push the account further until an operator reviews it.
         if account.status == "suspended":
             for recipient in request.recipients:
                 result = DeliveryResult(
                     status=DeliveryStatus.FORBIDDEN,
                     recipient=recipient,
-                    error_message=RESTRICTION_WARNING,
+                     error_message=PROTECTION_PAUSED_WARNING,
                 )
                 await _persist_log(
                     account_id=request.account_id,
@@ -915,11 +916,13 @@ async def deliver_message(
             except Exception as persist_err:
                 logger.warning("banned_persistence_failed", account_id=request.account_id, error=str(persist_err))
 
-        # Restriction early-warning
+        # Protection early-warning: if many distinct recipients reject writes,
+        # pause the account to avoid escalating a temporary Telegram limitation
+        # into a permanent ban.
         if result.status == DeliveryStatus.FORBIDDEN:
             should_suspend = _record_forbidden_failure(request.account_id, recipient)
             if should_suspend:
-                await _maybe_suspend_for_restriction(request.account_id)
+                await _maybe_pause_for_protection(request.account_id)
 
         return result
 

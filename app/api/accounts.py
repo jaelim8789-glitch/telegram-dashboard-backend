@@ -414,9 +414,9 @@ async def resume_account(
     identity: Identity = Depends(get_current_identity),
     _admin_check: None = Depends(require_admin),
 ):
-    """관리자가 suspended 계정을 active로 복구한다.
+    """관리자가 일시 중지된 계정을 active로 복구한다.
 
-    Requires admin privileges. Clears the restriction-related error state
+    Requires admin privileges. Clears the protection-pause error state
     so the account can send broadcasts again.
     """
     await require_account_tenant_access(account_id, db, identity)

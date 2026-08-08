@@ -261,7 +261,7 @@ async def create_broadcast(
     if account.status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요.",
+            detail="이 계정은 현재 발송이 일시 중지된 상태입니다. 계정 상태를 확인 후 재개해주세요.",
         )
 
     now = broadcast_crud.utcnow_naive()
@@ -347,7 +347,7 @@ async def send_to_group(
     if account.status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="이 계정은 텔레그램 제재 의심으로 발송이 일시 중단되었습니다. 관리자에게 문의해주세요.",
+            detail="이 계정은 현재 발송이 일시 중지된 상태입니다. 계정 상태를 확인 후 재개해주세요.",
         )
 
     now = broadcast_crud.utcnow_naive()

@@ -51,9 +51,9 @@ class DistributionPlan:
 async def get_eligible_accounts(db: AsyncSession, tenant_id: str | None) -> list[Account]:
     """Active, non-suspended/banned accounts for a tenant.
 
-    Mirrors the status checks Kiro's restriction-suspension logic relies on
-    (app/crud/account.py suspend_account_for_restriction / app/services/
-    delivery.py)  we filter independently here rather than depending on that
+    Mirrors the status checks TeleMon's protection-pause logic relies on
+    (app/crud/account.py pause_account_for_protection / app/services/
+    delivery.py) — we filter independently here rather than depending on that
     code path, since this module should stay correct even if that logic
     changes shape later.
     """

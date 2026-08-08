@@ -118,19 +118,18 @@ async def mark_account_banned(db: AsyncSession, account: Account) -> Account:
     return account
 
 
-async def suspend_account_for_restriction(
+async def pause_account_for_protection(
     db: AsyncSession,
     account: Account,
     reason: str,
 ) -> Account:
-    """Temporarily pause an account's sending after a likely Telegram restriction
-    signal (mass `forbidden`-class failures across many distinct recipients).
+    """Temporarily pause an account's sending after a mass-forbidden pattern.
 
     Unlike mark_account_banned, the session is preserved — this is a protective
-    cool-down to stop hammering a possibly-restricted account (which risks a
-    temporary restriction escalating to a permanent one), not a confirmed ban.
-    The user must manually resume (or an admin clears it) once they've verified
-    the account's standing in Telegram.
+    cool-down to stop hammering an account that may be rate-limited by Telegram
+    (which risks a temporary limitation escalating to a permanent one), not a
+    confirmed ban. The user must manually resume (or an admin clears it) once
+    they've verified the account's standing in Telegram.
     """
     account.status = "suspended"
     account.last_error = reason
@@ -152,9 +151,9 @@ async def clear_account_error(db: AsyncSession, account: Account) -> Account:
 
 
 async def resume_account(db: AsyncSession, account: Account) -> Account:
-    """Resume a suspended account back to active after admin review.
+    """Resume a paused account back to active after operator review.
 
-    Clears the restriction-related error state so the health badge returns
+    Clears the protection-pause error state so the health badge returns
     to normal. The caller is responsible for verifying the account's actual
     Telegram standing before calling this.
     """
