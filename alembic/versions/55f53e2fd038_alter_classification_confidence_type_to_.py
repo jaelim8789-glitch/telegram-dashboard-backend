@@ -19,12 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "guest_ai_chat_logs_extended",
-        "classification_confidence",
-        existing_type=sa.String,
-        type_=sa.Float,
-        existing_nullable=True,
+    op.execute(
+        "ALTER TABLE guest_ai_chat_logs_extended "
+        "ALTER COLUMN classification_confidence TYPE FLOAT "
+        "USING classification_confidence::double precision"
     )
 
 
