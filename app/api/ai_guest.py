@@ -14,17 +14,19 @@ this is purely an acquisition/trial surface.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func # Import func for counting
 
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.rate_limiter import get_client_ip
 from app.database import get_db
-from app.models.guest_ai_chat import GuestAiChatLog
+from app.models.guest_analytics import GuestAiChatLogExtended # Import new model
 from app.services.ai_chat_service import _MAX_TOKENS, _call_ollama_full, extract_confidence, sanitize_identity
 from app.services.ai_think_mode_heuristics import should_skip_think_mode
 from app.services.guest_credit_service import (
@@ -33,6 +35,9 @@ from app.services.guest_credit_service import (
     guest_refill_countdown_seconds,
     try_deduct_guest_credits,
 )
+from app.services.guest_session_service import get_or_create_session # Import new service
+from app.services.blacklist_service import is_blacklisted # Import new service
+from app.services.guest_analysis_service import classify_message # Import new service
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/ai/guest", tags=["ai-guest"])
@@ -189,10 +194,17 @@ async def guest_chat(payload: GuestChatRequest, request: Request, response: Resp
     client_ip = get_client_ip(request)
     device_id = _get_guest_device_id(request)
 
+    # --- NEW: Blacklist Check ---
+    if await is_blacklisted(db, client_ip, "IP") or await is_blacklisted(db, device_id, "DEVICE_ID"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
     if not settings.ollama_api_base:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 서비스를 일시적으로 사용할 수 없습니다.")
 
     _set_guest_device_cookie(response, device_id)
+
+    # --- NEW: Session Management ---
+    session_id = await get_or_create_session(db, device_id)
 
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
     messages.extend({"role": m.role, "content": m.content} for m in payload.history if m.role in ("user", "assistant"))
@@ -252,28 +264,34 @@ async def guest_chat(payload: GuestChatRequest, request: Request, response: Resp
 
     logger.info("guest_ai_chat_reply", ip=client_ip, device_id=device_id, confidence=confidence)
 
-    # Best-effort persistence for admin visibility -- must never fail the
-    # actual chat response (the guest already got their reply above).
-    # Roll back first in case an earlier step (memory engine, web search)
-    # left the session's transaction aborted — otherwise this INSERT is
-    # rejected and admin sees zero guest conversations (seen live 2026-08-07).
-    log_id = None
-    try:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        log_entry = GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply)
-        db.add(log_entry)
-        await db.commit()
-        await db.refresh(log_entry)
-        log_id = log_entry.id
-    except Exception:
-        logger.exception("guest_ai_chat_log_persist_failed")
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+    # --- NEW: Enhanced Logging with Session, Classification, and Turn Number ---
+    # Fetch turn number for the session
+    # For simplicity, we'll calculate it here. A more efficient way would be to track this in the DB per session.
+    # This is a basic approach, could be optimized depending on performance needs.
+    turn_count_stmt = select(func.count(GuestAiChatLogExtended.id)).where(GuestAiChatLogExtended.session_id == session_id)
+    turn_count_result = await db.execute(turn_count_stmt)
+    turn_number = turn_count_result.scalar_one_or_none() or 0
+    turn_number += 1 # Increment for the current message
+
+    # Classify the message
+    primary_category, secondary_category, classification_conf = await classify_message(payload.message)
+
+    log_entry = GuestAiChatLogExtended(
+        ip=client_ip,
+        message=payload.message,
+        reply=reply,
+        device_id=device_id,
+        session_id=session_id,
+        turn_number=turn_number,
+        confidence=confidence,
+        primary_category=primary_category,
+        secondary_category=secondary_category,
+        classification_confidence=classification_conf
+    )
+    db.add(log_entry)
+    await db.commit()
+    await db.refresh(log_entry)
+    log_id = log_entry.id
 
     # Charge credits AFTER the AI call succeeded (1 credit = 1 char of input
     # + output). Failed calls never consume credits.
@@ -343,14 +361,22 @@ async def guest_chat_stream(payload: GuestChatRequest, request: Request, respons
       data: {"type":"error","content":"..."}
     """
     from fastapi.responses import StreamingResponse
+    from sqlalchemy import select # Import select for the count query
 
     client_ip = get_client_ip(request)
     device_id = _get_guest_device_id(request)
+
+    # --- NEW: Blacklist Check for Stream Endpoint Too ---
+    if await is_blacklisted(db, client_ip, "IP") or await is_blacklisted(db, device_id, "DEVICE_ID"):
+        return Response(status_code=status.HTTP_403_FORBIDDEN, content="Access denied.")
 
     if not settings.ollama_api_base:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content="AI 서비스를 일시적으로 사용할 수 없습니다.")
 
     _set_guest_device_cookie(response, device_id)
+
+    # --- NEW: Session Management for Stream Endpoint ---
+    session_id = await get_or_create_session(db, device_id)
 
     mem_text, web_text = await _load_guest_context(db, device_id, payload.message)
     messages = _build_guest_messages(payload, mem_text=mem_text, web_text=web_text)
@@ -395,25 +421,32 @@ async def guest_chat_stream(payload: GuestChatRequest, request: Request, respons
 
         logger.info("guest_ai_chat_reply", ip=client_ip, device_id=device_id, confidence=confidence)
 
-        # Persist log (best-effort, never fail the stream) — roll back first
-        # in case the memory engine aborted the transaction.
-        log_id = None
-        try:
-            try:
-                await db.rollback()
-            except Exception:
-                pass
-            log_entry = GuestAiChatLog(ip=client_ip, message=payload.message, reply=reply)
-            db.add(log_entry)
-            await db.commit()
-            await db.refresh(log_entry)
-            log_id = log_entry.id
-        except Exception:
-            logger.exception("guest_ai_chat_log_persist_failed")
-            try:
-                await db.rollback()
-            except Exception:
-                pass
+        # --- NEW: Enhanced Logging for Stream Endpoint ---
+        # Calculate turn number
+        turn_count_stmt = select(func.count(GuestAiChatLogExtended.id)).where(GuestAiChatLogExtended.session_id == session_id)
+        turn_count_result = await db.execute(turn_count_stmt)
+        turn_number = turn_count_result.scalar_one_or_none() or 0
+        turn_number += 1
+
+        # Classify the message
+        primary_category, secondary_category, classification_conf = await classify_message(payload.message)
+
+        log_entry = GuestAiChatLogExtended(
+            ip=client_ip,
+            message=payload.message,
+            reply=reply,
+            device_id=device_id,
+            session_id=session_id,
+            turn_number=turn_number,
+            confidence=confidence,
+            primary_category=primary_category,
+            secondary_category=secondary_category,
+            classification_confidence=classification_conf
+        )
+        db.add(log_entry)
+        await db.commit()
+        await db.refresh(log_entry)
+        log_id = log_entry.id
 
         estimated_chars = len(payload.message) + len(reply) + sum(len(m.content) for m in payload.history)
         ok, remaining = try_deduct_guest_credits(device_id, max(estimated_chars, 1))
@@ -489,13 +522,15 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
     """
     from sqlalchemy import select, func
     from app.models.knowledge_base import KnowledgeCandidate
+    from app.models.guest_analytics import GuestAiChatLogExtended # Use the new model
 
     try:
         await db.rollback()
     except Exception:
         pass
+    # Updated to use the new extended log model
     result = await db.execute(
-        select(GuestAiChatLog).where(GuestAiChatLog.id == payload.log_id).limit(1)
+        select(GuestAiChatLogExtended).where(GuestAiChatLogExtended.id == payload.log_id).limit(1)
     )
     log = result.scalar_one_or_none()
     if log is None:
@@ -510,8 +545,8 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
             # 중복 체크 (같은 질문+답변 조합)
             existing = await db.execute(
                 select(KnowledgeCandidate).where(
-                    KnowledgeCandidate.question == log.message[:500],
-                    KnowledgeCandidate.answer == log.reply[:500],
+                    KnowledgeCandidate.question == log.message[:500], # Using the new model's field
+                    KnowledgeCandidate.answer == log.reply[:500],    # Using the new model's field
                     KnowledgeCandidate.status == "pending",
                 ).limit(1)
             )
@@ -520,8 +555,8 @@ async def guest_feedback(payload: GuestFeedbackRequest, db: AsyncSession = Depen
                 candidate = KnowledgeCandidate(
                     id=str(uuid.uuid4()),
                     tenant_id="guest",
-                    question=log.message[:2000],
-                    answer=log.reply[:5000],
+                    question=log.message[:2000], # Using the new model's field
+                    answer=log.reply[:5000],     # Using the new model's field
                     feedback_score=5.0,  # 게스트는 thumbs_up만 있으므로 5점으로 설정
                     feedback_count=1,
                     model_name="ollama-chat",
