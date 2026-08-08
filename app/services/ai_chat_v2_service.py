@@ -93,10 +93,11 @@ _client: httpx.AsyncClient | None = None
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
+        _headers = {"Authorization": f"Bearer {settings.ollama_api_key}"} if settings.ollama_api_key else {}
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(_DEFAULT_TIMEOUT, read=_STREAM_TIMEOUT),
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=50),
-            headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+            headers=_headers,
         )
     return _client
 

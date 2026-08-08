@@ -101,9 +101,10 @@ async def call_ollama(
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
+            headers = {"Authorization": f"Bearer {settings.ollama_api_key}"} if settings.ollama_api_key else {}
             response = await client.post(
                 f"{settings.ollama_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
@@ -132,9 +133,10 @@ async def call_ollama(
             try:
                 payload.pop("response_format", None)
                 async with httpx.AsyncClient(timeout=60) as retry_client:
+                    headers = {"Authorization": f"Bearer {settings.ollama_api_key}"} if settings.ollama_api_key else {}
                     retry = await retry_client.post(
                         f"{settings.ollama_api_base}/chat/completions",
-                        headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                        headers=headers,
                         json=payload,
                     )
                     retry.raise_for_status()
@@ -224,10 +226,11 @@ async def _call_ollama_stream(
     """
     try:
         async with httpx.AsyncClient(timeout=120) as client:
+            headers = {"Authorization": f"Bearer {settings.ollama_api_key}"} if settings.ollama_api_key else {}
             async with client.stream(
                 "POST",
                 f"{settings.ollama_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                headers=headers,
                 json={
                     "model": model or settings.ollama_model or _DEFAULT_MODEL,
                     "messages": messages,

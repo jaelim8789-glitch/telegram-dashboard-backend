@@ -33,4 +33,3 @@ class GuestAiChatLogExtended(Base):
     classification_confidence = Column(String, default=None) # Confidence of the AI classifier
     converted_user_id = Column(UUID(as_uuid=True), default=None) # FK to User table if converted later
     conversion_tracked = Column(Boolean, default=False) # Flag if conversion attempt was made
-</code_edit>

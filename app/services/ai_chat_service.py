@@ -209,9 +209,10 @@ async def _call_ollama_full(messages: list[dict], max_tokens: int = _MAX_TOKENS)
         # outage. Matches the read timeout ai_chat_v2_service.py already
         # uses for the logged-in path.
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=120)) as client:
+            headers = {"Authorization": f"Bearer {settings.ollama_api_key}"} if settings.ollama_api_key else {}
             response = await client.post(
                 f"{settings.ollama_api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                headers=headers,
                 json={
                     "model": settings.ollama_model,
                     "messages": messages,
