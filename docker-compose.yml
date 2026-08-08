@@ -78,6 +78,8 @@ services:
     networks:
       - default
       - internal
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"
 
   frontend:
     image: ghcr.io/${GHCR_OWNER:-telemon}/telemon-frontend:${TAG:-latest}
